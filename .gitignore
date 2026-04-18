@@ -1,0 +1,9 @@
+# Compiled binary
+watchssh
+
+# Config with credentials (never commit)
+config.yaml
+
+# Go build cache
+*.test
+*.out
