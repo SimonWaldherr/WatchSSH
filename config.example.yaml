@@ -1,0 +1,278 @@
+# =============================================================================
+# WatchSSH — Example Configuration
+# =============================================================================
+#
+# Copy to config.yaml and adjust to your environment.
+# All keys are optional unless noted as required.
+#
+# Security note: host key verification is ENABLED by default (strict mode).
+# Before adding a new server, verify its SSH host key fingerprint out-of-band
+# (e.g. by logging in interactively and comparing fingerprints).
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# Global SSH security settings
+# -----------------------------------------------------------------------------
+
+# Path to the SSH known_hosts file used for host key verification.
+# Defaults to ~/.ssh/known_hosts when not set.
+# known_hosts_path: ~/.ssh/known_hosts
+
+# strict_host_key_checking: true (default) — refuse connections to hosts not
+#   in known_hosts or whose key has changed (recommended for production).
+# strict_host_key_checking: false — accept any host key (DANGEROUS; for
+#   testing only). Prefer per-server insecure_ignore_host_key instead.
+strict_host_key_checking: true
+
+
+# -----------------------------------------------------------------------------
+# Global polling settings
+# -----------------------------------------------------------------------------
+
+# How often to collect metrics from all servers (seconds). Default: 60.
+interval: 60
+
+# SSH connection and per-command timeout (seconds). Default: 30.
+timeout: 30
+
+# Maximum number of servers polled concurrently. Default: 0 (one goroutine
+# per server). Set to a positive integer to cap concurrency, which is useful
+# when monitoring many hosts to avoid overwhelming the monitoring machine or
+# exhausting SSH connection limits.
+# workers: 10
+
+
+# -----------------------------------------------------------------------------
+# Output settings
+# -----------------------------------------------------------------------------
+
+output:
+  # "console" (default) — human-readable ASCII table on stdout
+  # "json"               — machine-readable JSON (optionally to a file)
+  type: console
+
+  # When type is "json", optionally write to a file instead of stdout.
+  # file: /var/log/watchssh/metrics.json
+
+
+# -----------------------------------------------------------------------------
+# Web dashboard
+# -----------------------------------------------------------------------------
+
+web:
+  enabled: false
+  listen: ":8080"    # TCP address and port to listen on
+
+
+# -----------------------------------------------------------------------------
+# Servers
+# -----------------------------------------------------------------------------
+
+servers:
+  # ── Linux server via SSH key ─────────────────────────────────────────────
+  - name: web-01
+    host: 192.0.2.10
+    port: 22             # Default: 22
+    username: monitor    # Use a dedicated monitoring user with minimal privileges
+
+    auth:
+      type: key          # "key" (default), "agent", or "password"
+      key_file: ~/.ssh/id_ed25519
+      # passphrase: "secret"   # Uncomment if the key is passphrase-protected
+
+    # insecure_ignore_host_key: false   # Default: false. NEVER enable in production.
+
+    # Optional tags for grouping and CLI filtering via `-tags`.
+    tags:
+      - linux
+      - web
+
+    # Optional Docker container metrics (Linux only).
+    # When enabled, WatchSSH runs `docker ps` and `docker stats --no-stream`
+    # to collect per-container CPU, memory, network, and block I/O.
+    # Requires the monitoring user to be in the `docker` group (or equivalent).
+    docker:
+      enabled: false
+
+    checks:
+      ping:
+        enabled: true
+        count: 3          # ICMP packets to send
+        timeout: 5        # seconds to wait
+
+      ports:
+        - port: 80
+          timeout: 5
+        - port: 443
+          timeout: 5
+
+      http:
+        - url: https://web-01.example.com/health
+          expected_status: 200
+          timeout: 10
+
+      # Custom SSH command checks (run on the remote host via SSH).
+      custom:
+        - name: nginx-running
+          command: "pgrep -x nginx >/dev/null && echo OK || echo FAILED"
+          expected_output: "OK"
+
+  # ── macOS / Darwin server ────────────────────────────────────────────────
+  - name: macos-builder
+    host: 192.0.2.20
+    port: 22
+    username: monitor
+
+    auth:
+      type: agent    # Delegate to the SSH agent (SSH_AUTH_SOCK must be set)
+
+    tags:
+      - darwin
+      - ci
+
+  # ── FreeBSD server ───────────────────────────────────────────────────────
+  - name: freebsd-db
+    host: 192.0.2.30
+    port: 22
+    username: monitor
+
+    auth:
+      type: key
+      key_file: ~/.ssh/id_ed25519
+
+    tags:
+      - freebsd
+      - database
+
+  # ── OpenBSD server (partial metrics) ────────────────────────────────────
+  - name: openbsd-fw
+    host: 192.0.2.40
+    port: 22
+    username: monitor
+
+    auth:
+      type: key
+      key_file: ~/.ssh/id_ed25519
+
+    tags:
+      - openbsd
+      - firewall
+
+  # ── NetBSD server (partial metrics) ─────────────────────────────────────
+  - name: netbsd-router
+    host: 192.0.2.50
+    port: 22
+    username: monitor
+
+    auth:
+      type: key
+      key_file: ~/.ssh/id_ed25519
+
+    tags:
+      - netbsd
+
+  # ── Local machine (no SSH required) ──────────────────────────────────────
+  - name: localhost
+    local: true    # Run commands locally; no SSH connection is made
+
+
+# -----------------------------------------------------------------------------
+# Alerts
+# -----------------------------------------------------------------------------
+
+alerts:
+  # Minimum seconds between repeated alerts for the same rule+server. Default: 3600.
+  cooldown: 3600
+
+  rules:
+    # CPU threshold alert (fires when usage > 90% for any server)
+    - name: HighCPU
+      metric: cpu_usage
+      operator: ">"
+      threshold: 90
+
+    # RAM threshold (all servers)
+    - name: HighMemory
+      metric: mem_usage
+      operator: ">"
+      threshold: 85
+
+    # Disk space (root partition only, all servers)
+    - name: DiskAlmostFull
+      metric: disk_usage
+      operator: ">"
+      threshold: 85
+      mount_point: /
+
+    # 1-minute load average (web servers only)
+    - name: HighLoad
+      metric: load1
+      operator: ">"
+      threshold: 4.0
+      servers:
+        - web-01
+
+    # Swap usage alert
+    - name: SwapHigh
+      metric: swap_usage
+      operator: ">"
+      threshold: 80
+
+    # Ping failure alert
+    - name: PingFailed
+      metric: ping_failed
+      operator: "=="
+      threshold: 1
+      servers:
+        - web-01
+
+    # Port check alert
+    - name: HttpPortDown
+      metric: port_closed
+      operator: "=="
+      threshold: 1
+      port: 80
+      servers:
+        - web-01
+
+    # HTTP check failure alert
+    - name: HealthCheckFailed
+      metric: http_failed
+      operator: "=="
+      threshold: 1
+
+    # TLS certificate expiring soon (days remaining)
+    - name: CertExpiringSoon
+      metric: cert_expires_days
+      operator: "<"
+      threshold: 30
+
+    # Custom check failure
+    - name: NginxDown
+      metric: custom_failed
+      operator: "=="
+      threshold: 1
+      servers:
+        - web-01
+
+  # SMTP email notifications (optional)
+  # email:
+  #   smtp_host: smtp.example.com
+  #   smtp_port: 587
+  #   tls_mode: starttls   # "none", "starttls" (default), or "tls"
+  #   username: alerter@example.com
+  #   password: "secret"
+  #   from: watchssh@example.com
+  #   to:
+  #     - ops@example.com
+  #     - oncall@example.com
+
+  # Guarded local remediation hook (optional)
+  # Runs only when alerts fire and only if the executable is allowlisted.
+  # The command receives a JSON array of firings on stdin.
+  # action:
+  #   command: "logger -t watchssh-alert remediation triggered"
+  #   allowed_executables:
+  #     - logger
+  #   timeout: 10
