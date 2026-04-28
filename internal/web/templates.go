@@ -147,6 +147,12 @@ const allTemplates = `
           </span>
         </div>
         {{end}}
+        {{if hasDockerDiagnostics .}}
+        <div class="m-row">
+          <span class="m-label">Docker</span>
+          <span class="m-val">{{dockerSummary .}}</span>
+        </div>
+        {{end}}
       {{end}}
     </div>
     <div class="card-foot">
@@ -249,6 +255,23 @@ const allTemplates = `
     {{end}}
     {{end}}
   </div>
+  {{with capabilityRows .Metrics}}
+  <div class="section">
+    <h3>Collector Status</h3>
+    <table>
+      <thead><tr><th>Metric</th><th>Status</th><th>Error</th></tr></thead>
+      <tbody>
+      {{range .}}
+      <tr>
+        <td><code>{{.Name}}</code></td>
+        <td><span class="badge badge-{{statusClass .Status}}">{{.Status}}</span></td>
+        <td>{{if .Error}}<span style="font-family:monospace;font-size:.8rem;word-break:break-all">{{.Error}}</span>{{else}}—{{end}}</td>
+      </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
 </div>
 
 {{if .Metrics.Disks}}
@@ -295,6 +318,41 @@ const allTemplates = `
     {{end}}
     </tbody>
   </table>
+</div>
+{{end}}
+
+{{if hasDockerDiagnostics .Metrics}}
+<div class="section">
+  <h3>Docker Containers</h3>
+  <div class="m-row">
+    <span class="m-label">Collector</span>
+    <span>{{dockerSummary .Metrics}}</span>
+  </div>
+  {{with metricError .Metrics "containers"}}
+  <div class="notice notice-err" style="margin-top:.75rem">Docker collector error: {{.}}</div>
+  {{end}}
+  {{if .Metrics.Containers}}
+  <table style="margin-top:.75rem">
+    <thead><tr><th>Name</th><th>Image</th><th>Status</th><th>CPU%</th><th>Memory</th><th>Network</th><th>Block I/O</th></tr></thead>
+    <tbody>
+    {{range .Metrics.Containers}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td style="font-family:monospace;font-size:.8rem;word-break:break-all">{{.Image}}</td>
+      <td>{{.Status}}</td>
+      <td>{{printf "%.1f" .CPUPercent}}</td>
+      <td>{{fmtBytes .MemUsedBytes}} / {{fmtBytes .MemLimitBytes}} ({{printf "%.1f" .MemPercent}}%)</td>
+      <td>{{fmtBytes .NetRxBytes}} ↓ / {{fmtBytes .NetTxBytes}} ↑</td>
+      <td>{{fmtBytes .BlockReadBytes}} read / {{fmtBytes .BlockWriteBytes}} write</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else if eq (metricCapability .Metrics "containers") "ok"}}
+  <p class="empty">No running containers were found during this poll.</p>
+  {{else if not (metricError .Metrics "containers")}}
+  <p class="empty">Docker metrics are not available on this target right now.</p>
+  {{end}}
 </div>
 {{end}}
 

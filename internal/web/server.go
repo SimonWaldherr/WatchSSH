@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,19 +20,25 @@ import (
 
 // funcMap provides helper functions available inside all HTML templates.
 var funcMap = template.FuncMap{
-	"serverStatus":      serverStatus,
-	"serverStatusLabel": serverStatusLabel,
-	"pbarClass":         pbarClass,
-	"clamp":             clamp,
-	"fmtBytes":          fmtBytes,
-	"fmtUptime":         fmtUptime,
-	"timeAgo":           timeAgo,
-	"rootDisk":          rootDisk,
-	"cpuPct":            cpuPct,
-	"memPct":            memPct,
-	"loadAvg1":          loadAvg1,
-	"uptimeSecs":        uptimeSecs,
-	"swapPct":           swapPct,
+	"serverStatus":         serverStatus,
+	"serverStatusLabel":    serverStatusLabel,
+	"pbarClass":            pbarClass,
+	"clamp":                clamp,
+	"fmtBytes":             fmtBytes,
+	"fmtUptime":            fmtUptime,
+	"timeAgo":              timeAgo,
+	"rootDisk":             rootDisk,
+	"cpuPct":               cpuPct,
+	"memPct":               memPct,
+	"loadAvg1":             loadAvg1,
+	"uptimeSecs":           uptimeSecs,
+	"swapPct":              swapPct,
+	"dockerSummary":        dockerSummary,
+	"hasDockerDiagnostics": hasDockerDiagnostics,
+	"metricCapability":     metricCapability,
+	"metricError":          metricError,
+	"statusClass":          statusClass,
+	"capabilityRows":       capabilityRows,
 	"not": func(v any) bool {
 		if v == nil {
 			return true
@@ -77,6 +84,12 @@ func NewServer(state *State, listen string) *Server {
 func (s *Server) Start() error {
 	log.Printf("Web dashboard at http://%s", s.listen)
 	return http.ListenAndServe(s.listen, s.mux) //nolint:gosec
+}
+
+type capabilityRow struct {
+	Name   string
+	Status string
+	Error  string
 }
 
 func (s *Server) registerRoutes() {
@@ -788,4 +801,80 @@ func swapPct(m monitor.ServerMetrics) float64 {
 		return 0
 	}
 	return m.Swap.Percent
+}
+
+func hasDockerDiagnostics(m monitor.ServerMetrics) bool {
+	return len(m.Containers) > 0 || metricCapability(m, "containers") != "" || metricError(m, "containers") != ""
+}
+
+func dockerSummary(m monitor.ServerMetrics) string {
+	switch status := metricCapability(m, "containers"); {
+	case len(m.Containers) > 0:
+		return fmt.Sprintf("%d running", len(m.Containers))
+	case status == "ok":
+		return "0 running"
+	case status != "":
+		return status
+	default:
+		return "off"
+	}
+}
+
+func metricCapability(m monitor.ServerMetrics, name string) string {
+	if m.Capabilities == nil {
+		return ""
+	}
+	return m.Capabilities[name]
+}
+
+func metricError(m monitor.ServerMetrics, name string) string {
+	if m.MetricErrors == nil {
+		return ""
+	}
+	return m.MetricErrors[name]
+}
+
+func statusClass(status string) string {
+	switch status {
+	case "ok":
+		return "ok"
+	case "error":
+		return "error"
+	case "unavailable":
+		return "warn"
+	default:
+		return "unknown"
+	}
+}
+
+func capabilityRows(m monitor.ServerMetrics) []capabilityRow {
+	keys := make(map[string]struct{}, len(m.Capabilities)+len(m.MetricErrors))
+	for name := range m.Capabilities {
+		keys[name] = struct{}{}
+	}
+	for name := range m.MetricErrors {
+		keys[name] = struct{}{}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(keys))
+	for name := range keys {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	rows := make([]capabilityRow, 0, len(names))
+	for _, name := range names {
+		status := metricCapability(m, name)
+		if status == "" {
+			status = "unavailable"
+		}
+		rows = append(rows, capabilityRow{
+			Name:   name,
+			Status: status,
+			Error:  metricError(m, name),
+		})
+	}
+	return rows
 }
