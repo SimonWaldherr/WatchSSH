@@ -46,12 +46,16 @@ func main() {
 	bootstrappedDiagnostics := ensureDiagnosticServer(cfg)
 	cfg.Servers = filterServers(cfg.Servers, parseCSVSet(*serverNames), parseCSVSet(*serverTags))
 
-	if bootstrappedDiagnostics && len(cfg.Servers) > 0 {
+	if bootstrappedDiagnostics {
 		if !configFileExists {
 			log.Printf("No config file found at %q — starting with defaults.", *configFile)
 			log.Printf("Open http://%s to configure WatchSSH via the web interface.", cfg.Web.Listen)
 		}
-		log.Printf("No servers configured — using the built-in localhost diagnostic profile (local metrics + Docker autodetect).")
+		if len(cfg.Servers) > 0 {
+			log.Printf("No configured servers were found — using the built-in localhost diagnostic profile (local metrics + Docker autodetect).")
+		} else {
+			log.Printf("Warning: no servers matched the current configuration and filters.")
+		}
 	} else if !configFileExists {
 		log.Printf("No config file found at %q — starting with defaults.", *configFile)
 		log.Printf("Open http://%s to configure WatchSSH via the web interface.", cfg.Web.Listen)
