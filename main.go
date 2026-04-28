@@ -53,7 +53,7 @@ func main() {
 			log.Printf("Open http://%s to configure WatchSSH via the web interface.", cfg.Web.Listen)
 		}
 		if usingDiagnosticServer {
-			log.Printf("No configured servers were found — using the built-in localhost diagnostic profile (local metrics + Docker autodetect).")
+			log.Printf("No configured servers were found — using the built-in localhost diagnostic profile (local metrics + Docker auto-detect).")
 		} else {
 			log.Printf("Warning: no servers matched the current configuration and filters.")
 		}

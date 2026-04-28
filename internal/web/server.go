@@ -868,7 +868,7 @@ func capabilityRows(m monitor.ServerMetrics) []capabilityRow {
 	for _, name := range names {
 		status := metricCapability(m, name)
 		if status == "" {
-			status = "n/a"
+			status = "unavailable"
 		}
 		rows = append(rows, capabilityRow{
 			Name:   name,
