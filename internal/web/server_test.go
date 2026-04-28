@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
@@ -71,5 +73,51 @@ func TestReadyzReadyWithMetrics(t *testing.T) {
 	}
 	if payload["status"] != "ready" {
 		t.Fatalf("status payload = %v, want ready", payload["status"])
+	}
+}
+
+func TestServerDetailShowsDockerAndCollectorDiagnostics(t *testing.T) {
+	cfg := &config.Config{
+		Servers: []config.Server{{Name: "localhost", Local: true, Docker: config.DockerConfig{Enabled: true}}},
+	}
+	state := NewState(cfg, "")
+	state.Update([]monitor.ServerMetrics{{
+		ServerName: "localhost",
+		Timestamp:  time.Now(),
+		System: monitor.SystemInfo{
+			Hostname: "localhost",
+			OS:       "Linux",
+		},
+		Capabilities: map[string]string{
+			"containers": "ok",
+			"cpu":        "ok",
+		},
+		MetricErrors: map[string]string{
+			"containers": "docker socket not mounted",
+		},
+		Containers: []monitor.ContainerInfo{{
+			Name:          "api",
+			Image:         "ghcr.io/example/api:latest",
+			Status:        "Up 2 hours",
+			CPUPercent:    12.5,
+			MemUsedBytes:  512 * 1024 * 1024,
+			MemLimitBytes: 1024 * 1024 * 1024,
+		}},
+	}}, nil)
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/server/localhost", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	body := rec.Body.String()
+	for _, want := range []string{"Docker Containers", "Collector Status", "docker socket not mounted", "ghcr.io/example/api:latest"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body missing %q", want)
+		}
 	}
 }

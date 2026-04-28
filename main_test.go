@@ -51,3 +51,37 @@ func TestFilterServers_ByTagOnly(t *testing.T) {
 		t.Fatalf("filtered len=%d, want 2", len(got))
 	}
 }
+
+func TestEnsureDiagnosticServer_BootstrapsLocalhost(t *testing.T) {
+	cfg := &config.Config{}
+
+	if !ensureDiagnosticServer(cfg) {
+		t.Fatal("ensureDiagnosticServer() = false, want true")
+	}
+	if len(cfg.Servers) != 1 {
+		t.Fatalf("len(cfg.Servers) = %d, want 1", len(cfg.Servers))
+	}
+	srv := cfg.Servers[0]
+	if srv.Name != "localhost" {
+		t.Fatalf("srv.Name = %q, want localhost", srv.Name)
+	}
+	if !srv.Local {
+		t.Fatal("srv.Local = false, want true")
+	}
+	if !srv.Docker.Enabled {
+		t.Fatal("srv.Docker.Enabled = false, want true")
+	}
+}
+
+func TestEnsureDiagnosticServer_DoesNotOverrideConfiguredServers(t *testing.T) {
+	cfg := &config.Config{
+		Servers: []config.Server{{Name: "web-01", Host: "192.0.2.10", Username: "monitor"}},
+	}
+
+	if ensureDiagnosticServer(cfg) {
+		t.Fatal("ensureDiagnosticServer() = true, want false")
+	}
+	if len(cfg.Servers) != 1 || cfg.Servers[0].Name != "web-01" {
+		t.Fatalf("cfg.Servers = %#v, want existing server unchanged", cfg.Servers)
+	}
+}

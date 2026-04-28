@@ -9,6 +9,10 @@ that are already present on the target, collects metrics, and reports them
 to the console or as JSON. No agent installation required on the monitored
 hosts — only an SSH user with read-only access to system utilities.
 
+When no servers are configured, WatchSSH automatically falls back to a built-in
+`localhost` diagnostic profile so it is immediately useful on a single machine
+and can surface local Docker containers when available.
+
 ## Supported Platforms (monitoring targets)
 
 | Platform | OS Detection | Uptime | Load | CPU | RAM | Swap | Disk | Network | Processes |
@@ -128,6 +132,9 @@ go build -o watchssh .
 ## Quick Start
 
 ```bash
+./watchssh -once
+# No config yet? WatchSSH inspects localhost and local Docker automatically.
+
 cp config.example.yaml config.yaml
 # Edit config.yaml to add your servers
 ./watchssh -config config.yaml
@@ -320,6 +327,10 @@ web:
 ```
 
 Then open `http://localhost:8080` in your browser.
+
+If your config has an empty `servers:` list, the UI and CLI still show a
+temporary `localhost` diagnostic target so you can inspect the host running
+WatchSSH before scaling out to more systems.
 
 Health endpoints for automation:
 
