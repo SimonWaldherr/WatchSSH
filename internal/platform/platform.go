@@ -69,8 +69,10 @@ type Snapshot struct {
 	Memory     *MemoryStats
 	Swap       *SwapStats
 	Disks      []DiskStats
+	Inodes     []InodeStats
 	Network    []NetworkStats
 	Processes  []ProcessInfo
+	Users      []LoggedInUser
 	Containers []ContainerInfo
 	Caps       map[string]string // metric name → "ok"|"unsupported"|"unavailable"|"error"
 	Errors     map[string]string // metric name → error message
@@ -152,6 +154,16 @@ type DiskStats struct {
 	UsagePercent float64
 }
 
+// InodeStats holds inode usage for a single mounted filesystem.
+type InodeStats struct {
+	Device       string
+	MountPoint   string
+	TotalInodes  int64
+	UsedInodes   int64
+	FreeInodes   int64
+	UsagePercent float64
+}
+
 // NetworkStats holds cumulative byte/packet counters for one interface.
 type NetworkStats struct {
 	Interface   string
@@ -159,6 +171,14 @@ type NetworkStats struct {
 	BytesSent   int64
 	PacketsRecv int64
 	PacketsSent int64
+}
+
+// LoggedInUser represents one active login session reported by who(1).
+type LoggedInUser struct {
+	User      string
+	TTY       string
+	LoginTime string
+	Host      string
 }
 
 // ProcessInfo holds resource usage for a single process.

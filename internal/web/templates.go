@@ -299,6 +299,31 @@ const allTemplates = `
 </div>
 {{end}}
 
+{{if .Metrics.Inodes}}
+<div class="section">
+  <h3>Inode Usage</h3>
+  <table>
+    <thead><tr><th>Device</th><th>Mount</th><th>Used</th><th>Total</th><th>Usage</th></tr></thead>
+    <tbody>
+    {{range .Metrics.Inodes}}
+    <tr>
+      <td>{{.Device}}</td>
+      <td>{{.MountPoint}}</td>
+      <td>{{.UsedInodes}}</td>
+      <td>{{.TotalInodes}}</td>
+      <td>
+        <div style="display:flex;align-items:center;gap:.5rem">
+          <div class="pbar-wrap" style="width:80px;margin:0"><div class="pbar {{pbarClass .UsagePercent}}" style="width:{{clamp .UsagePercent}}%"></div></div>
+          {{printf "%.1f" .UsagePercent}}%
+        </div>
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 {{if .Metrics.Network}}
 <div class="section">
   <h3>Network Interfaces</h3>
@@ -315,6 +340,25 @@ const allTemplates = `
       <td>{{.PacketsSent}}</td>
     </tr>
     {{end}}
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
+{{if .Metrics.Users}}
+<div class="section">
+  <h3>Logged-in Users</h3>
+  <table>
+    <thead><tr><th>User</th><th>TTY</th><th>Login Time</th><th>Host</th></tr></thead>
+    <tbody>
+    {{range .Metrics.Users}}
+    <tr>
+      <td>{{.User}}</td>
+      <td>{{.TTY}}</td>
+      <td>{{.LoginTime}}</td>
+      <td>{{if .Host}}{{.Host}}{{else}}—{{end}}</td>
+    </tr>
     {{end}}
     </tbody>
   </table>

@@ -91,6 +91,47 @@ func TestParseDFOutput(t *testing.T) {
 	}
 }
 
+// TestParseDFInodeOutput verifies POSIX-ish df -iP parsing.
+func TestParseDFInodeOutput(t *testing.T) {
+	input := `Filesystem       Inodes  IUsed   IFree IUse% Mounted on
+/dev/sda1       1000000 250000  750000   25% /
+/dev/sdb1       2000000 100000 1900000    5% /data`
+
+	inodes, err := parseDFInodeOutput(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inodes) != 2 {
+		t.Fatalf("expected 2 inode rows, got %d", len(inodes))
+	}
+	got := inodes[0]
+	if got.Device != "/dev/sda1" {
+		t.Errorf("Device: expected /dev/sda1, got %s", got.Device)
+	}
+	if got.MountPoint != "/" {
+		t.Errorf("MountPoint: expected /, got %s", got.MountPoint)
+	}
+	if got.TotalInodes != 1000000 {
+		t.Errorf("TotalInodes: expected 1000000, got %d", got.TotalInodes)
+	}
+	if got.UsedInodes != 250000 {
+		t.Errorf("UsedInodes: expected 250000, got %d", got.UsedInodes)
+	}
+	if got.UsagePercent != 25 {
+		t.Errorf("UsagePercent: expected 25, got %f", got.UsagePercent)
+	}
+}
+
+func TestParseDFInodeOutput_HeaderOnly(t *testing.T) {
+	inodes, err := parseDFInodeOutput("Filesystem Inodes IUsed IFree IUse% Mounted on\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inodes) != 0 {
+		t.Errorf("expected no inode rows, got %d", len(inodes))
+	}
+}
+
 // TestParsePSAux verifies BSD ps aux parsing.
 func TestParsePSAux(t *testing.T) {
 	input := `USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
@@ -117,6 +158,35 @@ user      1234  2.5  1.2  45678  8192 pts/0    S    10:01   0:02 bash -i`
 	}
 	if p.RSSBytes != 8192*1024 {
 		t.Errorf("RSSBytes: expected %d, got %d", 8192*1024, p.RSSBytes)
+	}
+}
+
+// TestParseWhoOutput verifies who(1) session parsing.
+func TestParseWhoOutput(t *testing.T) {
+	input := `alice pts/0 2026-04-30 08:12 (192.0.2.55)
+bob console Apr 30 07:58`
+
+	users, err := parseWhoOutput(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(users))
+	}
+	if users[0].User != "alice" {
+		t.Errorf("User: expected alice, got %s", users[0].User)
+	}
+	if users[0].TTY != "pts/0" {
+		t.Errorf("TTY: expected pts/0, got %s", users[0].TTY)
+	}
+	if users[0].LoginTime != "2026-04-30 08:12" {
+		t.Errorf("LoginTime: expected timestamp, got %s", users[0].LoginTime)
+	}
+	if users[0].Host != "192.0.2.55" {
+		t.Errorf("Host: expected 192.0.2.55, got %s", users[0].Host)
+	}
+	if users[1].Host != "" {
+		t.Errorf("Host: expected empty, got %s", users[1].Host)
 	}
 }
 

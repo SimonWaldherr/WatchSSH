@@ -118,6 +118,17 @@ func renderServerMetrics(m ServerMetrics) string {
 		divider()
 	}
 
+	// Inodes
+	if len(m.Inodes) > 0 {
+		line("Inodes :")
+		for _, i := range m.Inodes {
+			line(fmt.Sprintf("  %-16s %-12s %d / %d (%.0f%%)",
+				truncate(i.Device, 16), truncate(i.MountPoint, 12),
+				i.UsedInodes, i.TotalInodes, i.UsagePercent))
+		}
+		divider()
+	}
+
 	// Network
 	if len(m.Network) > 0 {
 		line("Network:")
@@ -128,6 +139,20 @@ func renderServerMetrics(m ServerMetrics) string {
 			line(fmt.Sprintf("  %-10s  rx %s  tx %s",
 				truncate(n.Interface, 10),
 				formatBytes(n.BytesRecv), formatBytes(n.BytesSent)))
+		}
+		divider()
+	}
+
+	// Logged-in users
+	if len(m.Users) > 0 {
+		line("Users  :")
+		for _, u := range m.Users {
+			remote := ""
+			if u.Host != "" {
+				remote = " from " + u.Host
+			}
+			line(fmt.Sprintf("  %-12s %-10s %s%s",
+				truncate(u.User, 12), truncate(u.TTY, 10), truncate(u.LoginTime, 24), remote))
 		}
 		divider()
 	}

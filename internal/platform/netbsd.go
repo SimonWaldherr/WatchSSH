@@ -159,6 +159,9 @@ func (c *netbsdCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 		}
 	}
 
+	// 10. Optional modules from standard Unix tools.
+	collectStandardUnixMetrics(ctx, r, s)
+
 	return s, nil
 }
 

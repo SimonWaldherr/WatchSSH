@@ -153,6 +153,9 @@ func (c *freebsdCollector) Collect(ctx context.Context, r Runner) (*Snapshot, er
 		}
 	}
 
+	// 10. Optional modules from standard Unix tools.
+	collectStandardUnixMetrics(ctx, r, s)
+
 	return s, nil
 }
 
