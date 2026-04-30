@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -136,6 +137,104 @@ func parseDFOutput(output string) ([]DiskStats, error) {
 		})
 	}
 	return disks, nil
+}
+
+// collectStandardUnixMetrics collects optional metrics available from common Unix tools.
+func collectStandardUnixMetrics(ctx context.Context, r Runner, s *Snapshot) {
+	inodeOut, err := r.Run(ctx, "df -iP 2>/dev/null")
+	if err != nil {
+		s.setErr("inodes", err.Error())
+	} else {
+		inodes, err := parseDFInodeOutput(inodeOut)
+		if err != nil {
+			s.setErr("inodes", err.Error())
+		} else {
+			s.Inodes = inodes
+			s.setOK("inodes")
+		}
+	}
+
+	whoOut, err := r.Run(ctx, "who 2>/dev/null | head -20")
+	if err != nil {
+		s.setErr("logged_users", err.Error())
+	} else {
+		users, err := parseWhoOutput(whoOut)
+		if err != nil {
+			s.setErr("logged_users", err.Error())
+		} else {
+			s.Users = users
+			s.setOK("logged_users")
+		}
+	}
+}
+
+// parseDFInodeOutput parses POSIX-ish `df -iP` output.
+func parseDFInodeOutput(output string) ([]InodeStats, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		return nil, nil
+	}
+
+	var inodes []InodeStats
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if len(fields) < 6 {
+			continue
+		}
+		total, err := strconv.ParseInt(fields[1], 10, 64)
+		if err != nil {
+			continue
+		}
+		used, err := strconv.ParseInt(fields[2], 10, 64)
+		if err != nil {
+			continue
+		}
+		free, err := strconv.ParseInt(fields[3], 10, 64)
+		if err != nil {
+			continue
+		}
+		pctStr := strings.TrimSuffix(fields[4], "%")
+		pct, _ := strconv.ParseFloat(pctStr, 64)
+
+		inodes = append(inodes, InodeStats{
+			Device:       fields[0],
+			MountPoint:   fields[5],
+			TotalInodes:  total,
+			UsedInodes:   used,
+			FreeInodes:   free,
+			UsagePercent: pct,
+		})
+	}
+	return inodes, nil
+}
+
+// parseWhoOutput parses who(1) output into active login sessions.
+func parseWhoOutput(output string) ([]LoggedInUser, error) {
+	var users []LoggedInUser
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		loginFields := append([]string(nil), fields[2:]...)
+		host := ""
+		if len(loginFields) > 0 {
+			last := loginFields[len(loginFields)-1]
+			if strings.HasPrefix(last, "(") && strings.HasSuffix(last, ")") {
+				host = strings.TrimSuffix(strings.TrimPrefix(last, "("), ")")
+				loginFields = loginFields[:len(loginFields)-1]
+			}
+		}
+
+		users = append(users, LoggedInUser{
+			User:      fields[0],
+			TTY:       fields[1],
+			LoginTime: strings.Join(loginFields, " "),
+			Host:      host,
+		})
+	}
+	return users, nil
 }
 
 // parsePSAux parses BSD/Linux `ps aux` output.

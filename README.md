@@ -15,13 +15,13 @@ and can surface local Docker containers when available.
 
 ## Supported Platforms (monitoring targets)
 
-| Platform | OS Detection | Uptime | Load | CPU | RAM | Swap | Disk | Network | Processes |
-|----------|:-----------:|:------:|:----:|:---:|:---:|:----:|:----:|:-------:|:---------:|
-| Linux    | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| macOS (Darwin) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FreeBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ |
-| OpenBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ |
-| NetBSD   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ |
+| Platform | OS Detection | Uptime | Load | CPU | RAM | Swap | Disk | Inodes | Network | Users | Processes |
+|----------|:-----------:|:------:|:----:|:---:|:---:|:----:|:----:|:------:|:-------:|:-----:|:---------:|
+| Linux    | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| macOS (Darwin) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FreeBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| OpenBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| NetBSD   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 \* Swap is reported as `null`/`n/a` when not configured on the host (not an error).
 
@@ -36,6 +36,9 @@ and can surface local Docker containers when available.
 - **OpenBSD**: Uses `sysctl kern.cp_time` (key=value format), `sysctl
   vm.uvmexp`, `swapctl -s -k`, and `netstat -ibn`.
 - **NetBSD**: Similar to FreeBSD; uses `sysctl vm.uvmexp2` for memory.
+- **Standard Unix tool modules**: All platform collectors also try `df -iP`
+  for inode usage and `who` for active login sessions. Failures are reported
+  via `capabilities.inodes` and `capabilities.logged_users`.
 
 If an unknown or unsupported OS is detected, WatchSSH falls back to Linux-style
 commands. Metrics that cannot be collected are marked `null` in JSON output and
@@ -290,6 +293,8 @@ unavailable or unsupported metrics:
       "swap": "unsupported",
       "load": "ok",
       "disks": "ok",
+      "inodes": "ok",
+      "logged_users": "ok",
       "network": "ok"
     }
   }

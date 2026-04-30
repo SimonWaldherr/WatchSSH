@@ -362,6 +362,17 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 		})
 	}
 
+	for _, i := range snap.Inodes {
+		m.Inodes = append(m.Inodes, InodeStats{
+			Device:       i.Device,
+			MountPoint:   i.MountPoint,
+			TotalInodes:  i.TotalInodes,
+			UsedInodes:   i.UsedInodes,
+			FreeInodes:   i.FreeInodes,
+			UsagePercent: i.UsagePercent,
+		})
+	}
+
 	for _, n := range snap.Network {
 		m.Network = append(m.Network, NetworkStats{
 			Interface:   n.Interface,
@@ -369,6 +380,15 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 			BytesSent:   n.BytesSent,
 			PacketsRecv: n.PacketsRecv,
 			PacketsSent: n.PacketsSent,
+		})
+	}
+
+	for _, u := range snap.Users {
+		m.Users = append(m.Users, LoggedInUser{
+			User:      u.User,
+			TTY:       u.TTY,
+			LoginTime: u.LoginTime,
+			Host:      u.Host,
 		})
 	}
 

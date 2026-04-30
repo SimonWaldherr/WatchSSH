@@ -151,6 +151,9 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 		}
 	}
 
+	// 9. Optional modules from standard Unix tools.
+	collectStandardUnixMetrics(ctx, r, s)
+
 	return s, nil
 }
 
