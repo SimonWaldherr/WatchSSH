@@ -55,7 +55,7 @@ them through standard tools:
 - Filesystem inode usage per mount (`disks[].inodes_*`)
 - Network receive/transmit errors and drops per interface (`network[].errors_*`,
   `network[].drops_*`)
-- Linux file descriptor pressure from `/proc/sys/fs/file-nr`
+- Linux/macOS file descriptor pressure from `/proc/sys/fs/file-nr` or `sysctl`
   (`file_descriptors`)
 
 Capability keys for these metrics are `cpu_cores`, `disk_inodes`, and
@@ -257,8 +257,8 @@ Commands run on target hosts:
 | Platform | Commands |
 |----------|----------|
 | Linux | `uname`, `hostname`, `getconf`/`nproc`, `cat /proc/uptime`, `cat /proc/loadavg`, `cat /proc/meminfo`, `cat /proc/stat` (×2), `df`, `cat /proc/net/dev`, `cat /proc/sys/fs/file-nr`, `ps` |
+| macOS | `uname`, `hostname`, `getconf`/`sysctl`, `sysctl kern.boottime`, `sysctl vm.loadavg`, `sysctl hw.memsize`, `sysctl kern.num_files`, `sysctl kern.maxfiles`, `vm_stat`, `sysctl vm.swapusage`, `top`, `df`, `netstat`, `ps`, `who` |
 | Linux + Docker | same as above, plus `docker version`, `docker ps`, `docker stats --no-stream` |
-| macOS | `uname`, `hostname`, `sysctl`, `vm_stat`, `top`, `df`, `netstat`, `ps` |
 | FreeBSD | `uname`, `hostname`, `sysctl`, `swapinfo`, `df`, `netstat`, `ps` |
 | OpenBSD | `uname`, `hostname`, `sysctl`, `swapctl`, `df`, `netstat`, `ps` |
 | NetBSD | `uname`, `hostname`, `sysctl`, `swapctl`, `df`, `netstat`, `ps` |
@@ -396,7 +396,7 @@ main.go
 - On NetBSD, memory stats use `vm.uvmexp2` which may differ across NetBSD versions.
 - Docker observability is Linux-only; enabling `docker.enabled` on non-Linux targets
   results in `capabilities.containers = "unsupported"` rather than an error.
-- File descriptor pressure is Linux-only; non-Linux targets report
+- File descriptor pressure is currently Linux/macOS-only; other targets report
   `capabilities.file_descriptors = "unsupported"`.
 - The web UI's server-detail page shows platform/capabilities but has no
   history/graphing capability.

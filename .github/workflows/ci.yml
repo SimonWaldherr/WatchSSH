@@ -9,7 +9,12 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Go (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
     steps:
       - name: Checkout
@@ -19,6 +24,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
       - name: Verify formatting
         run: |
@@ -29,8 +35,15 @@ jobs:
             exit 1
           fi
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Build
         run: go build ./...
 
       - name: Test
         run: go test ./...
+
+      - name: Test with race detector
+        if: runner.os == 'Linux'
+        run: go test -race ./...

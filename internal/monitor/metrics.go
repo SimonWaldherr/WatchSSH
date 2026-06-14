@@ -29,7 +29,7 @@ type ServerMetrics struct {
 	Inodes    []InodeStats   `json:"inodes,omitempty"`
 	Network   []NetworkStats `json:"network"`
 	Processes []ProcessInfo  `json:"processes"`
-	// FileDescriptors is populated on Linux hosts from /proc/sys/fs/file-nr.
+	// FileDescriptors is populated when the platform exposes kernel-wide counters.
 	FileDescriptors *FileDescriptorStats `json:"file_descriptors,omitempty"`
 	Users           []LoggedInUser       `json:"logged_in_users,omitempty"`
 	// Containers is populated on Linux hosts when docker.enabled is true.

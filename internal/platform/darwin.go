@@ -165,7 +165,18 @@ func (c *darwinCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 		}
 	}
 
-	s.setUnsupported("file_descriptors")
+	fdOut, err := r.Run(ctx, "sysctl -n kern.num_files kern.maxfiles")
+	if err != nil {
+		s.setErr("file_descriptors", err.Error())
+	} else {
+		fd, err := parseDarwinFileDescriptors(fdOut)
+		if err != nil {
+			s.setErr("file_descriptors", err.Error())
+		} else {
+			s.FileDescriptors = fd
+			s.setOK("file_descriptors")
+		}
+	}
 
 	// 10. Optional modules from standard Unix tools.
 	collectStandardUnixMetrics(ctx, r, s)
@@ -358,6 +369,33 @@ func parseDarwinTopCPU(output string) (*CPUStats, error) {
 		UserPercent:   userPct,
 		SystemPercent: sysPct,
 		IdlePercent:   idlePct,
+	}, nil
+}
+
+// parseDarwinFileDescriptors parses kern.num_files and kern.maxfiles values.
+func parseDarwinFileDescriptors(output string) (*FileDescriptorStats, error) {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) < 2 {
+		return nil, fmt.Errorf("parseDarwinFileDescriptors: expected 2 fields, got %d", len(fields))
+	}
+	allocated, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parseDarwinFileDescriptors: bad kern.num_files %q: %w", fields[0], err)
+	}
+	max, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parseDarwinFileDescriptors: bad kern.maxfiles %q: %w", fields[1], err)
+	}
+
+	var pct float64
+	if max > 0 {
+		pct = 100.0 * float64(allocated) / float64(max)
+	}
+
+	return &FileDescriptorStats{
+		Allocated:    allocated,
+		Max:          max,
+		UsagePercent: pct,
 	}, nil
 }
 

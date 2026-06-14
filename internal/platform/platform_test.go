@@ -231,6 +231,35 @@ bob console Apr 30 07:58`
 	}
 }
 
+func TestParseDarwinFileDescriptors(t *testing.T) {
+	fd, err := parseDarwinFileDescriptors("2048\n49152\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fd.Allocated != 2048 {
+		t.Errorf("Allocated: expected 2048, got %d", fd.Allocated)
+	}
+	if fd.Unused != 0 {
+		t.Errorf("Unused: expected 0, got %d", fd.Unused)
+	}
+	if fd.Max != 49152 {
+		t.Errorf("Max: expected 49152, got %d", fd.Max)
+	}
+	wantPct := 100.0 * 2048.0 / 49152.0
+	if math.Abs(fd.UsagePercent-wantPct) > 0.001 {
+		t.Errorf("UsagePercent: expected %f, got %f", wantPct, fd.UsagePercent)
+	}
+}
+
+func TestParseDarwinFileDescriptors_Invalid(t *testing.T) {
+	if _, err := parseDarwinFileDescriptors("2048\n"); err == nil {
+		t.Fatal("expected error for missing maxfiles")
+	}
+	if _, err := parseDarwinFileDescriptors("open\n49152\n"); err == nil {
+		t.Fatal("expected error for invalid num_files")
+	}
+}
+
 // TestParseLinuxMemInfo verifies /proc/meminfo parsing.
 func TestParseLinuxMemInfo(t *testing.T) {
 	input := `MemTotal:       16384000 kB

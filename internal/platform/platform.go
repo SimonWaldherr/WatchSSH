@@ -74,7 +74,7 @@ type Snapshot struct {
 	Processes  []ProcessInfo
 	Users      []LoggedInUser
 	Containers []ContainerInfo
-	// FileDescriptors is currently collected on Linux via /proc/sys/fs/file-nr.
+	// FileDescriptors is collected on platforms with kernel-wide descriptor counters.
 	FileDescriptors *FileDescriptorStats
 	Caps            map[string]string // metric name → "ok"|"unsupported"|"unavailable"|"error"
 	Errors          map[string]string // metric name → error message

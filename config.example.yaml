@@ -214,7 +214,7 @@ alerts:
       threshold: 85
       mount_point: /
 
-    # Linux file descriptor pressure
+    # Linux/macOS file descriptor pressure
     - name: FileDescriptorsHigh
       metric: file_descriptor_usage
       operator: ">"
