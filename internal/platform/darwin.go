@@ -167,6 +167,9 @@ func (c *darwinCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 
 	s.setUnsupported("file_descriptors")
 
+	// 10. Optional modules from standard Unix tools.
+	collectStandardUnixMetrics(ctx, r, s)
+
 	return s, nil
 }
 

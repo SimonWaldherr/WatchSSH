@@ -175,6 +175,8 @@ servers:
   # ── Local machine (no SSH required) ──────────────────────────────────────
   - name: localhost
     local: true    # Run commands locally; no SSH connection is made
+    docker:
+      enabled: true   # Collect local Docker container stats when available (Linux only)
 
 
 # -----------------------------------------------------------------------------

@@ -43,13 +43,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+	bootstrappedDiagnostics := ensureDiagnosticServer(cfg)
 	cfg.Servers = filterServers(cfg.Servers, parseCSVSet(*serverNames), parseCSVSet(*serverTags))
+	usingDiagnosticServer := bootstrappedDiagnostics && len(cfg.Servers) > 0
 
-	if !configFileExists {
+	if bootstrappedDiagnostics {
+		if !configFileExists {
+			log.Printf("No config file found at %q — starting with defaults.", *configFile)
+			log.Printf("Open http://%s to configure WatchSSH via the web interface.", cfg.Web.Listen)
+		}
+		if usingDiagnosticServer {
+			log.Printf("No configured servers were found — using the built-in localhost diagnostic profile (local metrics + Docker auto-detect).")
+		} else {
+			log.Printf("Warning: no servers matched the current configuration and filters.")
+		}
+	} else if !configFileExists {
 		log.Printf("No config file found at %q — starting with defaults.", *configFile)
 		log.Printf("Open http://%s to configure WatchSSH via the web interface.", cfg.Web.Listen)
 	} else if len(cfg.Servers) == 0 {
-		log.Printf("Warning: no servers configured — visit the web UI to add servers.")
+		log.Printf("Warning: no servers matched the current configuration and filters.")
 	}
 
 	log.Printf("WatchSSH v%s starting — monitoring %d server(s)", version, len(cfg.Servers))
@@ -123,6 +135,19 @@ func parseCSVSet(v string) map[string]struct{} {
 		out[item] = struct{}{}
 	}
 	return out
+}
+
+func ensureDiagnosticServer(cfg *config.Config) bool {
+	if len(cfg.Servers) > 0 {
+		return false
+	}
+	cfg.Servers = []config.Server{{
+		Name:   "localhost",
+		Local:  true,
+		Tags:   []string{"local", "diagnostic"},
+		Docker: config.DockerConfig{Enabled: true},
+	}}
+	return true
 }
 
 func filterServers(servers []config.Server, names map[string]struct{}, tags map[string]struct{}) []config.Server {

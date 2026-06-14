@@ -26,10 +26,12 @@ type ServerMetrics struct {
 	Load   *LoadStats   `json:"load"`   // null if unsupported
 
 	Disks     []DiskStats    `json:"disks"`
+	Inodes    []InodeStats   `json:"inodes,omitempty"`
 	Network   []NetworkStats `json:"network"`
 	Processes []ProcessInfo  `json:"processes"`
 	// FileDescriptors is populated on Linux hosts from /proc/sys/fs/file-nr.
 	FileDescriptors *FileDescriptorStats `json:"file_descriptors,omitempty"`
+	Users           []LoggedInUser       `json:"logged_in_users,omitempty"`
 	// Containers is populated on Linux hosts when docker.enabled is true.
 	Containers   []ContainerInfo     `json:"containers,omitempty"`
 	Connectivity ConnectivityStats   `json:"connectivity"`
@@ -93,6 +95,16 @@ type DiskStats struct {
 	InodesUsagePercent float64 `json:"inodes_usage_percent,omitempty"`
 }
 
+// InodeStats contains inode usage for one mount point.
+type InodeStats struct {
+	Device       string  `json:"device"`
+	MountPoint   string  `json:"mount_point"`
+	TotalInodes  int64   `json:"total_inodes"`
+	UsedInodes   int64   `json:"used_inodes"`
+	FreeInodes   int64   `json:"free_inodes"`
+	UsagePercent float64 `json:"usage_percent"`
+}
+
 // NetworkStats contains cumulative byte/packet counters for one interface.
 type NetworkStats struct {
 	Interface   string `json:"interface"`
@@ -115,6 +127,14 @@ type LoadStats struct {
 	RunningProcesses int     `json:"running_processes,omitempty"`
 	TotalProcesses   int     `json:"total_processes,omitempty"`
 	LastPID          int     `json:"last_pid,omitempty"`
+}
+
+// LoggedInUser represents one active login session.
+type LoggedInUser struct {
+	User      string `json:"user"`
+	TTY       string `json:"tty"`
+	LoginTime string `json:"login_time"`
+	Host      string `json:"host,omitempty"`
 }
 
 // ProcessInfo represents a single running process.

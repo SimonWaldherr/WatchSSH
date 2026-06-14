@@ -69,8 +69,10 @@ type Snapshot struct {
 	Memory     *MemoryStats
 	Swap       *SwapStats
 	Disks      []DiskStats
+	Inodes     []InodeStats
 	Network    []NetworkStats
 	Processes  []ProcessInfo
+	Users      []LoggedInUser
 	Containers []ContainerInfo
 	// FileDescriptors is currently collected on Linux via /proc/sys/fs/file-nr.
 	FileDescriptors *FileDescriptorStats
@@ -162,6 +164,16 @@ type DiskStats struct {
 	InodesUsagePercent float64
 }
 
+// InodeStats holds inode usage for a single mounted filesystem.
+type InodeStats struct {
+	Device       string
+	MountPoint   string
+	TotalInodes  int64
+	UsedInodes   int64
+	FreeInodes   int64
+	UsagePercent float64
+}
+
 // NetworkStats holds cumulative byte/packet counters for one interface.
 type NetworkStats struct {
 	Interface   string
@@ -181,6 +193,14 @@ type FileDescriptorStats struct {
 	Unused       int64
 	Max          int64
 	UsagePercent float64
+}
+
+// LoggedInUser represents one active login session reported by who(1).
+type LoggedInUser struct {
+	User      string
+	TTY       string
+	LoginTime string
+	Host      string
 }
 
 // ProcessInfo holds resource usage for a single process.

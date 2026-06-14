@@ -9,15 +9,19 @@ that are already present on the target, collects metrics, and reports them
 to the console or as JSON. No agent installation required on the monitored
 hosts — only an SSH user with read-only access to system utilities.
 
+When no servers are configured, WatchSSH automatically falls back to a built-in
+`localhost` diagnostic profile so it is immediately useful on a single machine
+and can surface local Docker containers when available.
+
 ## Supported Platforms (monitoring targets)
 
-| Platform | OS Detection | Uptime | Load | CPU | RAM | Swap | Disk | Network | Processes |
-|----------|:-----------:|:------:|:----:|:---:|:---:|:----:|:----:|:-------:|:---------:|
-| Linux    | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| macOS (Darwin) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| FreeBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ |
-| OpenBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ |
-| NetBSD   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ |
+| Platform | OS Detection | Uptime | Load | CPU | RAM | Swap | Disk | Inodes | Network | Users | Processes |
+|----------|:-----------:|:------:|:----:|:---:|:---:|:----:|:----:|:------:|:-------:|:-----:|:---------:|
+| Linux    | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| macOS (Darwin) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| FreeBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| OpenBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| NetBSD   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 \* Swap is reported as `null`/`n/a` when not configured on the host (not an error).
 
@@ -32,6 +36,9 @@ hosts — only an SSH user with read-only access to system utilities.
 - **OpenBSD**: Uses `sysctl kern.cp_time` (key=value format), `sysctl
   vm.uvmexp`, `swapctl -s -k`, and `netstat -ibn`.
 - **NetBSD**: Similar to FreeBSD; uses `sysctl vm.uvmexp2` for memory.
+- **Standard Unix tool modules**: All platform collectors also try `df -iP`
+  for inode usage and `who` for active login sessions. Failures are reported
+  via `capabilities.inodes` and `capabilities.logged_users`.
 
 If an unknown or unsupported OS is detected, WatchSSH falls back to Linux-style
 commands. Metrics that cannot be collected are marked `null` in JSON output and
@@ -145,6 +152,9 @@ go build -o watchssh .
 ## Quick Start
 
 ```bash
+./watchssh -once
+# No config yet? WatchSSH inspects localhost and local Docker automatically.
+
 cp config.example.yaml config.yaml
 # Edit config.yaml to add your servers
 ./watchssh -config config.yaml
@@ -301,8 +311,10 @@ unavailable or unsupported metrics:
       "load": "ok",
       "disks": "ok",
       "disk_inodes": "ok",
-      "network": "ok",
       "cpu_cores": "ok",
+      "inodes": "ok",
+      "logged_users": "ok",
+      "network": "ok",
       "file_descriptors": "ok"
     }
   }
@@ -342,6 +354,10 @@ web:
 ```
 
 Then open `http://localhost:8080` in your browser.
+
+If your config has an empty `servers:` list, the UI and CLI still show a
+temporary `localhost` diagnostic target so you can inspect the host running
+WatchSSH before scaling out to more systems.
 
 Health endpoints for automation:
 

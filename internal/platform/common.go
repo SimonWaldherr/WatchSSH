@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -154,16 +155,37 @@ func parseDFOutput(output string) ([]DiskStats, error) {
 	return disks, nil
 }
 
-// parseDFInodeOutput parses GNU `df -i -P` and BSD/macOS `df -i` output.
-//
-// GNU df:
-//
-//	Filesystem Inodes IUsed IFree IUse% Mounted on
-//
-// BSD/macOS df:
-//
-//	Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
-func parseDFInodeOutput(output string) ([]DiskStats, error) {
+// collectStandardUnixMetrics collects optional metrics available from common Unix tools.
+func collectStandardUnixMetrics(ctx context.Context, r Runner, s *Snapshot) {
+	inodeOut, err := r.Run(ctx, "df -iP 2>/dev/null")
+	if err != nil {
+		s.setErr("inodes", err.Error())
+	} else {
+		inodes, err := parseDFInodeOutput(inodeOut)
+		if err != nil {
+			s.setErr("inodes", err.Error())
+		} else {
+			s.Inodes = inodes
+			s.setOK("inodes")
+		}
+	}
+
+	whoOut, err := r.Run(ctx, "who 2>/dev/null | head -20")
+	if err != nil {
+		s.setErr("logged_users", err.Error())
+	} else {
+		users, err := parseWhoOutput(whoOut)
+		if err != nil {
+			s.setErr("logged_users", err.Error())
+		} else {
+			s.Users = users
+			s.setOK("logged_users")
+		}
+	}
+}
+
+// parseDFInodeOutput parses GNU/POSIX `df -iP` and BSD/macOS `df -i` output.
+func parseDFInodeOutput(output string) ([]InodeStats, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	if len(lines) < 2 {
 		return nil, nil
@@ -172,7 +194,7 @@ func parseDFInodeOutput(output string) ([]DiskStats, error) {
 	headerFields := strings.Fields(strings.ToLower(lines[0]))
 	bsdLayout := !(len(headerFields) >= 2 && headerFields[1] == "inodes")
 
-	var disks []DiskStats
+	var inodes []InodeStats
 	for _, line := range lines[1:] {
 		fields := strings.Fields(line)
 		if bsdLayout {
@@ -183,17 +205,20 @@ func parseDFInodeOutput(output string) ([]DiskStats, error) {
 			pctIdx := len(fields) - 2
 			freeIdx := len(fields) - 3
 			usedIdx := len(fields) - 4
-			inodes := parseInt64OrZero(fields[usedIdx]) + parseInt64OrZero(fields[freeIdx])
+			deviceEnd := len(fields) - 8
+			if deviceEnd < 1 {
+				deviceEnd = 1
+			}
 			used := parseInt64OrZero(fields[usedIdx])
 			free := parseInt64OrZero(fields[freeIdx])
 			pct := parsePercentOrZero(fields[pctIdx])
-			disks = append(disks, DiskStats{
-				Device:             fields[0],
-				MountPoint:         fields[mountIdx],
-				InodesTotal:        inodes,
-				InodesUsed:         used,
-				InodesFree:         free,
-				InodesUsagePercent: pct,
+			inodes = append(inodes, InodeStats{
+				Device:       strings.Join(fields[:deviceEnd], " "),
+				MountPoint:   fields[mountIdx],
+				TotalInodes:  used + free,
+				UsedInodes:   used,
+				FreeInodes:   free,
+				UsagePercent: pct,
 			})
 			continue
 		}
@@ -201,24 +226,24 @@ func parseDFInodeOutput(output string) ([]DiskStats, error) {
 		if len(fields) < 6 {
 			continue
 		}
-		disks = append(disks, DiskStats{
-			Device:             fields[0],
-			MountPoint:         fields[5],
-			InodesTotal:        parseInt64OrZero(fields[1]),
-			InodesUsed:         parseInt64OrZero(fields[2]),
-			InodesFree:         parseInt64OrZero(fields[3]),
-			InodesUsagePercent: parsePercentOrZero(fields[4]),
+		inodes = append(inodes, InodeStats{
+			Device:       fields[0],
+			MountPoint:   fields[5],
+			TotalInodes:  parseInt64OrZero(fields[1]),
+			UsedInodes:   parseInt64OrZero(fields[2]),
+			FreeInodes:   parseInt64OrZero(fields[3]),
+			UsagePercent: parsePercentOrZero(fields[4]),
 		})
 	}
-	return disks, nil
+	return inodes, nil
 }
 
-func mergeDiskInodes(disks, inodes []DiskStats) []DiskStats {
+func mergeDiskInodes(disks []DiskStats, inodes []InodeStats) []DiskStats {
 	if len(disks) == 0 || len(inodes) == 0 {
 		return disks
 	}
-	byMount := make(map[string]DiskStats, len(inodes))
-	byDevice := make(map[string]DiskStats, len(inodes))
+	byMount := make(map[string]InodeStats, len(inodes))
+	byDevice := make(map[string]InodeStats, len(inodes))
 	for _, inode := range inodes {
 		if inode.MountPoint != "" {
 			byMount[inode.MountPoint] = inode
@@ -235,10 +260,10 @@ func mergeDiskInodes(disks, inodes []DiskStats) []DiskStats {
 		if !ok {
 			continue
 		}
-		disks[i].InodesTotal = inode.InodesTotal
-		disks[i].InodesUsed = inode.InodesUsed
-		disks[i].InodesFree = inode.InodesFree
-		disks[i].InodesUsagePercent = inode.InodesUsagePercent
+		disks[i].InodesTotal = inode.TotalInodes
+		disks[i].InodesUsed = inode.UsedInodes
+		disks[i].InodesFree = inode.FreeInodes
+		disks[i].InodesUsagePercent = inode.UsagePercent
 	}
 	return disks
 }
@@ -251,6 +276,35 @@ func parseInt64OrZero(s string) int64 {
 func parsePercentOrZero(s string) float64 {
 	v, _ := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "%"), 64)
 	return v
+}
+
+// parseWhoOutput parses who(1) output into active login sessions.
+func parseWhoOutput(output string) ([]LoggedInUser, error) {
+	var users []LoggedInUser
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+
+		loginFields := append([]string(nil), fields[2:]...)
+		host := ""
+		if len(loginFields) > 0 {
+			last := loginFields[len(loginFields)-1]
+			if strings.HasPrefix(last, "(") && strings.HasSuffix(last, ")") {
+				host = strings.TrimSuffix(strings.TrimPrefix(last, "("), ")")
+				loginFields = loginFields[:len(loginFields)-1]
+			}
+		}
+
+		users = append(users, LoggedInUser{
+			User:      fields[0],
+			TTY:       fields[1],
+			LoginTime: strings.Join(loginFields, " "),
+			Host:      host,
+		})
+	}
+	return users, nil
 }
 
 // parsePSAux parses BSD/Linux `ps aux` output.

@@ -107,14 +107,14 @@ func TestParseDFInodeOutput_GNU(t *testing.T) {
 	if root.MountPoint != "/" {
 		t.Errorf("MountPoint: expected /, got %s", root.MountPoint)
 	}
-	if root.InodesTotal != 6553600 {
-		t.Errorf("InodesTotal: expected 6553600, got %d", root.InodesTotal)
+	if root.TotalInodes != 6553600 {
+		t.Errorf("TotalInodes: expected 6553600, got %d", root.TotalInodes)
 	}
-	if root.InodesUsed != 12345 {
-		t.Errorf("InodesUsed: expected 12345, got %d", root.InodesUsed)
+	if root.UsedInodes != 12345 {
+		t.Errorf("UsedInodes: expected 12345, got %d", root.UsedInodes)
 	}
-	if root.InodesUsagePercent != 1 {
-		t.Errorf("InodesUsagePercent: expected 1, got %f", root.InodesUsagePercent)
+	if root.UsagePercent != 1 {
+		t.Errorf("UsagePercent: expected 1, got %f", root.UsagePercent)
 	}
 }
 
@@ -130,14 +130,14 @@ func TestParseDFInodeOutput_BSD(t *testing.T) {
 		t.Fatalf("expected 1 entry, got %d", len(inodes))
 	}
 	root := inodes[0]
-	if root.InodesTotal != 518000 {
-		t.Errorf("InodesTotal: expected 518000, got %d", root.InodesTotal)
+	if root.TotalInodes != 518000 {
+		t.Errorf("TotalInodes: expected 518000, got %d", root.TotalInodes)
 	}
-	if root.InodesFree != 498000 {
-		t.Errorf("InodesFree: expected 498000, got %d", root.InodesFree)
+	if root.FreeInodes != 498000 {
+		t.Errorf("FreeInodes: expected 498000, got %d", root.FreeInodes)
 	}
-	if root.InodesUsagePercent != 4 {
-		t.Errorf("InodesUsagePercent: expected 4, got %f", root.InodesUsagePercent)
+	if root.UsagePercent != 4 {
+		t.Errorf("UsagePercent: expected 4, got %f", root.UsagePercent)
 	}
 }
 
@@ -155,8 +155,21 @@ map auto_home           0    0         0   100%     0     0      - /System/Volum
 	if inodes[0].MountPoint != "/System/Volumes/Data/home" {
 		t.Errorf("MountPoint: expected /System/Volumes/Data/home, got %s", inodes[0].MountPoint)
 	}
-	if inodes[0].InodesTotal != 0 {
-		t.Errorf("InodesTotal: expected 0, got %d", inodes[0].InodesTotal)
+	if inodes[0].Device != "map auto_home" {
+		t.Errorf("Device: expected map auto_home, got %s", inodes[0].Device)
+	}
+	if inodes[0].TotalInodes != 0 {
+		t.Errorf("TotalInodes: expected 0, got %d", inodes[0].TotalInodes)
+	}
+}
+
+func TestParseDFInodeOutput_HeaderOnly(t *testing.T) {
+	inodes, err := parseDFInodeOutput("Filesystem Inodes IUsed IFree IUse% Mounted on\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inodes) != 0 {
+		t.Errorf("expected no inode rows, got %d", len(inodes))
 	}
 }
 
@@ -186,6 +199,35 @@ user      1234  2.5  1.2  45678  8192 pts/0    S    10:01   0:02 bash -i`
 	}
 	if p.RSSBytes != 8192*1024 {
 		t.Errorf("RSSBytes: expected %d, got %d", 8192*1024, p.RSSBytes)
+	}
+}
+
+// TestParseWhoOutput verifies who(1) session parsing.
+func TestParseWhoOutput(t *testing.T) {
+	input := `alice pts/0 2026-04-30 08:12 (192.0.2.55)
+bob console Apr 30 07:58`
+
+	users, err := parseWhoOutput(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("expected 2 users, got %d", len(users))
+	}
+	if users[0].User != "alice" {
+		t.Errorf("User: expected alice, got %s", users[0].User)
+	}
+	if users[0].TTY != "pts/0" {
+		t.Errorf("TTY: expected pts/0, got %s", users[0].TTY)
+	}
+	if users[0].LoginTime != "2026-04-30 08:12" {
+		t.Errorf("LoginTime: expected timestamp, got %s", users[0].LoginTime)
+	}
+	if users[0].Host != "192.0.2.55" {
+		t.Errorf("Host: expected 192.0.2.55, got %s", users[0].Host)
+	}
+	if users[1].Host != "" {
+		t.Errorf("Host: expected empty, got %s", users[1].Host)
 	}
 }
 
