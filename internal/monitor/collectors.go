@@ -111,8 +111,12 @@ func parseNetDev(output string) ([]NetworkStats, error) {
 		}
 		bytesRecv, _ := strconv.ParseInt(fields[0], 10, 64)
 		packetsRecv, _ := strconv.ParseInt(fields[1], 10, 64)
+		errorsRecv, _ := strconv.ParseInt(fields[2], 10, 64)
+		dropsRecv, _ := strconv.ParseInt(fields[3], 10, 64)
 		bytesSent, _ := strconv.ParseInt(fields[8], 10, 64)
 		packetsSent, _ := strconv.ParseInt(fields[9], 10, 64)
+		errorsSent, _ := strconv.ParseInt(fields[10], 10, 64)
+		dropsSent, _ := strconv.ParseInt(fields[11], 10, 64)
 
 		stats = append(stats, NetworkStats{
 			Interface:   iface,
@@ -120,6 +124,10 @@ func parseNetDev(output string) ([]NetworkStats, error) {
 			BytesSent:   bytesSent,
 			PacketsRecv: packetsRecv,
 			PacketsSent: packetsSent,
+			ErrorsRecv:  errorsRecv,
+			ErrorsSent:  errorsSent,
+			DropsRecv:   dropsRecv,
+			DropsSent:   dropsSent,
 		})
 	}
 	return stats, nil
@@ -137,7 +145,21 @@ func parseLoadAvg(output string) (LoadStats, error) {
 	if err1 != nil || err2 != nil || err3 != nil {
 		return LoadStats{}, fmt.Errorf("parsing loadavg values from %q", output)
 	}
-	return LoadStats{Load1: l1, Load5: l5, Load15: l15}, nil
+	load := LoadStats{Load1: l1, Load5: l5, Load15: l15}
+	if len(fields) >= 4 {
+		procParts := strings.SplitN(fields[3], "/", 2)
+		if len(procParts) == 2 {
+			running, _ := strconv.Atoi(procParts[0])
+			total, _ := strconv.Atoi(procParts[1])
+			load.RunningProcesses = running
+			load.TotalProcesses = total
+		}
+	}
+	if len(fields) >= 5 {
+		lastPID, _ := strconv.Atoi(fields[4])
+		load.LastPID = lastPID
+	}
+	return load, nil
 }
 
 // parseUptime parses /proc/uptime (e.g. "12345.67 9876.54") and returns

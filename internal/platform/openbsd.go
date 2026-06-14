@@ -23,6 +23,18 @@ func (c *openbsdCollector) Collect(ctx context.Context, r Runner) (*Snapshot, er
 	unameOut, _ := r.Run(ctx, "uname -srm")
 	hostOut, _ := r.Run(ctx, "hostname")
 	s.SystemInfo = parseSystemInfo(unameOut, hostOut)
+	coresOut, err := r.Run(ctx, "getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null")
+	if err != nil {
+		s.setErr("cpu_cores", err.Error())
+	} else {
+		cores, err := parseCPUCores(coresOut)
+		if err != nil {
+			s.setErr("cpu_cores", err.Error())
+		} else {
+			s.SystemInfo.CPUCores = cores
+			s.setOK("cpu_cores")
+		}
+	}
 
 	// 2. Uptime — OpenBSD kern.boottime may be plain integer or BSD {sec=...} format
 	btOut, err := r.Run(ctx, "sysctl -n kern.boottime")
@@ -126,6 +138,18 @@ func (c *openbsdCollector) Collect(ctx context.Context, r Runner) (*Snapshot, er
 			s.setOK("disks")
 		}
 	}
+	inodeOut, err := r.Run(ctx, "df -i 2>/dev/null")
+	if err != nil {
+		s.setErr("disk_inodes", err.Error())
+	} else {
+		inodes, err := parseDFInodeOutput(inodeOut)
+		if err != nil {
+			s.setErr("disk_inodes", err.Error())
+		} else {
+			s.Disks = mergeDiskInodes(s.Disks, inodes)
+			s.setOK("disk_inodes")
+		}
+	}
 
 	// 8. Network — same netstat -ibn format
 	netOut, err := r.Run(ctx, "netstat -ibn 2>/dev/null")
@@ -154,6 +178,8 @@ func (c *openbsdCollector) Collect(ctx context.Context, r Runner) (*Snapshot, er
 			s.setOK("processes")
 		}
 	}
+
+	s.setUnsupported("file_descriptors")
 
 	return s, nil
 }

@@ -183,6 +183,41 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return d.UsagePercent, true
 			}
 		}
+	case "disk_inode_usage":
+		for _, d := range srv.Disks {
+			if d.InodesTotal == 0 {
+				continue
+			}
+			if rule.MountPoint != "" && d.MountPoint != rule.MountPoint {
+				continue
+			}
+			if cmp(d.InodesUsagePercent, rule.Operator, rule.Threshold) {
+				return d.InodesUsagePercent, true
+			}
+		}
+	case "processes_running":
+		if srv.Load == nil {
+			return 0, false
+		}
+		value := float64(srv.Load.RunningProcesses)
+		return value, cmp(value, rule.Operator, rule.Threshold)
+	case "processes_total":
+		if srv.Load == nil {
+			return 0, false
+		}
+		value := float64(srv.Load.TotalProcesses)
+		return value, cmp(value, rule.Operator, rule.Threshold)
+	case "file_descriptor_usage":
+		if srv.FileDescriptors == nil {
+			return 0, false
+		}
+		return srv.FileDescriptors.UsagePercent, cmp(srv.FileDescriptors.UsagePercent, rule.Operator, rule.Threshold)
+	case "network_errors":
+		value := float64(totalNetworkErrors(srv.Network))
+		return value, cmp(value, rule.Operator, rule.Threshold)
+	case "network_drops":
+		value := float64(totalNetworkDrops(srv.Network))
+		return value, cmp(value, rule.Operator, rule.Threshold)
 	case "ping_latency":
 		if srv.Connectivity.PingEnabled {
 			return srv.Connectivity.PingLatency, cmp(srv.Connectivity.PingLatency, rule.Operator, rule.Threshold)
@@ -223,6 +258,22 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func totalNetworkErrors(network []NetworkStats) int64 {
+	var total int64
+	for _, n := range network {
+		total += n.ErrorsRecv + n.ErrorsSent
+	}
+	return total
+}
+
+func totalNetworkDrops(network []NetworkStats) int64 {
+	var total int64
+	for _, n := range network {
+		total += n.DropsRecv + n.DropsSent
+	}
+	return total
 }
 
 func cmp(value float64, operator string, threshold float64) bool {

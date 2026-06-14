@@ -72,8 +72,10 @@ type Snapshot struct {
 	Network    []NetworkStats
 	Processes  []ProcessInfo
 	Containers []ContainerInfo
-	Caps       map[string]string // metric name → "ok"|"unsupported"|"unavailable"|"error"
-	Errors     map[string]string // metric name → error message
+	// FileDescriptors is currently collected on Linux via /proc/sys/fs/file-nr.
+	FileDescriptors *FileDescriptorStats
+	Caps            map[string]string // metric name → "ok"|"unsupported"|"unavailable"|"error"
+	Errors          map[string]string // metric name → error message
 }
 
 func (s *Snapshot) setErr(metric, msg string) {
@@ -107,13 +109,17 @@ type SystemInfo struct {
 	Kernel   string
 	Arch     string
 	Hostname string
+	CPUCores int
 }
 
 // LoadAvg holds the 1, 5, and 15-minute load averages.
 type LoadAvg struct {
-	Load1  float64
-	Load5  float64
-	Load15 float64
+	Load1            float64
+	Load5            float64
+	Load15           float64
+	RunningProcesses int
+	TotalProcesses   int
+	LastPID          int
 }
 
 // CPUStats holds CPU usage percentages derived from two samples.
@@ -144,12 +150,16 @@ type SwapStats struct {
 
 // DiskStats holds usage for a single mounted filesystem.
 type DiskStats struct {
-	Device       string
-	MountPoint   string
-	TotalBytes   int64
-	UsedBytes    int64
-	FreeBytes    int64
-	UsagePercent float64
+	Device             string
+	MountPoint         string
+	TotalBytes         int64
+	UsedBytes          int64
+	FreeBytes          int64
+	UsagePercent       float64
+	InodesTotal        int64
+	InodesUsed         int64
+	InodesFree         int64
+	InodesUsagePercent float64
 }
 
 // NetworkStats holds cumulative byte/packet counters for one interface.
@@ -159,6 +169,18 @@ type NetworkStats struct {
 	BytesSent   int64
 	PacketsRecv int64
 	PacketsSent int64
+	ErrorsRecv  int64
+	ErrorsSent  int64
+	DropsRecv   int64
+	DropsSent   int64
+}
+
+// FileDescriptorStats holds kernel-wide file descriptor usage.
+type FileDescriptorStats struct {
+	Allocated    int64
+	Unused       int64
+	Max          int64
+	UsagePercent float64
 }
 
 // ProcessInfo holds resource usage for a single process.

@@ -29,6 +29,18 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 		hostOut = ""
 	}
 	s.SystemInfo = parseSystemInfo(unameOut, hostOut)
+	coresOut, err := r.Run(ctx, "getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null")
+	if err != nil {
+		s.setErr("cpu_cores", err.Error())
+	} else {
+		cores, err := parseCPUCores(coresOut)
+		if err != nil {
+			s.setErr("cpu_cores", err.Error())
+		} else {
+			s.SystemInfo.CPUCores = cores
+			s.setOK("cpu_cores")
+		}
+	}
 
 	// 2. Uptime from /proc/uptime
 	uptimeOut, err := r.Run(ctx, "cat /proc/uptime")
@@ -122,6 +134,18 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 			s.setOK("disks")
 		}
 	}
+	inodeOut, err := r.Run(ctx, "df -i -P -x tmpfs -x devtmpfs -x squashfs 2>/dev/null")
+	if err != nil {
+		s.setErr("disk_inodes", err.Error())
+	} else {
+		inodes, err := parseDFInodeOutput(inodeOut)
+		if err != nil {
+			s.setErr("disk_inodes", err.Error())
+		} else {
+			s.Disks = mergeDiskInodes(s.Disks, inodes)
+			s.setOK("disk_inodes")
+		}
+	}
 
 	// 7. Network from /proc/net/dev
 	netOut, err := r.Run(ctx, "cat /proc/net/dev")
@@ -148,6 +172,19 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 		} else {
 			s.Processes = procs
 			s.setOK("processes")
+		}
+	}
+
+	fileNrOut, err := r.Run(ctx, "cat /proc/sys/fs/file-nr")
+	if err != nil {
+		s.setErr("file_descriptors", err.Error())
+	} else {
+		fd, err := parseLinuxFileNr(fileNrOut)
+		if err != nil {
+			s.setErr("file_descriptors", err.Error())
+		} else {
+			s.FileDescriptors = fd
+			s.setOK("file_descriptors")
 		}
 	}
 
@@ -182,7 +219,18 @@ func parseLinuxLoadAvg(output string) (*LoadAvg, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parseLinuxLoadAvg: %w", err)
 	}
-	return &LoadAvg{Load1: l1, Load5: l5, Load15: l15}, nil
+	load := &LoadAvg{Load1: l1, Load5: l5, Load15: l15}
+	if len(fields) >= 4 {
+		procParts := strings.SplitN(fields[3], "/", 2)
+		if len(procParts) == 2 {
+			load.RunningProcesses = int(parseInt64OrZero(procParts[0]))
+			load.TotalProcesses = int(parseInt64OrZero(procParts[1]))
+		}
+	}
+	if len(fields) >= 5 {
+		load.LastPID = int(parseInt64OrZero(fields[4]))
+	}
+	return load, nil
 }
 
 // parseLinuxMemInfo parses /proc/meminfo and extracts memory and swap stats.
@@ -367,11 +415,15 @@ func parseLinuxNetDev(output string) ([]NetworkStats, error) {
 			continue
 		}
 		rxPkts, _ := strconv.ParseInt(fields[1], 10, 64)
+		rxErrs, _ := strconv.ParseInt(fields[2], 10, 64)
+		rxDrops, _ := strconv.ParseInt(fields[3], 10, 64)
 		txBytes, err := strconv.ParseInt(fields[8], 10, 64)
 		if err != nil {
 			continue
 		}
 		txPkts, _ := strconv.ParseInt(fields[9], 10, 64)
+		txErrs, _ := strconv.ParseInt(fields[10], 10, 64)
+		txDrops, _ := strconv.ParseInt(fields[11], 10, 64)
 
 		nets = append(nets, NetworkStats{
 			Interface:   iface,
@@ -379,6 +431,10 @@ func parseLinuxNetDev(output string) ([]NetworkStats, error) {
 			BytesSent:   txBytes,
 			PacketsRecv: rxPkts,
 			PacketsSent: txPkts,
+			ErrorsRecv:  rxErrs,
+			ErrorsSent:  txErrs,
+			DropsRecv:   rxDrops,
+			DropsSent:   txDrops,
 		})
 	}
 	return nets, nil
@@ -416,4 +472,40 @@ func parseLinuxPS(output string) ([]ProcessInfo, error) {
 		})
 	}
 	return procs, nil
+}
+
+// parseLinuxFileNr parses /proc/sys/fs/file-nr:
+//
+//	allocated unused max
+func parseLinuxFileNr(output string) (*FileDescriptorStats, error) {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) < 3 {
+		return nil, fmt.Errorf("parseLinuxFileNr: expected 3 fields, got %d", len(fields))
+	}
+	allocated, err := strconv.ParseInt(fields[0], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parseLinuxFileNr: allocated: %w", err)
+	}
+	unused, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parseLinuxFileNr: unused: %w", err)
+	}
+	max, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parseLinuxFileNr: max: %w", err)
+	}
+	inUse := allocated - unused
+	if inUse < 0 {
+		inUse = 0
+	}
+	var pct float64
+	if max > 0 {
+		pct = 100.0 * float64(inUse) / float64(max)
+	}
+	return &FileDescriptorStats{
+		Allocated:    allocated,
+		Unused:       unused,
+		Max:          max,
+		UsagePercent: pct,
+	}, nil
 }

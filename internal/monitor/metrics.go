@@ -28,6 +28,8 @@ type ServerMetrics struct {
 	Disks     []DiskStats    `json:"disks"`
 	Network   []NetworkStats `json:"network"`
 	Processes []ProcessInfo  `json:"processes"`
+	// FileDescriptors is populated on Linux hosts from /proc/sys/fs/file-nr.
+	FileDescriptors *FileDescriptorStats `json:"file_descriptors,omitempty"`
 	// Containers is populated on Linux hosts when docker.enabled is true.
 	Containers   []ContainerInfo     `json:"containers,omitempty"`
 	Connectivity ConnectivityStats   `json:"connectivity"`
@@ -46,6 +48,7 @@ type SystemInfo struct {
 	OS       string `json:"os"`
 	Kernel   string `json:"kernel"`
 	Arch     string `json:"arch"`
+	CPUCores int    `json:"cpu_cores,omitempty"`
 }
 
 // CPUStats contains CPU utilisation data derived from a two-sample delta.
@@ -78,12 +81,16 @@ type SwapStats struct {
 
 // DiskStats contains usage for one mount point.
 type DiskStats struct {
-	Device       string  `json:"device"`
-	MountPoint   string  `json:"mount_point"`
-	TotalBytes   int64   `json:"total_bytes"`
-	UsedBytes    int64   `json:"used_bytes"`
-	FreeBytes    int64   `json:"free_bytes"`
-	UsagePercent float64 `json:"usage_percent"`
+	Device             string  `json:"device"`
+	MountPoint         string  `json:"mount_point"`
+	TotalBytes         int64   `json:"total_bytes"`
+	UsedBytes          int64   `json:"used_bytes"`
+	FreeBytes          int64   `json:"free_bytes"`
+	UsagePercent       float64 `json:"usage_percent"`
+	InodesTotal        int64   `json:"inodes_total,omitempty"`
+	InodesUsed         int64   `json:"inodes_used,omitempty"`
+	InodesFree         int64   `json:"inodes_free,omitempty"`
+	InodesUsagePercent float64 `json:"inodes_usage_percent,omitempty"`
 }
 
 // NetworkStats contains cumulative byte/packet counters for one interface.
@@ -93,14 +100,21 @@ type NetworkStats struct {
 	BytesSent   int64  `json:"bytes_sent"`
 	PacketsRecv int64  `json:"packets_recv"`
 	PacketsSent int64  `json:"packets_sent"`
+	ErrorsRecv  int64  `json:"errors_recv,omitempty"`
+	ErrorsSent  int64  `json:"errors_sent,omitempty"`
+	DropsRecv   int64  `json:"drops_recv,omitempty"`
+	DropsSent   int64  `json:"drops_sent,omitempty"`
 }
 
 // LoadStats contains system load averages and uptime.
 type LoadStats struct {
-	Load1         float64 `json:"load1"`
-	Load5         float64 `json:"load5"`
-	Load15        float64 `json:"load15"`
-	UptimeSeconds float64 `json:"uptime_seconds"`
+	Load1            float64 `json:"load1"`
+	Load5            float64 `json:"load5"`
+	Load15           float64 `json:"load15"`
+	UptimeSeconds    float64 `json:"uptime_seconds"`
+	RunningProcesses int     `json:"running_processes,omitempty"`
+	TotalProcesses   int     `json:"total_processes,omitempty"`
+	LastPID          int     `json:"last_pid,omitempty"`
 }
 
 // ProcessInfo represents a single running process.
@@ -162,6 +176,14 @@ type ContainerInfo struct {
 	NetTxBytes      int64   `json:"net_tx_bytes"`
 	BlockReadBytes  int64   `json:"block_read_bytes"`
 	BlockWriteBytes int64   `json:"block_write_bytes"`
+}
+
+// FileDescriptorStats contains kernel-wide file descriptor usage.
+type FileDescriptorStats struct {
+	Allocated    int64   `json:"allocated"`
+	Unused       int64   `json:"unused"`
+	Max          int64   `json:"max"`
+	UsagePercent float64 `json:"usage_percent"`
 }
 
 // Firing represents an alert rule that has been triggered for a server.

@@ -37,6 +37,23 @@ If an unknown or unsupported OS is detected, WatchSSH falls back to Linux-style
 commands. Metrics that cannot be collected are marked `null` in JSON output and
 `n/a` in console output, with the reason recorded in the `capabilities` field.
 
+### Additional Metrics
+
+WatchSSH also collects these additive metrics when the target platform exposes
+them through standard tools:
+
+- CPU core count (`system.cpu_cores`)
+- Linux process scheduler counts from `/proc/loadavg`
+  (`load.running_processes`, `load.total_processes`, `load.last_pid`)
+- Filesystem inode usage per mount (`disks[].inodes_*`)
+- Network receive/transmit errors and drops per interface (`network[].errors_*`,
+  `network[].drops_*`)
+- Linux file descriptor pressure from `/proc/sys/fs/file-nr`
+  (`file_descriptors`)
+
+Capability keys for these metrics are `cpu_cores`, `disk_inodes`, and
+`file_descriptors`.
+
 ## CPU Measurement
 
 CPU utilisation requires two measurements to compute a delta. On all platforms,
@@ -229,7 +246,7 @@ Commands run on target hosts:
 
 | Platform | Commands |
 |----------|----------|
-| Linux | `uname`, `hostname`, `cat /proc/uptime`, `cat /proc/loadavg`, `cat /proc/meminfo`, `cat /proc/stat` (×2), `df`, `cat /proc/net/dev`, `ps` |
+| Linux | `uname`, `hostname`, `getconf`/`nproc`, `cat /proc/uptime`, `cat /proc/loadavg`, `cat /proc/meminfo`, `cat /proc/stat` (×2), `df`, `cat /proc/net/dev`, `cat /proc/sys/fs/file-nr`, `ps` |
 | Linux + Docker | same as above, plus `docker version`, `docker ps`, `docker stats --no-stream` |
 | macOS | `uname`, `hostname`, `sysctl`, `vm_stat`, `top`, `df`, `netstat`, `ps` |
 | FreeBSD | `uname`, `hostname`, `sysctl`, `swapinfo`, `df`, `netstat`, `ps` |
@@ -283,7 +300,10 @@ unavailable or unsupported metrics:
       "swap": "unsupported",
       "load": "ok",
       "disks": "ok",
-      "network": "ok"
+      "disk_inodes": "ok",
+      "network": "ok",
+      "cpu_cores": "ok",
+      "file_descriptors": "ok"
     }
   }
 ]
@@ -299,8 +319,10 @@ unavailable or unsupported metrics:
 
 Configure threshold-based alerts in the `alerts` section of `config.yaml`.
 Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
-`load15`, `disk_usage`, `ping_latency`, `ping_failed`, `port_closed`,
-`http_failed`, `custom_failed`, `cert_expires_days`.
+`load15`, `disk_usage`, `disk_inode_usage`, `processes_running`,
+`processes_total`, `file_descriptor_usage`, `network_errors`, `network_drops`,
+`ping_latency`, `ping_failed`, `port_closed`, `http_failed`, `custom_failed`,
+`cert_expires_days`.
 
 Email notifications via SMTP (with STARTTLS or TLS) are supported.
 
@@ -358,6 +380,8 @@ main.go
 - On NetBSD, memory stats use `vm.uvmexp2` which may differ across NetBSD versions.
 - Docker observability is Linux-only; enabling `docker.enabled` on non-Linux targets
   results in `capabilities.containers = "unsupported"` rather than an error.
+- File descriptor pressure is Linux-only; non-Linux targets report
+  `capabilities.file_descriptors = "unsupported"`.
 - The web UI's server-detail page shows platform/capabilities but has no
   history/graphing capability.
 - The JSON schema version is "2"; changes that remove or rename fields will

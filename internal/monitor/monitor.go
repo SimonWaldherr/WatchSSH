@@ -306,6 +306,7 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 		Kernel:   snap.SystemInfo.Kernel,
 		Arch:     snap.SystemInfo.Arch,
 		Hostname: snap.SystemInfo.Hostname,
+		CPUCores: snap.SystemInfo.CPUCores,
 	}
 
 	// Load and uptime are grouped in LoadStats.
@@ -315,6 +316,9 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 			ls.Load1 = snap.Load.Load1
 			ls.Load5 = snap.Load.Load5
 			ls.Load15 = snap.Load.Load15
+			ls.RunningProcesses = snap.Load.RunningProcesses
+			ls.TotalProcesses = snap.Load.TotalProcesses
+			ls.LastPID = snap.Load.LastPID
 		}
 		if snap.UptimeSecs != nil {
 			ls.UptimeSeconds = *snap.UptimeSecs
@@ -353,12 +357,16 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 
 	for _, d := range snap.Disks {
 		m.Disks = append(m.Disks, DiskStats{
-			Device:       d.Device,
-			MountPoint:   d.MountPoint,
-			TotalBytes:   d.TotalBytes,
-			UsedBytes:    d.UsedBytes,
-			FreeBytes:    d.FreeBytes,
-			UsagePercent: d.UsagePercent,
+			Device:             d.Device,
+			MountPoint:         d.MountPoint,
+			TotalBytes:         d.TotalBytes,
+			UsedBytes:          d.UsedBytes,
+			FreeBytes:          d.FreeBytes,
+			UsagePercent:       d.UsagePercent,
+			InodesTotal:        d.InodesTotal,
+			InodesUsed:         d.InodesUsed,
+			InodesFree:         d.InodesFree,
+			InodesUsagePercent: d.InodesUsagePercent,
 		})
 	}
 
@@ -369,6 +377,10 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 			BytesSent:   n.BytesSent,
 			PacketsRecv: n.PacketsRecv,
 			PacketsSent: n.PacketsSent,
+			ErrorsRecv:  n.ErrorsRecv,
+			ErrorsSent:  n.ErrorsSent,
+			DropsRecv:   n.DropsRecv,
+			DropsSent:   n.DropsSent,
 		})
 	}
 
@@ -399,6 +411,14 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 			BlockReadBytes:  c.BlockReadBytes,
 			BlockWriteBytes: c.BlockWriteBytes,
 		})
+	}
+	if snap.FileDescriptors != nil {
+		m.FileDescriptors = &FileDescriptorStats{
+			Allocated:    snap.FileDescriptors.Allocated,
+			Unused:       snap.FileDescriptors.Unused,
+			Max:          snap.FileDescriptors.Max,
+			UsagePercent: snap.FileDescriptors.UsagePercent,
+		}
 	}
 	m.Capabilities = snap.Caps
 	m.MetricErrors = snap.Errors

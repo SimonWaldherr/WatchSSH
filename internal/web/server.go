@@ -32,6 +32,9 @@ var funcMap = template.FuncMap{
 	"loadAvg1":          loadAvg1,
 	"uptimeSecs":        uptimeSecs,
 	"swapPct":           swapPct,
+	"fdInUse":           fdInUse,
+	"netErrors":         netErrors,
+	"netDrops":          netDrops,
 	"not": func(v any) bool {
 		if v == nil {
 			return true
@@ -621,8 +624,11 @@ func serverStatus(m monitor.ServerMetrics) string {
 	if (m.CPU != nil && m.CPU.UsagePercent > 90) || (m.Memory != nil && m.Memory.UsagePercent > 90) {
 		return "warn"
 	}
+	if m.FileDescriptors != nil && m.FileDescriptors.UsagePercent > 90 {
+		return "warn"
+	}
 	for _, d := range m.Disks {
-		if d.UsagePercent > 90 {
+		if d.UsagePercent > 90 || d.InodesUsagePercent > 90 {
 			return "warn"
 		}
 	}
@@ -788,4 +794,23 @@ func swapPct(m monitor.ServerMetrics) float64 {
 		return 0
 	}
 	return m.Swap.Percent
+}
+
+func fdInUse(fd *monitor.FileDescriptorStats) int64 {
+	if fd == nil {
+		return 0
+	}
+	used := fd.Allocated - fd.Unused
+	if used < 0 {
+		return 0
+	}
+	return used
+}
+
+func netErrors(n monitor.NetworkStats) int64 {
+	return n.ErrorsRecv + n.ErrorsSent
+}
+
+func netDrops(n monitor.NetworkStats) int64 {
+	return n.DropsRecv + n.DropsSent
 }

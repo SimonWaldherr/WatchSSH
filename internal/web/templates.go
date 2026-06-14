@@ -192,6 +192,7 @@ const allTemplates = `
       <tr><td class="m-label">OS</td><td>{{.Metrics.System.OS}}</td></tr>
       <tr><td class="m-label">Kernel</td><td>{{.Metrics.System.Kernel}}</td></tr>
       <tr><td class="m-label">Arch</td><td>{{.Metrics.System.Arch}}</td></tr>
+      {{if .Metrics.System.CPUCores}}<tr><td class="m-label">CPU Cores</td><td>{{.Metrics.System.CPUCores}}</td></tr>{{end}}
       <tr><td class="m-label">Uptime</td><td>{{if .Metrics.Load}}{{fmtUptime (uptimeSecs .Metrics)}}{{else}}n/a{{end}}</td></tr>
       <tr><td class="m-label">Checked</td><td>{{.Metrics.Timestamp.Format "2006-01-02 15:04:05"}}</td></tr>
     </tbody></table>
@@ -205,7 +206,9 @@ const allTemplates = `
       <tr><td class="m-label">I/O Wait</td><td>{{printf "%.1f" .Metrics.CPU.IOWaitPercent}}%</td></tr>{{else}}<tr><td class="m-label">CPU</td><td>n/a</td></tr>{{end}}
       {{if .Metrics.Load}}<tr><td class="m-label">Load 1m</td><td>{{printf "%.2f" .Metrics.Load.Load1}}</td></tr>
       <tr><td class="m-label">Load 5m</td><td>{{printf "%.2f" .Metrics.Load.Load5}}</td></tr>
-      <tr><td class="m-label">Load 15m</td><td>{{printf "%.2f" .Metrics.Load.Load15}}</td></tr>{{else}}<tr><td class="m-label">Load</td><td>n/a</td></tr>{{end}}
+      <tr><td class="m-label">Load 15m</td><td>{{printf "%.2f" .Metrics.Load.Load15}}</td></tr>
+      {{if .Metrics.Load.TotalProcesses}}<tr><td class="m-label">Runnable / Total Processes</td><td>{{.Metrics.Load.RunningProcesses}} / {{.Metrics.Load.TotalProcesses}}</td></tr>{{end}}
+      {{if .Metrics.Load.LastPID}}<tr><td class="m-label">Last PID</td><td>{{.Metrics.Load.LastPID}}</td></tr>{{end}}{{else}}<tr><td class="m-label">Load</td><td>n/a</td></tr>{{end}}
     </tbody></table>
   </div>
   <div class="section">
@@ -220,6 +223,16 @@ const allTemplates = `
       {{end}}
     </tbody></table>
   </div>
+  {{if .Metrics.FileDescriptors}}
+  <div class="section">
+    <h3>File Descriptors</h3>
+    <table><tbody>
+      <tr><td class="m-label">In Use</td><td>{{fdInUse .Metrics.FileDescriptors}} / {{.Metrics.FileDescriptors.Max}} ({{printf "%.1f" .Metrics.FileDescriptors.UsagePercent}}%)</td></tr>
+      <tr><td class="m-label">Allocated</td><td>{{.Metrics.FileDescriptors.Allocated}}</td></tr>
+      <tr><td class="m-label">Unused Allocated</td><td>{{.Metrics.FileDescriptors.Unused}}</td></tr>
+    </tbody></table>
+  </div>
+  {{end}}
   <div class="section">
     <h3>Connectivity</h3>
     {{with .Metrics.Connectivity}}
@@ -255,7 +268,7 @@ const allTemplates = `
 <div class="section">
   <h3>Disk Usage</h3>
   <table>
-    <thead><tr><th>Device</th><th>Mount</th><th>Used</th><th>Total</th><th>Usage</th></tr></thead>
+    <thead><tr><th>Device</th><th>Mount</th><th>Used</th><th>Total</th><th>Usage</th><th>Inodes</th></tr></thead>
     <tbody>
     {{range .Metrics.Disks}}
     <tr>
@@ -269,6 +282,7 @@ const allTemplates = `
           {{printf "%.1f" .UsagePercent}}%
         </div>
       </td>
+      <td>{{if .InodesTotal}}{{.InodesUsed}} / {{.InodesTotal}} ({{printf "%.1f" .InodesUsagePercent}}%){{else}}n/a{{end}}</td>
     </tr>
     {{end}}
     </tbody>
@@ -280,7 +294,7 @@ const allTemplates = `
 <div class="section">
   <h3>Network Interfaces</h3>
   <table>
-    <thead><tr><th>Interface</th><th>Received</th><th>Sent</th><th>Packets In</th><th>Packets Out</th></tr></thead>
+    <thead><tr><th>Interface</th><th>Received</th><th>Sent</th><th>Packets In</th><th>Packets Out</th><th>Errors</th><th>Drops</th></tr></thead>
     <tbody>
     {{range .Metrics.Network}}
     {{if or .BytesRecv .BytesSent}}
@@ -290,6 +304,8 @@ const allTemplates = `
       <td>{{fmtBytes .BytesSent}}</td>
       <td>{{.PacketsRecv}}</td>
       <td>{{.PacketsSent}}</td>
+      <td>{{netErrors .}}</td>
+      <td>{{netDrops .}}</td>
     </tr>
     {{end}}
     {{end}}
@@ -510,9 +526,15 @@ const allTemplates = `
           <option value="mem_usage">mem_usage (%)</option>
           <option value="swap_usage">swap_usage (%)</option>
           <option value="disk_usage">disk_usage (%)</option>
+          <option value="disk_inode_usage">disk_inode_usage (%)</option>
           <option value="load1">load1</option>
           <option value="load5">load5</option>
           <option value="load15">load15</option>
+          <option value="processes_running">processes_running</option>
+          <option value="processes_total">processes_total</option>
+          <option value="file_descriptor_usage">file_descriptor_usage (%)</option>
+          <option value="network_errors">network_errors</option>
+          <option value="network_drops">network_drops</option>
           <option value="ping_failed">ping_failed</option>
           <option value="ping_latency">ping_latency (ms)</option>
           <option value="port_closed">port_closed</option>

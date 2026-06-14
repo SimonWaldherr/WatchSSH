@@ -72,13 +72,23 @@ func renderServerMetrics(m ServerMetrics) string {
 	if m.Load != nil {
 		uptime = formatUptime(m.Load.UptimeSeconds)
 	}
-	line(fmt.Sprintf("Host   : %s   Uptime: %s", hostname, uptime))
+	if m.System.CPUCores > 0 {
+		line(fmt.Sprintf("Host   : %s   Cores: %d   Uptime: %s", hostname, m.System.CPUCores, uptime))
+	} else {
+		line(fmt.Sprintf("Host   : %s   Uptime: %s", hostname, uptime))
+	}
 	divider()
 
 	// Load & CPU
 	if m.Load != nil {
-		line(fmt.Sprintf("Load   : %.2f  %.2f  %.2f  (1/5/15 min)",
-			m.Load.Load1, m.Load.Load5, m.Load.Load15))
+		if m.Load.TotalProcesses > 0 {
+			line(fmt.Sprintf("Load   : %.2f  %.2f  %.2f  (run %d/%d, last PID %d)",
+				m.Load.Load1, m.Load.Load5, m.Load.Load15,
+				m.Load.RunningProcesses, m.Load.TotalProcesses, m.Load.LastPID))
+		} else {
+			line(fmt.Sprintf("Load   : %.2f  %.2f  %.2f  (1/5/15 min)",
+				m.Load.Load1, m.Load.Load5, m.Load.Load15))
+		}
 	} else {
 		line("Load   : n/a")
 	}
@@ -102,6 +112,11 @@ func renderServerMetrics(m ServerMetrics) string {
 		line(fmt.Sprintf("Swap   : %s / %s  (%.1f%%)",
 			formatBytes(m.Swap.UsedBytes), formatBytes(m.Swap.TotalBytes), m.Swap.Percent))
 	}
+	if m.FileDescriptors != nil {
+		line(fmt.Sprintf("FDs    : %d / %d  (%.1f%%, %d unused)",
+			fileDescriptorsInUse(*m.FileDescriptors), m.FileDescriptors.Max,
+			m.FileDescriptors.UsagePercent, m.FileDescriptors.Unused))
+	}
 	divider()
 
 	// Disks
@@ -114,6 +129,10 @@ func renderServerMetrics(m ServerMetrics) string {
 				bar,
 				formatBytes(d.UsedBytes), formatBytes(d.TotalBytes),
 				d.UsagePercent))
+			if d.InodesTotal > 0 {
+				line(fmt.Sprintf("  %-16s %-12s inodes %d / %d (%.0f%%)",
+					"", "", d.InodesUsed, d.InodesTotal, d.InodesUsagePercent))
+			}
 		}
 		divider()
 	}
@@ -125,9 +144,15 @@ func renderServerMetrics(m ServerMetrics) string {
 			if n.BytesRecv == 0 && n.BytesSent == 0 {
 				continue
 			}
-			line(fmt.Sprintf("  %-10s  rx %s  tx %s",
+			extras := ""
+			errs := n.ErrorsRecv + n.ErrorsSent
+			drops := n.DropsRecv + n.DropsSent
+			if errs > 0 || drops > 0 {
+				extras = fmt.Sprintf("  err %d  drop %d", errs, drops)
+			}
+			line(fmt.Sprintf("  %-10s  rx %s  tx %s%s",
 				truncate(n.Interface, 10),
-				formatBytes(n.BytesRecv), formatBytes(n.BytesSent)))
+				formatBytes(n.BytesRecv), formatBytes(n.BytesSent), extras))
 		}
 		divider()
 	}
@@ -241,6 +266,14 @@ func formatUptime(sec float64) string {
 		return fmt.Sprintf("%dd %s", days, d.Round(time.Second))
 	}
 	return d.Round(time.Second).String()
+}
+
+func fileDescriptorsInUse(fd FileDescriptorStats) int64 {
+	used := fd.Allocated - fd.Unused
+	if used < 0 {
+		return 0
+	}
+	return used
 }
 
 // truncate shortens s to at most n runes, appending "…" if truncated.

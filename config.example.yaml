@@ -205,6 +205,25 @@ alerts:
       threshold: 85
       mount_point: /
 
+    # Inode usage (root partition only, all servers)
+    - name: InodesAlmostFull
+      metric: disk_inode_usage
+      operator: ">"
+      threshold: 85
+      mount_point: /
+
+    # Linux file descriptor pressure
+    - name: FileDescriptorsHigh
+      metric: file_descriptor_usage
+      operator: ">"
+      threshold: 80
+
+    # Network error counters are cumulative since boot
+    - name: NetworkErrorsSeen
+      metric: network_errors
+      operator: ">"
+      threshold: 100
+
     # 1-minute load average (web servers only)
     - name: HighLoad
       metric: load1

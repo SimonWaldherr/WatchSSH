@@ -91,6 +91,75 @@ func TestParseDFOutput(t *testing.T) {
 	}
 }
 
+func TestParseDFInodeOutput_GNU(t *testing.T) {
+	input := `Filesystem      Inodes IUsed   IFree IUse% Mounted on
+/dev/sda1      6553600 12345 6541255    1% /
+/dev/sdb1     13107200 90000 13017200    1% /data`
+
+	inodes, err := parseDFInodeOutput(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inodes) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(inodes))
+	}
+	root := inodes[0]
+	if root.MountPoint != "/" {
+		t.Errorf("MountPoint: expected /, got %s", root.MountPoint)
+	}
+	if root.InodesTotal != 6553600 {
+		t.Errorf("InodesTotal: expected 6553600, got %d", root.InodesTotal)
+	}
+	if root.InodesUsed != 12345 {
+		t.Errorf("InodesUsed: expected 12345, got %d", root.InodesUsed)
+	}
+	if root.InodesUsagePercent != 1 {
+		t.Errorf("InodesUsagePercent: expected 1, got %f", root.InodesUsagePercent)
+	}
+}
+
+func TestParseDFInodeOutput_BSD(t *testing.T) {
+	input := `Filesystem  1024-blocks Used Available Capacity iused   ifree %iused Mounted on
+/dev/disk1s1   1024000 5120    1018880     1% 20000 498000    4% /`
+
+	inodes, err := parseDFInodeOutput(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inodes) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(inodes))
+	}
+	root := inodes[0]
+	if root.InodesTotal != 518000 {
+		t.Errorf("InodesTotal: expected 518000, got %d", root.InodesTotal)
+	}
+	if root.InodesFree != 498000 {
+		t.Errorf("InodesFree: expected 498000, got %d", root.InodesFree)
+	}
+	if root.InodesUsagePercent != 4 {
+		t.Errorf("InodesUsagePercent: expected 4, got %f", root.InodesUsagePercent)
+	}
+}
+
+func TestParseDFInodeOutput_BSDSpacedFilesystem(t *testing.T) {
+	input := `Filesystem     512-blocks Used Available Capacity iused ifree %iused Mounted on
+map auto_home           0    0         0   100%     0     0      - /System/Volumes/Data/home`
+
+	inodes, err := parseDFInodeOutput(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(inodes) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(inodes))
+	}
+	if inodes[0].MountPoint != "/System/Volumes/Data/home" {
+		t.Errorf("MountPoint: expected /System/Volumes/Data/home, got %s", inodes[0].MountPoint)
+	}
+	if inodes[0].InodesTotal != 0 {
+		t.Errorf("InodesTotal: expected 0, got %d", inodes[0].InodesTotal)
+	}
+}
+
 // TestParsePSAux verifies BSD ps aux parsing.
 func TestParsePSAux(t *testing.T) {
 	input := `USER       PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
@@ -165,7 +234,7 @@ func TestParseLinuxNetDev(t *testing.T) {
 	input := `Inter-|   Receive                                                |  Transmit
  face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
     lo:    1234      10    0    0    0     0          0         0     1234      10    0    0    0     0       0          0
-  eth0: 56789012    4567    0    0    0     0          0         0 12345678    3456    0    0    0     0       0          0`
+  eth0: 56789012    4567    2    3    0     0          0         0 12345678    3456    4    5    0     0       0          0`
 
 	nets, err := parseLinuxNetDev(input)
 	if err != nil {
@@ -184,6 +253,28 @@ func TestParseLinuxNetDev(t *testing.T) {
 	}
 	if eth0.BytesSent != 12345678 {
 		t.Errorf("BytesSent: expected 12345678, got %d", eth0.BytesSent)
+	}
+	if eth0.ErrorsRecv != 2 || eth0.ErrorsSent != 4 {
+		t.Errorf("Errors: expected recv=2 sent=4, got recv=%d sent=%d", eth0.ErrorsRecv, eth0.ErrorsSent)
+	}
+	if eth0.DropsRecv != 3 || eth0.DropsSent != 5 {
+		t.Errorf("Drops: expected recv=3 sent=5, got recv=%d sent=%d", eth0.DropsRecv, eth0.DropsSent)
+	}
+}
+
+func TestParseLinuxLoadAvg_ProcessCounts(t *testing.T) {
+	la, err := parseLinuxLoadAvg("0.52 0.48 0.41 3/234 5678")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if la.RunningProcesses != 3 {
+		t.Errorf("RunningProcesses: expected 3, got %d", la.RunningProcesses)
+	}
+	if la.TotalProcesses != 234 {
+		t.Errorf("TotalProcesses: expected 234, got %d", la.TotalProcesses)
+	}
+	if la.LastPID != 5678 {
+		t.Errorf("LastPID: expected 5678, got %d", la.LastPID)
 	}
 }
 
@@ -314,7 +405,7 @@ func TestParseDarwinSwapUsage_Zero(t *testing.T) {
 func TestParseDarwinNetstat(t *testing.T) {
 	input := `Name  Mtu   Network       Address            Ipkts Ierrs     Ibytes    Opkts Oerrs     Obytes  Coll
 lo0   16384 <Link#1>                         12345     0    1234567    12345     0    1234567     0
-en0   1500  <Link#2>    a8:00:11:22:33:44    56789     0   56789012    45678     0   45678901     0
+en0   1500  <Link#2>    a8:00:11:22:33:44    56789     2   56789012    45678     3   45678901     0
 en0   1500  192.168.1   192.168.1.100        56789     -          -    45678     -          -     -`
 
 	nets, err := parseDarwinNetstat(input)
@@ -334,6 +425,28 @@ en0   1500  192.168.1   192.168.1.100        56789     -          -    45678    
 	}
 	if en0.BytesSent != 45678901 {
 		t.Errorf("BytesSent: expected 45678901, got %d", en0.BytesSent)
+	}
+	if en0.ErrorsRecv != 2 || en0.ErrorsSent != 3 {
+		t.Errorf("Errors: expected recv=2 sent=3, got recv=%d sent=%d", en0.ErrorsRecv, en0.ErrorsSent)
+	}
+}
+
+func TestParseLinuxFileNr(t *testing.T) {
+	fd, err := parseLinuxFileNr("1024 128 4096\n")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if fd.Allocated != 1024 {
+		t.Errorf("Allocated: expected 1024, got %d", fd.Allocated)
+	}
+	if fd.Unused != 128 {
+		t.Errorf("Unused: expected 128, got %d", fd.Unused)
+	}
+	if fd.Max != 4096 {
+		t.Errorf("Max: expected 4096, got %d", fd.Max)
+	}
+	if math.Abs(fd.UsagePercent-21.875) > 0.001 {
+		t.Errorf("UsagePercent: expected 21.875, got %f", fd.UsagePercent)
 	}
 }
 

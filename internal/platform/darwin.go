@@ -16,6 +16,18 @@ func (c *darwinCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 	unameOut, _ := r.Run(ctx, "uname -srm")
 	hostOut, _ := r.Run(ctx, "hostname")
 	s.SystemInfo = parseSystemInfo(unameOut, hostOut)
+	coresOut, err := r.Run(ctx, "getconf _NPROCESSORS_ONLN 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null")
+	if err != nil {
+		s.setErr("cpu_cores", err.Error())
+	} else {
+		cores, err := parseCPUCores(coresOut)
+		if err != nil {
+			s.setErr("cpu_cores", err.Error())
+		} else {
+			s.SystemInfo.CPUCores = cores
+			s.setOK("cpu_cores")
+		}
+	}
 
 	// 2. Uptime via kern.boottime
 	btOut, err := r.Run(ctx, "sysctl -n kern.boottime")
@@ -112,6 +124,18 @@ func (c *darwinCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 			s.setOK("disks")
 		}
 	}
+	inodeOut, err := r.Run(ctx, "df -i 2>/dev/null")
+	if err != nil {
+		s.setErr("disk_inodes", err.Error())
+	} else {
+		inodes, err := parseDFInodeOutput(inodeOut)
+		if err != nil {
+			s.setErr("disk_inodes", err.Error())
+		} else {
+			s.Disks = mergeDiskInodes(s.Disks, inodes)
+			s.setOK("disk_inodes")
+		}
+	}
 
 	// 8. Network via netstat -ibn
 	netOut, err := r.Run(ctx, "netstat -ibn 2>/dev/null")
@@ -140,6 +164,8 @@ func (c *darwinCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 			s.setOK("processes")
 		}
 	}
+
+	s.setUnsupported("file_descriptors")
 
 	return s, nil
 }
@@ -355,10 +381,12 @@ func parseDarwinNetstat(output string) ([]NetworkStats, error) {
 		if err != nil {
 			continue
 		}
+		ierrs, _ := strconv.ParseInt(fields[5], 10, 64)
 		obytes, err := strconv.ParseInt(fields[9], 10, 64)
 		if err != nil {
 			continue
 		}
+		oerrs, _ := strconv.ParseInt(fields[8], 10, 64)
 		ipkts, _ := strconv.ParseInt(fields[4], 10, 64)
 		opkts, _ := strconv.ParseInt(fields[7], 10, 64)
 
@@ -368,6 +396,8 @@ func parseDarwinNetstat(output string) ([]NetworkStats, error) {
 			BytesSent:   obytes,
 			PacketsRecv: ipkts,
 			PacketsSent: opkts,
+			ErrorsRecv:  ierrs,
+			ErrorsSent:  oerrs,
 		})
 	}
 	return nets, nil

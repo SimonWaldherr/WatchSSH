@@ -24,6 +24,22 @@ func parseSystemInfo(unameOut, hostnameOut string) SystemInfo {
 	return si
 }
 
+// parseCPUCores parses a command that prints one positive integer CPU count.
+func parseCPUCores(output string) (int, error) {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("parseCPUCores: empty output")
+	}
+	cores, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return 0, fmt.Errorf("parseCPUCores: %w", err)
+	}
+	if cores <= 0 {
+		return 0, fmt.Errorf("parseCPUCores: non-positive CPU count %d", cores)
+	}
+	return cores, nil
+}
+
 // parseSysctlBootTime parses the BSD sysctl kern.boottime format:
 //
 //	{ sec = 1234567890, usec = 123456 }
@@ -136,6 +152,105 @@ func parseDFOutput(output string) ([]DiskStats, error) {
 		})
 	}
 	return disks, nil
+}
+
+// parseDFInodeOutput parses GNU `df -i -P` and BSD/macOS `df -i` output.
+//
+// GNU df:
+//
+//	Filesystem Inodes IUsed IFree IUse% Mounted on
+//
+// BSD/macOS df:
+//
+//	Filesystem 1024-blocks Used Available Capacity iused ifree %iused Mounted on
+func parseDFInodeOutput(output string) ([]DiskStats, error) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	if len(lines) < 2 {
+		return nil, nil
+	}
+
+	headerFields := strings.Fields(strings.ToLower(lines[0]))
+	bsdLayout := !(len(headerFields) >= 2 && headerFields[1] == "inodes")
+
+	var disks []DiskStats
+	for _, line := range lines[1:] {
+		fields := strings.Fields(line)
+		if bsdLayout {
+			if len(fields) < 8 {
+				continue
+			}
+			mountIdx := len(fields) - 1
+			pctIdx := len(fields) - 2
+			freeIdx := len(fields) - 3
+			usedIdx := len(fields) - 4
+			inodes := parseInt64OrZero(fields[usedIdx]) + parseInt64OrZero(fields[freeIdx])
+			used := parseInt64OrZero(fields[usedIdx])
+			free := parseInt64OrZero(fields[freeIdx])
+			pct := parsePercentOrZero(fields[pctIdx])
+			disks = append(disks, DiskStats{
+				Device:             fields[0],
+				MountPoint:         fields[mountIdx],
+				InodesTotal:        inodes,
+				InodesUsed:         used,
+				InodesFree:         free,
+				InodesUsagePercent: pct,
+			})
+			continue
+		}
+
+		if len(fields) < 6 {
+			continue
+		}
+		disks = append(disks, DiskStats{
+			Device:             fields[0],
+			MountPoint:         fields[5],
+			InodesTotal:        parseInt64OrZero(fields[1]),
+			InodesUsed:         parseInt64OrZero(fields[2]),
+			InodesFree:         parseInt64OrZero(fields[3]),
+			InodesUsagePercent: parsePercentOrZero(fields[4]),
+		})
+	}
+	return disks, nil
+}
+
+func mergeDiskInodes(disks, inodes []DiskStats) []DiskStats {
+	if len(disks) == 0 || len(inodes) == 0 {
+		return disks
+	}
+	byMount := make(map[string]DiskStats, len(inodes))
+	byDevice := make(map[string]DiskStats, len(inodes))
+	for _, inode := range inodes {
+		if inode.MountPoint != "" {
+			byMount[inode.MountPoint] = inode
+		}
+		if inode.Device != "" {
+			byDevice[inode.Device] = inode
+		}
+	}
+	for i := range disks {
+		inode, ok := byMount[disks[i].MountPoint]
+		if !ok {
+			inode, ok = byDevice[disks[i].Device]
+		}
+		if !ok {
+			continue
+		}
+		disks[i].InodesTotal = inode.InodesTotal
+		disks[i].InodesUsed = inode.InodesUsed
+		disks[i].InodesFree = inode.InodesFree
+		disks[i].InodesUsagePercent = inode.InodesUsagePercent
+	}
+	return disks
+}
+
+func parseInt64OrZero(s string) int64 {
+	v, _ := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	return v
+}
+
+func parsePercentOrZero(s string) float64 {
+	v, _ := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "%"), 64)
+	return v
 }
 
 // parsePSAux parses BSD/Linux `ps aux` output.

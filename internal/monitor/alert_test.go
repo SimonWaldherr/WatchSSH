@@ -148,6 +148,77 @@ func TestAlertManager_DiskUsage(t *testing.T) {
 	}
 }
 
+func TestAlertManager_DiskInodeUsage(t *testing.T) {
+	am := NewAlertManager()
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			Rules: []config.AlertRule{
+				{Name: "InodesFull", Metric: "disk_inode_usage", Operator: ">", Threshold: 80, MountPoint: "/"},
+			},
+			Cooldown: 0,
+		},
+	}
+	metrics := []ServerMetrics{{
+		ServerName: "srv1",
+		Timestamp:  time.Now(),
+		Disks: []DiskStats{
+			{MountPoint: "/", InodesTotal: 1000, InodesUsagePercent: 91},
+			{MountPoint: "/data", InodesTotal: 1000, InodesUsagePercent: 20},
+		},
+	}}
+	firings := am.Evaluate(metrics, cfg)
+	if len(firings) != 1 {
+		t.Fatalf("expected 1 inode firing, got %d", len(firings))
+	}
+}
+
+func TestAlertManager_FileDescriptorUsage(t *testing.T) {
+	am := NewAlertManager()
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			Rules: []config.AlertRule{
+				{Name: "FileDescriptorsHigh", Metric: "file_descriptor_usage", Operator: ">", Threshold: 80},
+			},
+			Cooldown: 0,
+		},
+	}
+	metrics := []ServerMetrics{{
+		ServerName:      "srv1",
+		Timestamp:       time.Now(),
+		FileDescriptors: &FileDescriptorStats{UsagePercent: 90},
+	}}
+	firings := am.Evaluate(metrics, cfg)
+	if len(firings) != 1 {
+		t.Fatalf("expected 1 file descriptor firing, got %d", len(firings))
+	}
+}
+
+func TestAlertManager_ProcessAndNetworkMetrics(t *testing.T) {
+	am := NewAlertManager()
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			Rules: []config.AlertRule{
+				{Name: "TooManyProcesses", Metric: "processes_total", Operator: ">", Threshold: 200},
+				{Name: "NetworkErrors", Metric: "network_errors", Operator: ">", Threshold: 0},
+				{Name: "NetworkDrops", Metric: "network_drops", Operator: ">", Threshold: 0},
+			},
+			Cooldown: 0,
+		},
+	}
+	metrics := []ServerMetrics{{
+		ServerName: "srv1",
+		Timestamp:  time.Now(),
+		Load:       &LoadStats{RunningProcesses: 2, TotalProcesses: 250},
+		Network: []NetworkStats{
+			{Interface: "eth0", ErrorsRecv: 1, DropsSent: 2},
+		},
+	}}
+	firings := am.Evaluate(metrics, cfg)
+	if len(firings) != 3 {
+		t.Fatalf("expected 3 firings, got %d", len(firings))
+	}
+}
+
 func TestAlertManager_CertExpiresDays(t *testing.T) {
 	am := NewAlertManager()
 	cfg := &config.Config{
