@@ -57,6 +57,20 @@ output:
 
 
 # -----------------------------------------------------------------------------
+# Optional history storage
+# -----------------------------------------------------------------------------
+
+storage:
+  # "none" (default) — keep only live in-memory state
+  # "tinysql"        — persist metric samples and alert firings locally
+  type: none
+
+  # Used when type is "tinysql". WatchSSH stores compact query columns plus
+  # the full metric/alert JSON payload in an embedded tinySQL database file.
+  # path: ./watchssh.tinysql
+
+
+# -----------------------------------------------------------------------------
 # Web dashboard
 # -----------------------------------------------------------------------------
 

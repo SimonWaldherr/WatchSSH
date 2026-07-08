@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"github.com/SimonWaldherr/WatchSSH/internal/history"
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
 	"github.com/SimonWaldherr/WatchSSH/internal/web"
 )
@@ -77,11 +78,18 @@ func main() {
 		state.Update(metrics, firings)
 	})
 
-	m := monitor.New(cfg, notifyFunc)
+	historyStore, err := history.New(cfg.Storage)
+	if err != nil {
+		log.Fatalf("Failed to initialize history store: %v", err)
+	}
+	m := monitor.NewWithStore(cfg, notifyFunc, historyStore)
 
 	if *once {
 		// Single-poll mode: collect once, write output, exit.
 		m.RunOnce()
+		if err := m.Close(); err != nil {
+			log.Printf("history store close: %v", err)
+		}
 		return
 	}
 
@@ -91,7 +99,7 @@ func main() {
 	if webListen == "" {
 		webListen = ":8080"
 	}
-	webSrv := web.NewServer(state, webListen)
+	webSrv := web.NewServer(state, webListen, historyStore)
 	go func() {
 		if err := webSrv.Start(); err != nil {
 			log.Printf("Web server stopped: %v", err)

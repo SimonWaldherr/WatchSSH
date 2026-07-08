@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"github.com/SimonWaldherr/WatchSSH/internal/history"
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
 	sshclient "github.com/SimonWaldherr/WatchSSH/internal/ssh"
 )
@@ -71,14 +72,18 @@ var templates = template.Must(
 
 // Server is the HTTP monitoring dashboard.
 type Server struct {
-	state  *State
-	mux    *http.ServeMux
-	listen string
+	state   *State
+	mux     *http.ServeMux
+	listen  string
+	history history.Store
 }
 
 // NewServer creates a Server backed by state, listening on addr.
-func NewServer(state *State, listen string) *Server {
+func NewServer(state *State, listen string, stores ...history.Store) *Server {
 	s := &Server{state: state, mux: http.NewServeMux(), listen: listen}
+	if len(stores) > 0 {
+		s.history = stores[0]
+	}
 	s.registerRoutes()
 	return s
 }
@@ -105,7 +110,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/readyz", s.handleReadyz)
 	s.mux.HandleFunc("/api/test-connection", s.handleTestConnection)
 	s.mux.HandleFunc("/api/metrics", s.handleAPIMetrics)
+	s.mux.HandleFunc("/api/history/metrics", s.handleAPIHistoryMetrics)
+	s.mux.HandleFunc("/api/history/alerts", s.handleAPIHistoryAlerts)
 	s.mux.HandleFunc("/server/", s.handleServerDetail)
+	s.mux.HandleFunc("/history", s.handleHistory)
 	s.mux.HandleFunc("/servers/add", s.handleAddServer)
 	s.mux.HandleFunc("/servers/remove", s.handleRemoveServer)
 	s.mux.HandleFunc("/servers", s.handleServers)
@@ -162,6 +170,52 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		Servers: s.state.Metrics(),
 		Firings: recent,
 	})
+}
+
+// ── History ───────────────────────────────────────────────────────────────────
+
+type historyData struct {
+	Title          string
+	Page           string
+	Refresh        bool
+	StorageEnabled bool
+	MetricSamples  []history.MetricRecord
+	AlertFirings   []history.FiringRecord
+	ServerFilter   string
+	Error          string
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	cfg := s.state.Config()
+	data := historyData{
+		Title:          "History",
+		Page:           "history",
+		StorageEnabled: cfg.Storage.Type == "tinysql" && s.history != nil,
+		ServerFilter:   strings.TrimSpace(r.URL.Query().Get("server")),
+	}
+	if !data.StorageEnabled {
+		s.render(w, "history-page", data)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	metrics, err := s.history.RecentMetrics(ctx, data.ServerFilter, 100)
+	if err != nil {
+		data.Error = err.Error()
+		s.render(w, "history-page", data)
+		return
+	}
+	firings, err := s.history.RecentFirings(ctx, 100)
+	if err != nil {
+		data.Error = err.Error()
+		s.render(w, "history-page", data)
+		return
+	}
+	data.MetricSamples = metrics
+	data.AlertFirings = firings
+	s.render(w, "history-page", data)
 }
 
 // ── Server detail ─────────────────────────────────────────────────────────────
@@ -563,6 +617,14 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		outputType = "console"
 	}
 	outputFile := strings.TrimSpace(r.FormValue("output_file"))
+	storageType := r.FormValue("storage_type")
+	if storageType == "" {
+		storageType = "none"
+	}
+	storagePath := strings.TrimSpace(r.FormValue("storage_path"))
+	if storageType == "tinysql" && storagePath == "" {
+		storagePath = "watchssh.tinysql"
+	}
 	knownHostsPath := strings.TrimSpace(r.FormValue("known_hosts_path"))
 
 	var strictHostKey *bool
@@ -571,13 +633,13 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		strictHostKey = &b
 	}
 
-	s.state.UpdateGlobalSettings(interval, timeout, workers, outputType, outputFile, webListen, webEnabled, knownHostsPath, strictHostKey)
+	s.state.UpdateGlobalSettings(interval, timeout, workers, outputType, outputFile, storageType, storagePath, webListen, webEnabled, knownHostsPath, strictHostKey)
 
 	if err := s.state.SaveConfig(); err != nil {
 		redirectWithFlash(w, r, "/config", "Failed to save config: "+err.Error(), true)
 		return
 	}
-	redirectWithFlash(w, r, "/config", "Configuration saved successfully. Restart WatchSSH for polling-interval and web-listen changes to take full effect.", false)
+	redirectWithFlash(w, r, "/config", "Configuration saved successfully. Restart WatchSSH for polling-interval, storage, and web-listen changes to take full effect.", false)
 }
 
 // ── JSON API ──────────────────────────────────────────────────────────────────
@@ -590,6 +652,62 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(metrics)
+}
+
+func (s *Server) handleAPIHistoryMetrics(w http.ResponseWriter, r *http.Request) {
+	if !s.historyEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	records, err := s.history.RecentMetrics(ctx, strings.TrimSpace(r.URL.Query().Get("server")), parseLimit(r, 100))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
+}
+
+func (s *Server) handleAPIHistoryAlerts(w http.ResponseWriter, r *http.Request) {
+	if !s.historyEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	records, err := s.history.RecentFirings(ctx, parseLimit(r, 100))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, records)
+}
+
+func (s *Server) historyEnabled() bool {
+	cfg := s.state.Config()
+	return cfg.Storage.Type == "tinysql" && s.history != nil
+}
+
+func parseLimit(r *http.Request, fallback int) int {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil || limit <= 0 {
+		return fallback
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(payload)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {

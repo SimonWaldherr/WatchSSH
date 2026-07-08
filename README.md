@@ -178,6 +178,14 @@ For JSON output:
 ./watchssh -config config.yaml -once 2>/dev/null   # (set output.type: json in config)
 ```
 
+To keep a local history of metric samples and alert firings:
+
+```yaml
+storage:
+  type: tinysql
+  path: ./watchssh.tinysql
+```
+
 ## CLI Flags
 
 | Flag | Default | Description |
@@ -326,6 +334,23 @@ unavailable or unsupported metrics:
 - `"unsupported"` — not available on this platform
 - `"unavailable"` — temporarily unavailable (e.g. first poll)
 - `"error"` — collection failed; see `metric_errors` for details
+
+## History Storage
+
+WatchSSH is stateless by default: the web UI keeps only the latest live values
+in memory, and `output` controls console or JSON export. Optional embedded
+history storage can be enabled with:
+
+```yaml
+storage:
+  type: tinysql
+  path: ./watchssh.tinysql
+```
+
+When enabled, WatchSSH writes each collected server sample to `metric_samples`
+and each newly-triggered alert to `alert_firings`. The tables include compact
+query columns such as timestamp, server name, platform, metric, and error
+status, plus the full JSON payload for forward-compatible analysis.
 
 ## Alerting
 

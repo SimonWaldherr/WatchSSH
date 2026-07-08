@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"strings"
 	"sync"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/SimonWaldherr/WatchSSH/internal/check"
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"github.com/SimonWaldherr/WatchSSH/internal/history"
 	"github.com/SimonWaldherr/WatchSSH/internal/platform"
 	sshclient "github.com/SimonWaldherr/WatchSSH/internal/ssh"
 )
@@ -23,13 +26,23 @@ type Monitor struct {
 	cfgMu    sync.RWMutex // protects cfg (web UI may modify it concurrently)
 	output   OutputWriter
 	alertMgr *AlertManager
+	store    history.Store
 	notify   NotifyFunc
 	done     chan struct{}
 	wg       sync.WaitGroup
 }
 
 // New returns a new Monitor. notify may be nil if no live state update is needed.
-func New(cfg *config.Config, notify NotifyFunc) *Monitor {
+func New(cfg *config.Config, notify NotifyFunc) (*Monitor, error) {
+	store, err := history.New(cfg.Storage)
+	if err != nil {
+		return nil, err
+	}
+	return NewWithStore(cfg, notify, store), nil
+}
+
+// NewWithStore returns a monitor backed by an already-open history store.
+func NewWithStore(cfg *config.Config, notify NotifyFunc, store history.Store) *Monitor {
 	var w OutputWriter
 	switch cfg.Output.Type {
 	case "json":
@@ -41,6 +54,7 @@ func New(cfg *config.Config, notify NotifyFunc) *Monitor {
 		cfg:      cfg,
 		output:   w,
 		alertMgr: NewAlertManager(),
+		store:    store,
 		notify:   notify,
 		done:     make(chan struct{}),
 	}
@@ -87,6 +101,17 @@ func (m *Monitor) RunOnce() {
 func (m *Monitor) Stop() {
 	close(m.done)
 	m.wg.Wait()
+	if err := m.Close(); err != nil {
+		log.Printf("history store close: %v", err)
+	}
+}
+
+// Close releases resources held by the monitor.
+func (m *Monitor) Close() error {
+	if m.store == nil {
+		return nil
+	}
+	return m.store.Close()
 }
 
 // collect queries all servers concurrently (bounded by cfg.Workers) and writes the aggregated results.
@@ -139,6 +164,9 @@ func (m *Monitor) collect() {
 			log.Printf("alert action: %v", err)
 		}
 	}
+	if err := m.recordHistory(cfg, results, firings); err != nil {
+		log.Printf("history store: %v", err)
+	}
 
 	// Notify web state (if web server is running)
 	if m.notify != nil {
@@ -147,6 +175,71 @@ func (m *Monitor) collect() {
 	if err := m.output.Write(results); err != nil {
 		log.Printf("output error: %v", err)
 	}
+}
+
+func (m *Monitor) recordHistory(cfg *config.Config, metrics []ServerMetrics, firings []Firing) error {
+	if m.store == nil || cfg.Storage.Type == "" || cfg.Storage.Type == "none" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.Timeout)*time.Second)
+	defer cancel()
+
+	metricRecords, err := metricHistoryRecords(metrics)
+	if err != nil {
+		return err
+	}
+	if err := m.store.RecordMetrics(ctx, metricRecords); err != nil {
+		return err
+	}
+
+	firingRecords, err := firingHistoryRecords(firings)
+	if err != nil {
+		return err
+	}
+	return m.store.RecordFirings(ctx, firingRecords)
+}
+
+func metricHistoryRecords(metrics []ServerMetrics) ([]history.MetricRecord, error) {
+	records := make([]history.MetricRecord, 0, len(metrics))
+	for i, m := range metrics {
+		payload, err := json.Marshal(m)
+		if err != nil {
+			return nil, fmt.Errorf("marshal metric history: %w", err)
+		}
+		collectedAt := m.Timestamp.UTC().Format(time.RFC3339Nano)
+		records = append(records, history.MetricRecord{
+			ID:          fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
+			CollectedAt: collectedAt,
+			ServerName:  m.ServerName,
+			Host:        m.Host,
+			Platform:    m.Platform,
+			HasError:    m.Error != "",
+			PayloadJSON: string(payload),
+		})
+	}
+	return records, nil
+}
+
+func firingHistoryRecords(firings []Firing) ([]history.FiringRecord, error) {
+	records := make([]history.FiringRecord, 0, len(firings))
+	for i, f := range firings {
+		payload, err := json.Marshal(f)
+		if err != nil {
+			return nil, fmt.Errorf("marshal alert history: %w", err)
+		}
+		firedAt := f.FiredAt.UTC().Format(time.RFC3339Nano)
+		records = append(records, history.FiringRecord{
+			ID:          fmt.Sprintf("%s-%d-%s-%s", firedAt, i, f.Server, f.RuleName),
+			FiredAt:     firedAt,
+			RuleName:    f.RuleName,
+			Metric:      f.Metric,
+			Server:      f.Server,
+			Value:       f.Value,
+			Message:     f.Message,
+			PayloadJSON: string(payload),
+		})
+	}
+	return records, nil
 }
 
 // collectServer connects to / runs on a single server and gathers all metrics.

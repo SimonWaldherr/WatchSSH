@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"github.com/SimonWaldherr/WatchSSH/internal/history"
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
 )
 
@@ -119,5 +121,82 @@ func TestServerDetailShowsDockerAndCollectorDiagnostics(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}
+	}
+}
+
+func TestHistoryDisabledAPI(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/history/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), "history storage is not enabled") {
+		t.Fatalf("response body missing disabled message: %s", rec.Body.String())
+	}
+}
+
+func TestHistoryPageAndAPI(t *testing.T) {
+	store, err := history.OpenTinySQL(filepath.Join(t.TempDir(), "history.tinysql"))
+	if err != nil {
+		t.Fatalf("OpenTinySQL() error = %v", err)
+	}
+	defer store.Close()
+
+	if err := store.RecordMetrics(httptest.NewRequest(http.MethodGet, "/", nil).Context(), []history.MetricRecord{{
+		ID:          "metric-1",
+		CollectedAt: "2026-07-08T12:00:00Z",
+		ServerName:  "localhost",
+		Host:        "127.0.0.1",
+		Platform:    "Linux",
+		PayloadJSON: `{"server_name":"localhost"}`,
+	}}); err != nil {
+		t.Fatalf("RecordMetrics() error = %v", err)
+	}
+	if err := store.RecordFirings(httptest.NewRequest(http.MethodGet, "/", nil).Context(), []history.FiringRecord{{
+		ID:          "firing-1",
+		FiredAt:     "2026-07-08T12:00:01Z",
+		RuleName:    "HighCPU",
+		Metric:      "cpu_usage",
+		Server:      "localhost",
+		Value:       91.5,
+		Message:     "HighCPU triggered",
+		PayloadJSON: `{"rule_name":"HighCPU"}`,
+	}}); err != nil {
+		t.Fatalf("RecordFirings() error = %v", err)
+	}
+
+	state := NewState(&config.Config{Storage: config.StorageConfig{Type: "tinysql"}}, "")
+	srv := NewServer(state, ":0", store)
+
+	req := httptest.NewRequest(http.MethodGet, "/history", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Metric Samples", "localhost", "HighCPU"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("history page missing %q", want)
+		}
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/history/metrics?server=localhost&limit=1", nil)
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history API status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var metrics []history.MetricRecord
+	if err := json.Unmarshal(rec.Body.Bytes(), &metrics); err != nil {
+		t.Fatalf("unmarshal history API: %v", err)
+	}
+	if len(metrics) != 1 || metrics[0].ServerName != "localhost" {
+		t.Fatalf("history API metrics = %#v, want localhost record", metrics)
 	}
 }

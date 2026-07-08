@@ -78,6 +78,7 @@ const allTemplates = `
     <a href="/" {{if eq .Page "dashboard"}}class="active"{{end}}>Dashboard</a>
     <a href="/servers" {{if eq .Page "servers"}}class="active"{{end}}>Servers</a>
     <a href="/alerts" {{if eq .Page "alerts"}}class="active"{{end}}>Alerts</a>
+    <a href="/history" {{if eq .Page "history"}}class="active"{{end}}>History</a>
     <a href="/config" {{if eq .Page "config"}}class="active"{{end}}>Configuration</a>
   </nav>
 </header>
@@ -173,6 +174,79 @@ const allTemplates = `
   <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}}</div>
 </div>
 {{end}}
+{{end}}
+{{template "ftr" .}}
+{{end}}
+
+{{define "history-page"}}
+{{template "hdr" .}}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h2 style="margin:0">History</h2>
+  {{if .StorageEnabled}}<span style="font-size:.8rem;color:#888">Newest records first</span>{{end}}
+</div>
+
+{{if not .StorageEnabled}}
+<div class="notice notice-err">History storage is disabled. Enable <code>storage.type: tinysql</code> in the configuration and restart WatchSSH.</div>
+{{else}}
+  {{if .Error}}<div class="notice notice-err">{{.Error}}</div>{{end}}
+
+  <div class="form-wrap" style="margin-top:0">
+    <h3>Filter</h3>
+    <form method="get" action="/history">
+      <div class="form-row">
+        <div>
+          <label>Server Name</label>
+          <input type="text" name="server" value="{{.ServerFilter}}" placeholder="all servers">
+        </div>
+        <div style="display:flex;align-items:end;gap:.5rem">
+          <button type="submit" class="btn btn-primary">Apply</button>
+          <a href="/history" class="btn btn-secondary">Clear</a>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <div class="section">
+    <h3>Metric Samples</h3>
+    {{if .MetricSamples}}
+    <table>
+      <thead><tr><th>Collected</th><th>Server</th><th>Host</th><th>Platform</th><th>Status</th><th>Payload</th></tr></thead>
+      <tbody>
+      {{range .MetricSamples}}
+        <tr>
+          <td>{{.CollectedAt}}</td>
+          <td>{{.ServerName}}</td>
+          <td>{{.Host}}</td>
+          <td>{{.Platform}}</td>
+          <td>{{if .HasError}}<span class="badge badge-error">error</span>{{else}}<span class="badge badge-ok">ok</span>{{end}}</td>
+          <td><code>{{printf "%.96s" .PayloadJSON}}{{if gt (len .PayloadJSON) 96}}…{{end}}</code></td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No metric history recorded yet.</p>{{end}}
+  </div>
+
+  <div class="section">
+    <h3>Alert Firings</h3>
+    {{if .AlertFirings}}
+    <table>
+      <thead><tr><th>Fired</th><th>Rule</th><th>Metric</th><th>Server</th><th>Value</th><th>Message</th></tr></thead>
+      <tbody>
+      {{range .AlertFirings}}
+        <tr>
+          <td>{{.FiredAt}}</td>
+          <td>{{.RuleName}}</td>
+          <td>{{.Metric}}</td>
+          <td>{{.Server}}</td>
+          <td>{{printf "%.2f" .Value}}</td>
+          <td>{{.Message}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="empty">No alert history recorded yet.</p>{{end}}
+  </div>
 {{end}}
 {{template "ftr" .}}
 {{end}}
@@ -734,6 +808,24 @@ const allTemplates = `
       <div>
         <label>JSON Output File <small style="color:#888">(leave blank for stdout)</small></label>
         <input type="text" name="output_file" value="{{.Config.Output.File}}" placeholder="/var/log/watchssh/metrics.json">
+      </div>
+    </div>
+  </div>
+
+  <div class="form-wrap">
+    <h3>History Storage</h3>
+    <p style="font-size:.82rem;color:#888;margin:0 0 .75rem">Storage changes require a restart to take effect.</p>
+    <div class="form-row">
+      <div>
+        <label>Storage Type</label>
+        <select name="storage_type">
+          <option value="none" {{if eq .Config.Storage.Type "none"}}selected{{end}}>none</option>
+          <option value="tinysql" {{if eq .Config.Storage.Type "tinysql"}}selected{{end}}>tinysql</option>
+        </select>
+      </div>
+      <div>
+        <label>tinySQL Database File</label>
+        <input type="text" name="storage_path" value="{{.Config.Storage.Path}}" placeholder="./watchssh.tinysql">
       </div>
     </div>
   </div>

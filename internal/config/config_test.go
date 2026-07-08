@@ -38,6 +38,9 @@ servers:
 	if cfg.Output.Type != "console" {
 		t.Errorf("Output.Type = %q, want %q", cfg.Output.Type, "console")
 	}
+	if cfg.Storage.Type != "none" {
+		t.Errorf("Storage.Type = %q, want none", cfg.Storage.Type)
+	}
 	if cfg.Servers[0].Port != 22 {
 		t.Errorf("Port = %d, want 22", cfg.Servers[0].Port)
 	}
@@ -53,6 +56,9 @@ timeout: 15
 output:
   type: json
   file: /tmp/out.json
+storage:
+  type: tinysql
+  path: /tmp/watchssh.tinysql
 servers:
   - name: "web-01"
     host: "10.0.0.1"
@@ -75,6 +81,12 @@ servers:
 	}
 	if cfg.Output.Type != "json" {
 		t.Errorf("Output.Type = %q, want json", cfg.Output.Type)
+	}
+	if cfg.Storage.Type != "tinysql" {
+		t.Errorf("Storage.Type = %q, want tinysql", cfg.Storage.Type)
+	}
+	if cfg.Storage.Path != "/tmp/watchssh.tinysql" {
+		t.Errorf("Storage.Path = %q, want /tmp/watchssh.tinysql", cfg.Storage.Path)
 	}
 	srv := cfg.Servers[0]
 	if srv.Name != "web-01" {
@@ -122,6 +134,37 @@ func TestLoad_InvalidYAML(t *testing.T) {
 	_, err := config.Load(path)
 	if err == nil {
 		t.Fatal("expected error for invalid YAML, got nil")
+	}
+}
+
+func TestLoad_TinySQLStorageDefaultPath(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  type: tinysql
+servers:
+  - host: "10.0.0.1"
+    username: "admin"
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Storage.Path != "watchssh.tinysql" {
+		t.Errorf("Storage.Path = %q, want watchssh.tinysql", cfg.Storage.Path)
+	}
+}
+
+func TestLoad_InvalidStorageType(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  type: postgres
+servers:
+  - host: "10.0.0.1"
+    username: "admin"
+`)
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid storage type")
 	}
 }
 

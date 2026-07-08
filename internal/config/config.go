@@ -109,6 +109,14 @@ type Output struct {
 	File string `yaml:"file"`
 }
 
+// StorageConfig configures optional persistence for metric and alert history.
+type StorageConfig struct {
+	// Type is one of "none" or "tinysql". "none" keeps WatchSSH stateless.
+	Type string `yaml:"type"`
+	// Path is the file path used by the tinySQL backend.
+	Path string `yaml:"path"`
+}
+
 // WebConfig configures the built-in HTTP monitoring dashboard.
 type WebConfig struct {
 	Enabled bool   `yaml:"enabled"`
@@ -186,10 +194,11 @@ type Config struct {
 	// Workers is the maximum number of servers polled concurrently.
 	// Default: 0, which means one worker per server (unbounded).
 	// Set to a positive integer to cap concurrency (e.g. 10).
-	Workers int          `yaml:"workers"`
-	Output  Output       `yaml:"output"`
-	Web     WebConfig    `yaml:"web"`
-	Alerts  AlertsConfig `yaml:"alerts"`
+	Workers int           `yaml:"workers"`
+	Output  Output        `yaml:"output"`
+	Storage StorageConfig `yaml:"storage"`
+	Web     WebConfig     `yaml:"web"`
+	Alerts  AlertsConfig  `yaml:"alerts"`
 }
 
 // IsStrictHostKeyChecking returns true unless explicitly set to false.
@@ -259,6 +268,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Output.Type == "" {
 		cfg.Output.Type = "console"
 	}
+	if cfg.Storage.Type == "" {
+		cfg.Storage.Type = "none"
+	}
+	if cfg.Storage.Type == "tinysql" && cfg.Storage.Path == "" {
+		cfg.Storage.Path = "watchssh.tinysql"
+	}
 	if cfg.Web.Listen == "" {
 		cfg.Web.Listen = ":8080"
 	}
@@ -315,6 +330,14 @@ func applyDefaults(cfg *Config) {
 }
 
 func validate(cfg *Config) error {
+	switch cfg.Storage.Type {
+	case "", "none", "tinysql":
+	default:
+		return fmt.Errorf("storage.type must be one of none or tinysql")
+	}
+	if cfg.Storage.Type == "tinysql" && strings.TrimSpace(cfg.Storage.Path) == "" {
+		return fmt.Errorf("storage.path is required when storage.type is tinysql")
+	}
 	for i, srv := range cfg.Servers {
 		if srv.Local {
 			continue // local servers don't need host/username
