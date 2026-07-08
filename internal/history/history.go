@@ -10,20 +10,23 @@ import (
 
 // MetricRecord is the storage-friendly representation of one metrics sample.
 type MetricRecord struct {
-	ID            string
-	CollectedAt   string
-	ServerName    string
-	Host          string
-	Platform      string
-	HasError      bool
-	CPUUsage      *float64
-	MemoryUsage   *float64
-	SwapUsage     *float64
-	Load1         *float64
-	DiskRootUsage *float64
-	PingOK        *bool
-	PingLatencyMS *float64
-	PayloadJSON   string
+	ID             string
+	CollectedAt    string
+	ServerName     string
+	Host           string
+	Platform       string
+	HasError       bool
+	CPUUsage       *float64
+	MemoryUsage    *float64
+	SwapUsage      *float64
+	Load1          *float64
+	DiskRootUsage  *float64
+	PingOK         *bool
+	PingLatencyMS  *float64
+	DNSOK          *bool
+	TLSCertMinDays *float64
+	TracerouteHops *float64
+	PayloadJSON    string
 }
 
 // FiringRecord is the storage-friendly representation of one alert firing.

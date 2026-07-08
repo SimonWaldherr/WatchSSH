@@ -208,20 +208,23 @@ func metricHistoryRecords(metrics []ServerMetrics) ([]history.MetricRecord, erro
 		}
 		collectedAt := m.Timestamp.UTC().Format(time.RFC3339Nano)
 		records = append(records, history.MetricRecord{
-			ID:            fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
-			CollectedAt:   collectedAt,
-			ServerName:    m.ServerName,
-			Host:          m.Host,
-			Platform:      m.Platform,
-			HasError:      m.Error != "",
-			CPUUsage:      metricCPUUsage(m),
-			MemoryUsage:   metricMemoryUsage(m),
-			SwapUsage:     metricSwapUsage(m),
-			Load1:         metricLoad1(m),
-			DiskRootUsage: metricRootDiskUsage(m),
-			PingOK:        metricPingOK(m),
-			PingLatencyMS: metricPingLatency(m),
-			PayloadJSON:   string(payload),
+			ID:             fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
+			CollectedAt:    collectedAt,
+			ServerName:     m.ServerName,
+			Host:           m.Host,
+			Platform:       m.Platform,
+			HasError:       m.Error != "",
+			CPUUsage:       metricCPUUsage(m),
+			MemoryUsage:    metricMemoryUsage(m),
+			SwapUsage:      metricSwapUsage(m),
+			Load1:          metricLoad1(m),
+			DiskRootUsage:  metricRootDiskUsage(m),
+			PingOK:         metricPingOK(m),
+			PingLatencyMS:  metricPingLatency(m),
+			DNSOK:          metricDNSOK(m),
+			TLSCertMinDays: metricTLSCertMinDays(m),
+			TracerouteHops: metricTracerouteHops(m),
+			PayloadJSON:    string(payload),
 		})
 	}
 	return records, nil
@@ -279,6 +282,47 @@ func metricPingLatency(m ServerMetrics) *float64 {
 		return nil
 	}
 	return float64Ptr(m.Connectivity.PingLatency)
+}
+
+func metricDNSOK(m ServerMetrics) *bool {
+	if len(m.Connectivity.DNS) == 0 {
+		return nil
+	}
+	ok := true
+	for _, r := range m.Connectivity.DNS {
+		if !r.OK {
+			ok = false
+			break
+		}
+	}
+	return boolPtr(ok)
+}
+
+func metricTLSCertMinDays(m ServerMetrics) *float64 {
+	var min *float64
+	for _, r := range m.Connectivity.TLS {
+		if r.CertExpiresDays == nil {
+			continue
+		}
+		if min == nil || *r.CertExpiresDays < *min {
+			v := *r.CertExpiresDays
+			min = &v
+		}
+	}
+	return min
+}
+
+func metricTracerouteHops(m ServerMetrics) *float64 {
+	if len(m.Connectivity.Traceroute) == 0 {
+		return nil
+	}
+	var maxHops int
+	for _, r := range m.Connectivity.Traceroute {
+		if r.Hops > maxHops {
+			maxHops = r.Hops
+		}
+	}
+	return float64Ptr(float64(maxHops))
 }
 
 func float64Ptr(v float64) *float64 {
@@ -388,6 +432,57 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 		})
 	}
 
+	for _, dc := range srv.Checks.DNS {
+		r := check.CheckDNS(dc.Name, dc.Host, dc.Type, dc.Server, dc.ExpectedAnswer, dc.Timeout)
+		result := DNSResult{
+			Name:      r.Name,
+			Host:      r.Host,
+			Type:      r.Type,
+			Server:    r.Server,
+			Answers:   r.Answers,
+			OK:        r.OK,
+			LatencyMs: r.LatencyMs,
+		}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.DNS = append(cs.DNS, result)
+	}
+
+	for _, tc := range srv.Checks.Trace {
+		r := check.CheckTraceroute(tc.Name, tc.Host, tc.MaxHops, tc.Timeout)
+		result := TracerouteResult{
+			Name:      r.Name,
+			Host:      r.Host,
+			OK:        r.OK,
+			Hops:      r.Hops,
+			LatencyMs: r.LatencyMs,
+		}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.Traceroute = append(cs.Traceroute, result)
+	}
+
+	for _, tc := range srv.Checks.TLS {
+		r := check.CheckTLS(tc.Name, tc.Host, tc.Port, tc.ServerName, tc.Timeout)
+		result := TLSResult{
+			Name:            r.Name,
+			Host:            r.Host,
+			Port:            r.Port,
+			ServerName:      r.ServerName,
+			OK:              r.OK,
+			LatencyMs:       r.LatencyMs,
+			CertExpiresDays: r.CertExpiresDays,
+			Issuer:          r.Issuer,
+			Subject:         r.Subject,
+		}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.TLS = append(cs.TLS, result)
+	}
+
 	return cs
 }
 
@@ -411,6 +506,33 @@ func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
 			LatencyMs:       r.LatencyMs,
 			CertExpiresDays: r.CertExpiresDays,
 		})
+	}
+
+	for _, dc := range srv.Checks.DNS {
+		r := check.CheckDNS(dc.Name, dc.Host, dc.Type, dc.Server, dc.ExpectedAnswer, dc.Timeout)
+		result := DNSResult{Name: r.Name, Host: r.Host, Type: r.Type, Server: r.Server, Answers: r.Answers, OK: r.OK, LatencyMs: r.LatencyMs}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.DNS = append(cs.DNS, result)
+	}
+
+	for _, tc := range srv.Checks.Trace {
+		r := check.CheckTraceroute(tc.Name, tc.Host, tc.MaxHops, tc.Timeout)
+		result := TracerouteResult{Name: r.Name, Host: r.Host, OK: r.OK, Hops: r.Hops, LatencyMs: r.LatencyMs}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.Traceroute = append(cs.Traceroute, result)
+	}
+
+	for _, tc := range srv.Checks.TLS {
+		r := check.CheckTLS(tc.Name, tc.Host, tc.Port, tc.ServerName, tc.Timeout)
+		result := TLSResult{Name: r.Name, Host: r.Host, Port: r.Port, ServerName: r.ServerName, OK: r.OK, LatencyMs: r.LatencyMs, CertExpiresDays: r.CertExpiresDays, Issuer: r.Issuer, Subject: r.Subject}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.TLS = append(cs.TLS, result)
 	}
 
 	return cs

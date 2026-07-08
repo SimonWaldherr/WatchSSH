@@ -210,7 +210,7 @@ const allTemplates = `
     <h3>Metric Samples</h3>
     {{if .MetricSamples}}
     <table>
-      <thead><tr><th>Collected</th><th>Server</th><th>Platform</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk /</th><th>Load</th><th>Ping</th></tr></thead>
+      <thead><tr><th>Collected</th><th>Server</th><th>Platform</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk /</th><th>Load</th><th>Ping</th><th>DNS</th><th>TLS</th><th>Trace</th></tr></thead>
       <tbody>
       {{range .MetricSamples}}
         <tr>
@@ -223,6 +223,9 @@ const allTemplates = `
           <td>{{fmtOptFloat .DiskRootUsage}}</td>
           <td>{{fmtOptFloat .Load1}}</td>
           <td>{{fmtOptBool .PingOK}}{{if .PingLatencyMS}} ({{fmtOptFloat .PingLatencyMS}} ms){{end}}</td>
+          <td>{{fmtOptBool .DNSOK}}</td>
+          <td>{{fmtOptFloat .TLSCertMinDays}}</td>
+          <td>{{fmtOptFloat .TracerouteHops}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -340,7 +343,25 @@ const allTemplates = `
       <span>{{if .OK}}<span class="dot dot-ok"></span>{{.StatusCode}}{{else}}<span class="dot dot-err"></span>{{if .StatusCode}}{{.StatusCode}}{{else}}ERR{{end}}{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
     </div>
     {{end}}
-    {{if and (not .PingEnabled) (not .Ports) (not .HTTP)}}
+    {{range .DNS}}
+    <div class="m-row" style="flex-wrap:wrap">
+      <span class="m-label">DNS {{.Type}} {{.Host}}</span>
+      <span>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
+    </div>
+    {{end}}
+    {{range .Traceroute}}
+    <div class="m-row" style="flex-wrap:wrap">
+      <span class="m-label">Traceroute {{.Host}}</span>
+      <span>{{if .OK}}<span class="dot dot-ok"></span>{{.Hops}} hops{{else}}<span class="dot dot-err"></span>FAILED{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
+    </div>
+    {{end}}
+    {{range .TLS}}
+    <div class="m-row" style="flex-wrap:wrap">
+      <span class="m-label">TLS {{.Host}}:{{.Port}}</span>
+      <span>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED{{end}}{{if .CertExpiresDays}} — {{fmtOptFloat .CertExpiresDays}} days{{end}}</span>
+    </div>
+    {{end}}
+    {{if and (not .PingEnabled) (not .Ports) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS)}}
     <p class="empty">No connectivity checks configured for this server.</p>
     {{end}}
     {{end}}

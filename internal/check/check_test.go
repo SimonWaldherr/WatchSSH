@@ -74,3 +74,14 @@ func TestShouldCheckTLSCert(t *testing.T) {
 		t.Fatal("expected http URL not to require TLS cert check")
 	}
 }
+
+func TestParseTracerouteHops(t *testing.T) {
+	got := ParseTracerouteHops(`traceroute to example.com (93.184.216.34), 30 hops max
+ 1  router.local (192.0.2.1)  1.234 ms
+ 2  198.51.100.1  8.123 ms
+ 3  * * *
+ 4  example.com (93.184.216.34)  20.123 ms`)
+	if got != 4 {
+		t.Fatalf("ParseTracerouteHops() = %d, want 4", got)
+	}
+}

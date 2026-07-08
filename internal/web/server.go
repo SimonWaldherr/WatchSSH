@@ -112,6 +112,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/readyz", s.handleReadyz)
 	s.mux.HandleFunc("/api/test-connection", s.handleTestConnection)
 	s.mux.HandleFunc("/api/metrics", s.handleAPIMetrics)
+	s.mux.HandleFunc("/api/probes", s.handleAPIProbes)
 	s.mux.HandleFunc("/api/history/metrics", s.handleAPIHistoryMetrics)
 	s.mux.HandleFunc("/api/history/alerts", s.handleAPIHistoryAlerts)
 	s.mux.HandleFunc("/api/history/summary", s.handleAPIHistorySummary)
@@ -663,6 +664,28 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request) {
 	_ = enc.Encode(metrics)
 }
 
+type probeAPIResult struct {
+	Server       string                    `json:"server"`
+	Host         string                    `json:"host"`
+	Connectivity monitor.ConnectivityStats `json:"connectivity"`
+}
+
+func (s *Server) handleAPIProbes(w http.ResponseWriter, r *http.Request) {
+	serverFilter := strings.TrimSpace(r.URL.Query().Get("server"))
+	results := make([]probeAPIResult, 0)
+	for _, m := range s.state.Metrics() {
+		if serverFilter != "" && m.ServerName != serverFilter {
+			continue
+		}
+		results = append(results, probeAPIResult{
+			Server:       m.ServerName,
+			Host:         m.Host,
+			Connectivity: m.Connectivity,
+		})
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
 func (s *Server) handleAPIHistoryMetrics(w http.ResponseWriter, r *http.Request) {
 	if !s.historyEnabled() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
@@ -702,6 +725,9 @@ type historySummary struct {
 	LatestCPU       *float64 `json:"latest_cpu_usage,omitempty"`
 	LatestMemory    *float64 `json:"latest_memory_usage,omitempty"`
 	LatestDiskRoot  *float64 `json:"latest_disk_root_usage,omitempty"`
+	LatestDNSOK     *bool    `json:"latest_dns_ok,omitempty"`
+	LatestTLSDays   *float64 `json:"latest_tls_cert_min_days,omitempty"`
+	LatestTraceHops *float64 `json:"latest_traceroute_hops,omitempty"`
 	AverageCPU      *float64 `json:"average_cpu_usage,omitempty"`
 	AverageMemory   *float64 `json:"average_memory_usage,omitempty"`
 	AverageDiskRoot *float64 `json:"average_disk_root_usage,omitempty"`
@@ -736,6 +762,18 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_memory_usage_percent gauge\n")
 	b.WriteString("# HELP watchssh_disk_usage_percent Disk usage percent by mount point.\n")
 	b.WriteString("# TYPE watchssh_disk_usage_percent gauge\n")
+	b.WriteString("# HELP watchssh_dns_probe_up Whether a DNS probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_dns_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_dns_probe_latency_ms DNS probe latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_dns_probe_latency_ms gauge\n")
+	b.WriteString("# HELP watchssh_tls_probe_up Whether a TLS probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_tls_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_tls_cert_expires_days TLS certificate days until expiry.\n")
+	b.WriteString("# TYPE watchssh_tls_cert_expires_days gauge\n")
+	b.WriteString("# HELP watchssh_traceroute_probe_up Whether a traceroute probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_traceroute_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_traceroute_hops Observed traceroute hop count.\n")
+	b.WriteString("# TYPE watchssh_traceroute_hops gauge\n")
 	for _, m := range s.state.Metrics() {
 		labels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "platform": m.Platform})
 		up := 1
@@ -753,6 +791,23 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			diskLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "mount": d.MountPoint, "device": d.Device})
 			fmt.Fprintf(&b, "watchssh_disk_usage_percent%s %.6f\n", diskLabels, d.UsagePercent)
 		}
+		for _, d := range m.Connectivity.DNS {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": d.Name, "target": d.Host, "type": d.Type, "resolver": d.Server})
+			fmt.Fprintf(&b, "watchssh_dns_probe_up%s %d\n", probeLabels, boolGauge(d.OK))
+			fmt.Fprintf(&b, "watchssh_dns_probe_latency_ms%s %.6f\n", probeLabels, d.LatencyMs)
+		}
+		for _, t := range m.Connectivity.TLS {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": t.Name, "target": t.Host, "server_name": t.ServerName})
+			fmt.Fprintf(&b, "watchssh_tls_probe_up%s %d\n", probeLabels, boolGauge(t.OK))
+			if t.CertExpiresDays != nil {
+				fmt.Fprintf(&b, "watchssh_tls_cert_expires_days%s %.6f\n", probeLabels, *t.CertExpiresDays)
+			}
+		}
+		for _, t := range m.Connectivity.Traceroute {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": t.Name, "target": t.Host})
+			fmt.Fprintf(&b, "watchssh_traceroute_probe_up%s %d\n", probeLabels, boolGauge(t.OK))
+			fmt.Fprintf(&b, "watchssh_traceroute_hops%s %d\n", probeLabels, t.Hops)
+		}
 	}
 	_, _ = w.Write([]byte(b.String()))
 }
@@ -768,11 +823,14 @@ func summarizeHistory(records []history.MetricRecord) []historySummary {
 		a := byServer[r.ServerName]
 		if a == nil {
 			a = &acc{summary: historySummary{
-				ServerName:     r.ServerName,
-				LatestAt:       r.CollectedAt,
-				LatestCPU:      r.CPUUsage,
-				LatestMemory:   r.MemoryUsage,
-				LatestDiskRoot: r.DiskRootUsage,
+				ServerName:      r.ServerName,
+				LatestAt:        r.CollectedAt,
+				LatestCPU:       r.CPUUsage,
+				LatestMemory:    r.MemoryUsage,
+				LatestDiskRoot:  r.DiskRootUsage,
+				LatestDNSOK:     r.DNSOK,
+				LatestTLSDays:   r.TLSCertMinDays,
+				LatestTraceHops: r.TracerouteHops,
 			}}
 			byServer[r.ServerName] = a
 		}
@@ -839,6 +897,13 @@ func prometheusEscape(v string) string {
 	v = strings.ReplaceAll(v, "\n", `\n`)
 	v = strings.ReplaceAll(v, `"`, `\"`)
 	return v
+}
+
+func boolGauge(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
 
 func float64Ptr(v float64) *float64 {

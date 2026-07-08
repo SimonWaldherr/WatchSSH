@@ -215,6 +215,7 @@ func TestHistoryPageAndAPI(t *testing.T) {
 
 func TestPrometheusMetricsEndpoint(t *testing.T) {
 	state := NewState(&config.Config{}, "")
+	tlsDays := 12.5
 	state.Update([]monitor.ServerMetrics{{
 		ServerName: "localhost",
 		Host:       "127.0.0.1",
@@ -222,6 +223,11 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 		CPU:        &monitor.CPUStats{UsagePercent: 12.5},
 		Memory:     &monitor.MemoryStats{UsagePercent: 43.2},
 		Disks:      []monitor.DiskStats{{MountPoint: "/", Device: "/dev/disk1", UsagePercent: 55.5}},
+		Connectivity: monitor.ConnectivityStats{
+			DNS:        []monitor.DNSResult{{Name: "dns", Host: "example.com", Type: "A", OK: true, LatencyMs: 12}},
+			TLS:        []monitor.TLSResult{{Name: "tls", Host: "example.com", Port: 443, OK: true, CertExpiresDays: &tlsDays}},
+			Traceroute: []monitor.TracerouteResult{{Name: "trace", Host: "example.com", OK: true, Hops: 8}},
+		},
 	}}, nil)
 	srv := NewServer(state, ":0")
 
@@ -233,9 +239,32 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent"} {
+	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("prometheus metrics missing %q: %s", want, body)
 		}
+	}
+}
+
+func TestAPIProbes(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	state.Update([]monitor.ServerMetrics{{
+		ServerName: "localhost",
+		Host:       "127.0.0.1",
+		Connectivity: monitor.ConnectivityStats{
+			DNS: []monitor.DNSResult{{Name: "dns", Host: "example.com", Type: "A", OK: true}},
+		},
+	}}, nil)
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/probes?server=localhost", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), `"dns"`) {
+		t.Fatalf("probe API missing dns result: %s", rec.Body.String())
 	}
 }

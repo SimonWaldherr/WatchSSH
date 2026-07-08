@@ -151,11 +151,14 @@ type ProcessInfo struct {
 // ConnectivityStats contains results of external connectivity checks.
 type ConnectivityStats struct {
 	// PingEnabled is true when a ping check was configured and attempted.
-	PingEnabled bool         `json:"ping_enabled"`
-	PingOK      bool         `json:"ping_ok"`
-	PingLatency float64      `json:"ping_latency_ms"`
-	Ports       []PortResult `json:"ports,omitempty"`
-	HTTP        []HTTPResult `json:"http,omitempty"`
+	PingEnabled bool               `json:"ping_enabled"`
+	PingOK      bool               `json:"ping_ok"`
+	PingLatency float64            `json:"ping_latency_ms"`
+	Ports       []PortResult       `json:"ports,omitempty"`
+	HTTP        []HTTPResult       `json:"http,omitempty"`
+	DNS         []DNSResult        `json:"dns,omitempty"`
+	Traceroute  []TracerouteResult `json:"traceroute,omitempty"`
+	TLS         []TLSResult        `json:"tls,omitempty"`
 }
 
 // PortResult holds the outcome of a single TCP port check.
@@ -171,6 +174,42 @@ type HTTPResult struct {
 	OK              bool     `json:"ok"`
 	LatencyMs       float64  `json:"latency_ms"`
 	CertExpiresDays *float64 `json:"cert_expires_days,omitempty"`
+}
+
+// DNSResult holds the outcome of a single DNS probe.
+type DNSResult struct {
+	Name      string   `json:"name,omitempty"`
+	Host      string   `json:"host"`
+	Type      string   `json:"type"`
+	Server    string   `json:"server,omitempty"`
+	Answers   []string `json:"answers,omitempty"`
+	OK        bool     `json:"ok"`
+	LatencyMs float64  `json:"latency_ms"`
+	Error     string   `json:"error,omitempty"`
+}
+
+// TracerouteResult holds the outcome of a single traceroute probe.
+type TracerouteResult struct {
+	Name      string  `json:"name,omitempty"`
+	Host      string  `json:"host"`
+	OK        bool    `json:"ok"`
+	Hops      int     `json:"hops"`
+	LatencyMs float64 `json:"latency_ms"`
+	Error     string  `json:"error,omitempty"`
+}
+
+// TLSResult holds the outcome of a single TLS certificate probe.
+type TLSResult struct {
+	Name            string   `json:"name,omitempty"`
+	Host            string   `json:"host"`
+	Port            int      `json:"port"`
+	ServerName      string   `json:"server_name,omitempty"`
+	OK              bool     `json:"ok"`
+	LatencyMs       float64  `json:"latency_ms"`
+	CertExpiresDays *float64 `json:"cert_expires_days,omitempty"`
+	Issuer          string   `json:"issuer,omitempty"`
+	Subject         string   `json:"subject,omitempty"`
+	Error           string   `json:"error,omitempty"`
 }
 
 // CustomCheckResult holds the outcome of a custom SSH command check.

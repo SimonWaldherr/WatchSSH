@@ -133,6 +133,27 @@ servers:
           expected_status: 200
           timeout: 10
 
+      dns:
+        - name: public-dns
+          host: web-01.example.com
+          type: A
+          server: 1.1.1.1
+          expected_answer: 192.0.2.
+          timeout: 5
+
+      traceroute:
+        - name: path-to-edge
+          host: 192.0.2.10
+          max_hops: 30
+          timeout: 10
+
+      tls:
+        - name: public-cert
+          host: web-01.example.com
+          port: 443
+          server_name: web-01.example.com
+          timeout: 5
+
       # Custom SSH command checks (run on the remote host via SSH).
       custom:
         - name: nginx-running
@@ -287,6 +308,34 @@ alerts:
     # TLS certificate expiring soon (days remaining)
     - name: CertExpiringSoon
       metric: cert_expires_days
+      operator: "<"
+      threshold: 30
+
+    # DNS probe failure or slow resolver response
+    - name: DNSProbeFailed
+      metric: dns_failed
+      operator: "=="
+      threshold: 1
+
+    - name: DNSProbeSlow
+      metric: dns_latency
+      operator: ">"
+      threshold: 250
+
+    # Traceroute path changed or became too long
+    - name: TracerouteTooLong
+      metric: traceroute_hops
+      operator: ">"
+      threshold: 20
+
+    # Dedicated TLS probe failure / certificate expiry
+    - name: TLSProbeFailed
+      metric: tls_failed
+      operator: "=="
+      threshold: 1
+
+    - name: TLSProbeCertExpiringSoon
+      metric: tls_cert_expires_days
       operator: "<"
       threshold: 30
 

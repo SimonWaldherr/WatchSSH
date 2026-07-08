@@ -250,6 +250,46 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return *h.CertExpiresDays, true
 			}
 		}
+	case "dns_failed":
+		for _, d := range srv.Connectivity.DNS {
+			if !d.OK {
+				return 1, true
+			}
+		}
+	case "dns_latency":
+		for _, d := range srv.Connectivity.DNS {
+			if cmp(d.LatencyMs, rule.Operator, rule.Threshold) {
+				return d.LatencyMs, true
+			}
+		}
+	case "traceroute_failed":
+		for _, t := range srv.Connectivity.Traceroute {
+			if !t.OK {
+				return 1, true
+			}
+		}
+	case "traceroute_hops":
+		for _, t := range srv.Connectivity.Traceroute {
+			value := float64(t.Hops)
+			if cmp(value, rule.Operator, rule.Threshold) {
+				return value, true
+			}
+		}
+	case "tls_failed":
+		for _, t := range srv.Connectivity.TLS {
+			if !t.OK {
+				return 1, true
+			}
+		}
+	case "tls_cert_expires_days":
+		for _, t := range srv.Connectivity.TLS {
+			if t.CertExpiresDays == nil {
+				continue
+			}
+			if cmp(*t.CertExpiresDays, rule.Operator, rule.Threshold) {
+				return *t.CertExpiresDays, true
+			}
+		}
 	case "custom_failed":
 		for _, c := range srv.CustomChecks {
 			if !c.OK {

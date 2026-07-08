@@ -4,6 +4,7 @@ package check
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -145,6 +146,190 @@ func shouldCheckTLSCert(rawURL, reqScheme string) bool {
 		return false
 	}
 	return strings.EqualFold(u.Scheme, "https")
+}
+
+// DNSResult holds the outcome of a DNS lookup probe.
+type DNSResult struct {
+	Name      string
+	Host      string
+	Type      string
+	Server    string
+	Answers   []string
+	OK        bool
+	LatencyMs float64
+	Err       error
+}
+
+// CheckDNS resolves host with the requested record type.
+func CheckDNS(name, host, recordType, server, expected string, timeoutSec int) DNSResult {
+	if recordType == "" {
+		recordType = "A"
+	}
+	recordType = strings.ToUpper(recordType)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	resolver := net.DefaultResolver
+	if strings.TrimSpace(server) != "" {
+		resolver = &net.Resolver{
+			PreferGo: true,
+			Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				addr := server
+				if _, _, err := net.SplitHostPort(addr); err != nil {
+					addr = net.JoinHostPort(addr, "53")
+				}
+				d := net.Dialer{Timeout: time.Duration(timeoutSec) * time.Second}
+				return d.DialContext(ctx, network, addr)
+			},
+		}
+	}
+
+	start := time.Now()
+	answers, err := lookupDNS(ctx, resolver, host, recordType)
+	latencyMs := float64(time.Since(start).Milliseconds())
+	ok := err == nil && len(answers) > 0
+	if ok && expected != "" {
+		ok = false
+		for _, answer := range answers {
+			if strings.Contains(answer, expected) {
+				ok = true
+				break
+			}
+		}
+	}
+	return DNSResult{Name: name, Host: host, Type: recordType, Server: server, Answers: answers, OK: ok, LatencyMs: latencyMs, Err: err}
+}
+
+func lookupDNS(ctx context.Context, resolver *net.Resolver, host, recordType string) ([]string, error) {
+	switch recordType {
+	case "A":
+		ips, err := resolver.LookupIP(ctx, "ip4", host)
+		return ipsToStrings(ips), err
+	case "AAAA":
+		ips, err := resolver.LookupIP(ctx, "ip6", host)
+		return ipsToStrings(ips), err
+	case "CNAME":
+		cname, err := resolver.LookupCNAME(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		return []string{strings.TrimSuffix(cname, ".")}, nil
+	case "MX":
+		mxs, err := resolver.LookupMX(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]string, 0, len(mxs))
+		for _, mx := range mxs {
+			out = append(out, strings.TrimSuffix(mx.Host, "."))
+		}
+		return out, nil
+	case "TXT":
+		return resolver.LookupTXT(ctx, host)
+	default:
+		return nil, fmt.Errorf("unsupported DNS record type %q", recordType)
+	}
+}
+
+func ipsToStrings(ips []net.IP) []string {
+	out := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		out = append(out, ip.String())
+	}
+	return out
+}
+
+// TracerouteResult holds the outcome of a traceroute probe.
+type TracerouteResult struct {
+	Name      string
+	Host      string
+	OK        bool
+	Hops      int
+	LatencyMs float64
+	Output    string
+	Err       error
+}
+
+// CheckTraceroute runs traceroute and counts observed hop lines.
+func CheckTraceroute(name, host string, maxHops, timeoutSec int) TracerouteResult {
+	if maxHops <= 0 {
+		maxHops = 30
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec+2)*time.Second)
+	defer cancel()
+
+	args := []string{"-m", strconv.Itoa(maxHops), "-w", strconv.Itoa(timeoutSec), host}
+	start := time.Now()
+	out, err := exec.CommandContext(ctx, "traceroute", args...).CombinedOutput()
+	latencyMs := float64(time.Since(start).Milliseconds())
+	output := strings.TrimSpace(string(out))
+	hops := ParseTracerouteHops(output)
+	return TracerouteResult{Name: name, Host: host, OK: err == nil && hops > 0, Hops: hops, LatencyMs: latencyMs, Output: output, Err: err}
+}
+
+// ParseTracerouteHops counts hop rows in traceroute output.
+func ParseTracerouteHops(output string) int {
+	count := 0
+	hopRE := regexp.MustCompile(`^\s*\d+\s+`)
+	for _, line := range strings.Split(output, "\n") {
+		if hopRE.MatchString(line) {
+			count++
+		}
+	}
+	return count
+}
+
+// TLSResult holds the outcome of a TLS certificate probe.
+type TLSResult struct {
+	Name            string
+	Host            string
+	Port            int
+	ServerName      string
+	OK              bool
+	LatencyMs       float64
+	CertExpiresDays *float64
+	Issuer          string
+	Subject         string
+	Err             error
+}
+
+// CheckTLS connects to host:port and reports certificate validity information.
+func CheckTLS(name, host string, port int, serverName string, timeoutSec int) TLSResult {
+	if port <= 0 {
+		port = 443
+	}
+	if serverName == "" {
+		serverName = host
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	dialer := tls.Dialer{
+		NetDialer: &net.Dialer{Timeout: time.Duration(timeoutSec) * time.Second},
+		Config:    &tls.Config{ServerName: serverName, MinVersion: tls.VersionTLS12},
+	}
+	start := time.Now()
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	latencyMs := float64(time.Since(start).Milliseconds())
+	if err != nil {
+		return TLSResult{Name: name, Host: host, Port: port, ServerName: serverName, OK: false, LatencyMs: latencyMs, Err: err}
+	}
+	defer conn.Close()
+
+	state := conn.(*tls.Conn).ConnectionState()
+	result := TLSResult{Name: name, Host: host, Port: port, ServerName: serverName, OK: len(state.PeerCertificates) > 0, LatencyMs: latencyMs}
+	if len(state.PeerCertificates) > 0 {
+		cert := state.PeerCertificates[0]
+		days := time.Until(cert.NotAfter).Hours() / 24
+		result.CertExpiresDays = &days
+		result.Issuer = cert.Issuer.CommonName
+		result.Subject = cert.Subject.CommonName
+	}
+	return result
 }
 
 // ParsePingAvg is exported for testing.

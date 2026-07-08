@@ -1,11 +1,64 @@
 package platform
 
 import (
+	"context"
 	"math"
 	"strconv"
 	"testing"
 	"time"
 )
+
+type staticRunner map[string]string
+
+func (r staticRunner) Run(_ context.Context, cmd string) (string, error) {
+	if out, ok := r[cmd]; ok {
+		return out, nil
+	}
+	return "", assertErr(cmd)
+}
+
+type assertErr string
+
+func (e assertErr) Error() string { return string(e) }
+
+func TestDetectAdditionalFamilies(t *testing.T) {
+	tests := map[string]Family{
+		"SunOS\n":       SunOS,
+		"illumos\n":     Illumos,
+		"AIX\n":         AIX,
+		"HP-UX\n":       HPUX,
+		"DragonFly\n":   DragonFly,
+		"MidnightBSD\n": MidnightBSD,
+	}
+	for out, want := range tests {
+		got := Detect(context.Background(), staticRunner{"uname -s": out})
+		if got != want {
+			t.Fatalf("Detect(%q) = %q, want %q", out, got, want)
+		}
+	}
+}
+
+func TestDetectWindowsFallback(t *testing.T) {
+	got := Detect(context.Background(), staticRunner{"cmd /c ver": "Microsoft Windows [Version 10.0.20348.0]"})
+	if got != Windows {
+		t.Fatalf("Detect() = %q, want Windows", got)
+	}
+}
+
+func TestNewAdditionalCollectors(t *testing.T) {
+	if _, ok := New(SunOS).(*genericUnixCollector); !ok {
+		t.Fatalf("New(SunOS) did not return genericUnixCollector")
+	}
+	if _, ok := New(DragonFly).(*freebsdCollector); !ok {
+		t.Fatalf("New(DragonFly) did not return freebsdCollector")
+	}
+	if _, ok := New(Windows).(*windowsCollector); !ok {
+		t.Fatalf("New(Windows) did not return windowsCollector")
+	}
+	if _, ok := New(Unknown).(*genericUnixCollector); !ok {
+		t.Fatalf("New(Unknown) did not return genericUnixCollector")
+	}
+}
 
 // TestParseSysctlBootTime verifies a valid BSD boottime is parsed to a positive uptime.
 func TestParseSysctlBootTime(t *testing.T) {
@@ -53,6 +106,36 @@ func TestParseSysctlLoadAvg_Invalid(t *testing.T) {
 	_, err := parseSysctlLoadAvg("{ 0.52 }")
 	if err == nil {
 		t.Error("expected error for too few fields")
+	}
+}
+
+func TestParseUptimeLoadAvg(t *testing.T) {
+	la, err := parseUptimeLoadAvg(" 11:44am up 5 days,  2:10,  3 users,  load average: 0.12, 0.34, 0.56")
+	if err != nil {
+		t.Fatalf("parseUptimeLoadAvg() error = %v", err)
+	}
+	if la.Load1 != 0.12 || la.Load5 != 0.34 || la.Load15 != 0.56 {
+		t.Fatalf("load = %#v, want 0.12/0.34/0.56", la)
+	}
+}
+
+func TestParsePrtconfMemory(t *testing.T) {
+	mem, err := parsePrtconfMemory("Memory size: 16 Gigabytes")
+	if err != nil {
+		t.Fatalf("parsePrtconfMemory() error = %v", err)
+	}
+	if mem.TotalBytes != 16*1024*1024*1024 {
+		t.Fatalf("TotalBytes = %d, want %d", mem.TotalBytes, int64(16*1024*1024*1024))
+	}
+}
+
+func TestParseSolarisSwapS(t *testing.T) {
+	swap, err := parseSolarisSwapS("total: 123k bytes allocated + 456k reserved = 579k used, 789k available")
+	if err != nil {
+		t.Fatalf("parseSolarisSwapS() error = %v", err)
+	}
+	if swap.UsedBytes != 579*1024 || swap.FreeBytes != 789*1024 {
+		t.Fatalf("swap = %#v, want used/free from swap -s", swap)
 	}
 }
 

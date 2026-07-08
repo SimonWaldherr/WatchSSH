@@ -246,6 +246,47 @@ func TestAlertManager_CertExpiresDays(t *testing.T) {
 	}
 }
 
+func TestAlertManager_NetworkProbeMetrics(t *testing.T) {
+	tlsDays := 5.0
+	metrics := []ServerMetrics{{
+		ServerName: "web-01",
+		Connectivity: ConnectivityStats{
+			DNS: []DNSResult{{
+				Host:      "example.com",
+				Type:      "A",
+				OK:        false,
+				LatencyMs: 120,
+			}},
+			Traceroute: []TracerouteResult{{
+				Host: "example.com",
+				OK:   true,
+				Hops: 24,
+			}},
+			TLS: []TLSResult{{
+				Host:            "example.com",
+				Port:            443,
+				OK:              true,
+				CertExpiresDays: &tlsDays,
+			}},
+		},
+	}}
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			Cooldown: 1,
+			Rules: []config.AlertRule{
+				{Name: "DNSFailed", Metric: "dns_failed", Operator: "==", Threshold: 1},
+				{Name: "TraceTooLong", Metric: "traceroute_hops", Operator: ">", Threshold: 20},
+				{Name: "TLSExpires", Metric: "tls_cert_expires_days", Operator: "<", Threshold: 10},
+			},
+		},
+	}
+
+	firings := NewAlertManager().Evaluate(metrics, cfg)
+	if len(firings) != 3 {
+		t.Fatalf("firings len = %d, want 3: %#v", len(firings), firings)
+	}
+}
+
 func TestCmp(t *testing.T) {
 	tests := []struct {
 		value    float64

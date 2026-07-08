@@ -15,12 +15,19 @@ var errWriter io.Writer = os.Stderr
 type Family string
 
 const (
-	Linux   Family = "Linux"
-	Darwin  Family = "Darwin"
-	FreeBSD Family = "FreeBSD"
-	OpenBSD Family = "OpenBSD"
-	NetBSD  Family = "NetBSD"
-	Unknown Family = "Unknown"
+	Linux       Family = "Linux"
+	Darwin      Family = "Darwin"
+	FreeBSD     Family = "FreeBSD"
+	OpenBSD     Family = "OpenBSD"
+	NetBSD      Family = "NetBSD"
+	DragonFly   Family = "DragonFly"
+	MidnightBSD Family = "MidnightBSD"
+	SunOS       Family = "SunOS"
+	Illumos     Family = "illumos"
+	AIX         Family = "AIX"
+	HPUX        Family = "HP-UX"
+	Windows     Family = "Windows"
+	Unknown     Family = "Unknown"
 )
 
 // CapStatus describes the availability of a collected metric.
@@ -218,6 +225,10 @@ type ProcessInfo struct {
 func Detect(ctx context.Context, r Runner) Family {
 	out, err := r.Run(ctx, "uname -s")
 	if err != nil {
+		winOut, winErr := r.Run(ctx, "cmd /c ver")
+		if winErr == nil && strings.Contains(strings.ToLower(winOut), "windows") {
+			return Windows
+		}
 		return Unknown
 	}
 	switch strings.TrimSpace(out) {
@@ -231,6 +242,18 @@ func Detect(ctx context.Context, r Runner) Family {
 		return OpenBSD
 	case "NetBSD":
 		return NetBSD
+	case "DragonFly":
+		return DragonFly
+	case "MidnightBSD":
+		return MidnightBSD
+	case "SunOS":
+		return SunOS
+	case "illumos":
+		return Illumos
+	case "AIX":
+		return AIX
+	case "HP-UX":
+		return HPUX
 	default:
 		return Unknown
 	}
@@ -249,19 +272,25 @@ func New(f Family) Collector {
 		return &openbsdCollector{}
 	case NetBSD:
 		return &netbsdCollector{}
+	case DragonFly, MidnightBSD:
+		return &freebsdCollector{}
+	case SunOS, Illumos, AIX, HPUX:
+		return &genericUnixCollector{family: f}
+	case Windows:
+		return &windowsCollector{}
 	case Linux:
 		return &linuxCollector{}
 	default:
-		// Unknown OS family: use the Linux collector as a best-effort fallback.
+		// Unknown OS family: use the generic Unix collector as a best-effort fallback.
 		// Many metrics will fail gracefully and be marked "error" in capabilities.
 		// Log so operators can identify the unsupported system.
 		logUnknownFamily(f)
-		return &linuxCollector{}
+		return &genericUnixCollector{family: f}
 	}
 }
 
 // logUnknownFamily is a variable so it can be replaced in tests.
 var logUnknownFamily = func(f Family) {
 	// Use fmt.Fprintf to stderr rather than log to avoid a log import in this package.
-	fmt.Fprintf(errWriter, "watchssh: unknown OS family %q — falling back to Linux collector (many metrics may fail)\n", f)
+	fmt.Fprintf(errWriter, "watchssh: unknown OS family %q — falling back to generic Unix collector (some metrics may be unavailable)\n", f)
 }

@@ -22,6 +22,9 @@ and can surface local Docker containers when available.
 | FreeBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
 | OpenBSD  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
 | NetBSD   | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| DragonFlyBSD / MidnightBSD | ✓ | ✓ | ✓ | ✓ | ✓ | ✓* | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Solaris / illumos / AIX / HP-UX | ✓ | partial | ✓ | n/a | partial | partial | ✓ | ✓ | partial | ✓ | ✓ |
+| Windows over OpenSSH | ✓ | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
 
 \* Swap is reported as `null`/`n/a` when not configured on the host (not an error).
 
@@ -36,13 +39,22 @@ and can surface local Docker containers when available.
 - **OpenBSD**: Uses `sysctl kern.cp_time` (key=value format), `sysctl
   vm.uvmexp`, `swapctl -s -k`, and `netstat -ibn`.
 - **NetBSD**: Similar to FreeBSD; uses `sysctl vm.uvmexp2` for memory.
+- **DragonFlyBSD / MidnightBSD**: Use the FreeBSD-compatible collector path.
+- **Solaris / illumos / AIX / HP-UX**: Use a conservative generic Unix
+  collector based on `uname`, `hostname`, `getconf`, `uptime`, `df`, `who`,
+  `ps`, `netstat`, and platform-specific best-effort commands such as
+  `prtconf` and `swap -s` where available.
+- **Windows over OpenSSH**: Detected explicitly so it does not fall through to
+  Linux commands. System identity is reported, while Unix system metrics are
+  marked unsupported. Connectivity probes still run from the WatchSSH host.
 - **Standard Unix tool modules**: All platform collectors also try `df -iP`
   for inode usage and `who` for active login sessions. Failures are reported
   via `capabilities.inodes` and `capabilities.logged_users`.
 
-If an unknown or unsupported OS is detected, WatchSSH falls back to Linux-style
-commands. Metrics that cannot be collected are marked `null` in JSON output and
-`n/a` in console output, with the reason recorded in the `capabilities` field.
+If an unknown Unix-like OS is detected, WatchSSH falls back to a generic Unix
+collector first. Metrics that cannot be collected are marked `null` in JSON
+output and `n/a` in console output, with the reason recorded in the
+`capabilities` field.
 
 ### Additional Metrics
 
@@ -63,9 +75,9 @@ Capability keys for these metrics are `cpu_cores`, `disk_inodes`, and
 
 ## CPU Measurement
 
-CPU utilisation requires two measurements to compute a delta. On all platforms,
-WatchSSH reads the CPU counters twice with a 1-second sleep between reads. This
-means:
+CPU utilisation requires two measurements to compute a delta. On platforms with
+known CPU counters, WatchSSH reads the CPU counters twice with a 1-second sleep
+between reads. This means:
 
 - **Each collection cycle takes at least 1 second per host** (the SSH connection
   stays open during the sleep).
@@ -73,6 +85,8 @@ means:
 - Platforms that use `top -l 2` (macOS) achieve this via the tool itself.
 - Platforms that use `kern.cp_time` or `/proc/stat` take two readings in the
   same SSH session.
+- Generic Unix and Windows targets mark CPU utilisation as unsupported until a
+  reliable platform-specific counter is available.
 
 There is no "first-poll warming up" issue because WatchSSH uses two reads per
 cycle, not a running-average from a background sampler.
@@ -272,6 +286,9 @@ Commands run on target hosts:
 | FreeBSD | `uname`, `hostname`, `sysctl`, `swapinfo`, `df`, `netstat`, `ps` |
 | OpenBSD | `uname`, `hostname`, `sysctl`, `swapctl`, `df`, `netstat`, `ps` |
 | NetBSD | `uname`, `hostname`, `sysctl`, `swapctl`, `df`, `netstat`, `ps` |
+| DragonFlyBSD / MidnightBSD | FreeBSD-compatible path: `uname`, `hostname`, `sysctl`, `swapinfo`, `df`, `netstat`, `ps` |
+| Solaris / illumos / AIX / HP-UX / unknown Unix | generic path: `uname`, `hostname`, `getconf`, `uptime`, `prtconf`, `swap`, `df`, `netstat`, `ps`, `who` |
+| Windows over OpenSSH | `cmd /c ver`, `hostname`; Unix system metrics are marked unsupported |
 
 ## Output
 
@@ -365,10 +382,45 @@ The web dashboard exposes the stored data at `/history`. JSON consumers can use:
 - `GET /api/history/metrics?server=<name>&limit=100`
 - `GET /api/history/alerts?limit=100`
 - `GET /api/history/summary?server=<name>&limit=500`
+- `GET /api/probes?server=<name>`
 
 WatchSSH also exposes current live values in Prometheus text format at
 `GET /metrics`. This endpoint reports current state only; persisted history
 remains in the configured history store.
+
+## Network Probes
+
+RIPE Atlas is useful because it standardises small, repeatable measurements
+from well-known vantage points: ping, DNS, traceroute, TLS/HTTP, and timing.
+WatchSSH adopts the same style for local agentless probes run from the
+monitoring host:
+
+```yaml
+checks:
+  dns:
+    - name: public-dns
+      host: example.com
+      type: A
+      server: 1.1.1.1
+      expected_answer: 93.184.216.
+      timeout: 5
+  traceroute:
+    - name: path-to-edge
+      host: example.com
+      max_hops: 30
+      timeout: 10
+  tls:
+    - name: public-cert
+      host: example.com
+      port: 443
+      server_name: example.com
+      timeout: 5
+```
+
+These probes are included in JSON output, `/history`, `/api/history/summary`,
+and `/metrics`. WatchSSH does not try to become a distributed RIPE Atlas
+replacement; it keeps the single-monitoring-host model and makes probe results
+consistent enough for alerts and exports.
 
 ## Alerting
 
@@ -376,8 +428,9 @@ Configure threshold-based alerts in the `alerts` section of `config.yaml`.
 Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
 `load15`, `disk_usage`, `disk_inode_usage`, `processes_running`,
 `processes_total`, `file_descriptor_usage`, `network_errors`, `network_drops`,
-`ping_latency`, `ping_failed`, `port_closed`, `http_failed`, `custom_failed`,
-`cert_expires_days`.
+`ping_latency`, `ping_failed`, `port_closed`, `http_failed`, `dns_failed`,
+`dns_latency`, `traceroute_failed`, `traceroute_hops`, `tls_failed`,
+`custom_failed`, `cert_expires_days`, `tls_cert_expires_days`.
 
 Email notifications via SMTP (with STARTTLS or TLS) are supported.
 
@@ -426,15 +479,18 @@ main.go
 │   ├── freebsd.go      — sysctl kern.cp_time based collector
 │   ├── openbsd.go      — OpenBSD-specific sysctl collector
 │   ├── netbsd.go       — NetBSD-specific sysctl collector
+│   ├── generic_unix.go — Conservative collector for Solaris/illumos/AIX/HP-UX/unknown Unix
+│   ├── windows.go      — Windows-over-OpenSSH detection with unsupported Unix metrics
 │   └── docker.go       — Optional Docker container collector (Linux only)
 ├── internal/ssh        — SSH client with strict host key checking
-├── internal/check      — Ping, port, and HTTP connectivity checks
+├── internal/check      — Ping, port, HTTP, DNS, traceroute, and TLS probes
 └── internal/web        — Embedded web dashboard (HTML/CSS/JS)
 ```
 
 ## Known Limitations / Open Items
 
-- Solaris/Illumos is not yet supported (no backend).
+- Generic Unix targets provide best-effort metrics; unsupported counters are
+  surfaced through `capabilities` rather than guessed.
 - `iowait_percent` is Linux-only; it is always `0` on BSD/macOS.
 - On NetBSD, memory stats use `vm.uvmexp2` which may differ across NetBSD versions.
 - Docker observability is Linux-only; enabling `docker.enabled` on non-Linux targets

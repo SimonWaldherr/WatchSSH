@@ -50,6 +50,33 @@ type HTTPCheck struct {
 	Timeout        int    `yaml:"timeout"`         // seconds (default 10)
 }
 
+// DNSCheck configures a DNS lookup probe run from the monitoring machine.
+type DNSCheck struct {
+	Name           string `yaml:"name"`
+	Host           string `yaml:"host"`
+	Type           string `yaml:"type"`            // A, AAAA, CNAME, MX, TXT (default A)
+	Server         string `yaml:"server"`          // optional resolver host or host:port
+	ExpectedAnswer string `yaml:"expected_answer"` // optional substring match
+	Timeout        int    `yaml:"timeout"`         // seconds (default 5)
+}
+
+// TracerouteCheck configures a traceroute probe run from the monitoring machine.
+type TracerouteCheck struct {
+	Name    string `yaml:"name"`
+	Host    string `yaml:"host"`
+	MaxHops int    `yaml:"max_hops"` // default 30
+	Timeout int    `yaml:"timeout"`  // seconds (default 10)
+}
+
+// TLSCheck configures a TLS certificate probe run from the monitoring machine.
+type TLSCheck struct {
+	Name       string `yaml:"name"`
+	Host       string `yaml:"host"`
+	Port       int    `yaml:"port"`        // default 443
+	ServerName string `yaml:"server_name"` // defaults to Host
+	Timeout    int    `yaml:"timeout"`     // seconds (default 5)
+}
+
 // DockerConfig enables optional Docker container observability on Linux hosts.
 // When enabled, WatchSSH runs `docker ps` and `docker stats --no-stream` to
 // discover running containers and collect their resource usage. This feature
@@ -71,10 +98,13 @@ type CustomCheck struct {
 
 // Checks holds all optional connectivity and custom checks for a server.
 type Checks struct {
-	Ping   PingCheck     `yaml:"ping"`
-	Ports  []PortCheck   `yaml:"ports"`
-	HTTP   []HTTPCheck   `yaml:"http"`
-	Custom []CustomCheck `yaml:"custom"`
+	Ping   PingCheck         `yaml:"ping"`
+	Ports  []PortCheck       `yaml:"ports"`
+	HTTP   []HTTPCheck       `yaml:"http"`
+	DNS    []DNSCheck        `yaml:"dns"`
+	Trace  []TracerouteCheck `yaml:"traceroute"`
+	TLS    []TLSCheck        `yaml:"tls"`
+	Custom []CustomCheck     `yaml:"custom"`
 }
 
 // Server holds connection details for one monitored host.
@@ -144,8 +174,9 @@ type AlertRule struct {
 	Name string `yaml:"name"`
 	// Metric: cpu_usage, mem_usage, swap_usage, load1, load5, load15,
 	//         disk_usage, ping_latency, ping_failed, port_closed,
-	//         http_failed, custom_failed.
-	//         cert_expires_days.
+	//         http_failed, dns_failed, dns_latency, traceroute_failed,
+	//         traceroute_hops, tls_failed, custom_failed.
+	//         cert_expires_days, tls_cert_expires_days.
 	Metric string `yaml:"metric"`
 	// Operator: ">", "<", ">=", "<=", "==", "!=".
 	Operator  string  `yaml:"operator"`
@@ -331,6 +362,30 @@ func applyDefaults(cfg *Config) {
 			}
 			if srv.Checks.HTTP[j].Timeout == 0 {
 				srv.Checks.HTTP[j].Timeout = 10
+			}
+		}
+		for j := range srv.Checks.DNS {
+			if srv.Checks.DNS[j].Type == "" {
+				srv.Checks.DNS[j].Type = "A"
+			}
+			if srv.Checks.DNS[j].Timeout == 0 {
+				srv.Checks.DNS[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Trace {
+			if srv.Checks.Trace[j].MaxHops == 0 {
+				srv.Checks.Trace[j].MaxHops = 30
+			}
+			if srv.Checks.Trace[j].Timeout == 0 {
+				srv.Checks.Trace[j].Timeout = 10
+			}
+		}
+		for j := range srv.Checks.TLS {
+			if srv.Checks.TLS[j].Port == 0 {
+				srv.Checks.TLS[j].Port = 443
+			}
+			if srv.Checks.TLS[j].Timeout == 0 {
+				srv.Checks.TLS[j].Timeout = 5
 			}
 		}
 	}

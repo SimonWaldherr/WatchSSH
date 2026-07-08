@@ -81,6 +81,9 @@ func (s *TinySQLStore) initSchema(ctx context.Context) error {
 			disk_root_usage FLOAT,
 			ping_ok BOOL,
 			ping_latency_ms FLOAT,
+			dns_ok BOOL,
+			tls_cert_min_days FLOAT,
+			traceroute_hops FLOAT,
 			payload_json TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS alert_firings (
@@ -114,6 +117,9 @@ func (s *TinySQLStore) ensureMetricColumns(ctx context.Context) error {
 		`ALTER TABLE metric_samples ADD COLUMN disk_root_usage FLOAT`,
 		`ALTER TABLE metric_samples ADD COLUMN ping_ok BOOL`,
 		`ALTER TABLE metric_samples ADD COLUMN ping_latency_ms FLOAT`,
+		`ALTER TABLE metric_samples ADD COLUMN dns_ok BOOL`,
+		`ALTER TABLE metric_samples ADD COLUMN tls_cert_min_days FLOAT`,
+		`ALTER TABLE metric_samples ADD COLUMN traceroute_hops FLOAT`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnError(err) {
@@ -140,10 +146,10 @@ func (s *TinySQLStore) RecordMetrics(ctx context.Context, records []MetricRecord
 	defer tx.Rollback() //nolint:errcheck
 
 	const stmt = `INSERT INTO metric_samples
-		(id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, payload_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		(id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, payload_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	for _, r := range records {
-		if _, err := tx.ExecContext(ctx, stmt, r.ID, r.CollectedAt, r.ServerName, r.Host, r.Platform, r.HasError, nullableFloat(r.CPUUsage), nullableFloat(r.MemoryUsage), nullableFloat(r.SwapUsage), nullableFloat(r.Load1), nullableFloat(r.DiskRootUsage), nullableBool(r.PingOK), nullableFloat(r.PingLatencyMS), r.PayloadJSON); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt, r.ID, r.CollectedAt, r.ServerName, r.Host, r.Platform, r.HasError, nullableFloat(r.CPUUsage), nullableFloat(r.MemoryUsage), nullableFloat(r.SwapUsage), nullableFloat(r.Load1), nullableFloat(r.DiskRootUsage), nullableBool(r.PingOK), nullableFloat(r.PingLatencyMS), nullableBool(r.DNSOK), nullableFloat(r.TLSCertMinDays), nullableFloat(r.TracerouteHops), r.PayloadJSON); err != nil {
 			return fmt.Errorf("insert metric history: %w", err)
 		}
 	}
@@ -189,13 +195,13 @@ func (s *TinySQLStore) RecentMetrics(ctx context.Context, serverName string, lim
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, payload_json
+	query := `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, payload_json
 		FROM metric_samples
 		ORDER BY collected_at DESC
 		LIMIT ?`
 	args := []any{limit}
 	if serverName != "" {
-		query = `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, payload_json
+		query = `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, payload_json
 			FROM metric_samples
 			WHERE server_name = ?
 			ORDER BY collected_at DESC
@@ -212,9 +218,9 @@ func (s *TinySQLStore) RecentMetrics(ctx context.Context, serverName string, lim
 	var records []MetricRecord
 	for rows.Next() {
 		var r MetricRecord
-		var cpuUsage, memoryUsage, swapUsage, load1, diskRootUsage, pingLatency sql.NullFloat64
-		var pingOK sql.NullBool
-		if err := rows.Scan(&r.ID, &r.CollectedAt, &r.ServerName, &r.Host, &r.Platform, &r.HasError, &cpuUsage, &memoryUsage, &swapUsage, &load1, &diskRootUsage, &pingOK, &pingLatency, &r.PayloadJSON); err != nil {
+		var cpuUsage, memoryUsage, swapUsage, load1, diskRootUsage, pingLatency, tlsCertMinDays, tracerouteHops sql.NullFloat64
+		var pingOK, dnsOK sql.NullBool
+		if err := rows.Scan(&r.ID, &r.CollectedAt, &r.ServerName, &r.Host, &r.Platform, &r.HasError, &cpuUsage, &memoryUsage, &swapUsage, &load1, &diskRootUsage, &pingOK, &pingLatency, &dnsOK, &tlsCertMinDays, &tracerouteHops, &r.PayloadJSON); err != nil {
 			return nil, fmt.Errorf("scan metric history: %w", err)
 		}
 		r.CPUUsage = floatPtr(cpuUsage)
@@ -224,6 +230,9 @@ func (s *TinySQLStore) RecentMetrics(ctx context.Context, serverName string, lim
 		r.DiskRootUsage = floatPtr(diskRootUsage)
 		r.PingOK = boolPtr(pingOK)
 		r.PingLatencyMS = floatPtr(pingLatency)
+		r.DNSOK = boolPtr(dnsOK)
+		r.TLSCertMinDays = floatPtr(tlsCertMinDays)
+		r.TracerouteHops = floatPtr(tracerouteHops)
 		records = append(records, r)
 	}
 	if err := rows.Err(); err != nil {
