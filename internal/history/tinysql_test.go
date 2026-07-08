@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/SimonWaldherr/WatchSSH/internal/config"
 )
 
 func TestTinySQLStoreRecordsHistory(t *testing.T) {
@@ -15,6 +18,8 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	cpuUsage := 12.5
+	memUsage := 43.2
 	if err := store.RecordMetrics(ctx, []MetricRecord{{
 		ID:          "metric-1",
 		CollectedAt: "2026-07-08T12:00:00Z",
@@ -22,6 +27,8 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 		Host:        "127.0.0.1",
 		Platform:    "Linux",
 		HasError:    false,
+		CPUUsage:    &cpuUsage,
+		MemoryUsage: &memUsage,
 		PayloadJSON: `{"server_name":"localhost"}`,
 	}}); err != nil {
 		t.Fatalf("RecordMetrics() error = %v", err)
@@ -50,6 +57,9 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 	if len(metrics) != 1 || metrics[0].ServerName != "localhost" {
 		t.Fatalf("RecentMetrics() = %#v, want localhost record", metrics)
 	}
+	if metrics[0].CPUUsage == nil || *metrics[0].CPUUsage != cpuUsage {
+		t.Fatalf("RecentMetrics()[0].CPUUsage = %v, want %v", metrics[0].CPUUsage, cpuUsage)
+	}
 
 	firings, err := store.RecentFirings(ctx, 10)
 	if err != nil {
@@ -71,6 +81,33 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 	assertCount(t, store.db, "alert_firings", 1)
 	if err := store.Close(); err != nil {
 		t.Fatalf("Close() after reopen error = %v", err)
+	}
+}
+
+func TestTinySQLStoreRetentionDays(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.tinysql")
+	store, err := OpenTinySQLWithConfig(config.StorageConfig{Path: path, RetentionDays: 1})
+	if err != nil {
+		t.Fatalf("OpenTinySQLWithConfig() error = %v", err)
+	}
+	defer store.Close()
+
+	old := time.Now().UTC().Add(-48 * time.Hour).Format(time.RFC3339Nano)
+	if err := store.RecordMetrics(context.Background(), []MetricRecord{{
+		ID:          "old-metric",
+		CollectedAt: old,
+		ServerName:  "localhost",
+		PayloadJSON: `{}`,
+	}}); err != nil {
+		t.Fatalf("RecordMetrics() error = %v", err)
+	}
+
+	records, err := store.RecentMetrics(context.Background(), "", 10)
+	if err != nil {
+		t.Fatalf("RecentMetrics() error = %v", err)
+	}
+	if len(records) != 0 {
+		t.Fatalf("RecentMetrics() len = %d, want 0 after retention", len(records))
 	}
 }
 

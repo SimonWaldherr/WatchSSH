@@ -210,16 +210,19 @@ const allTemplates = `
     <h3>Metric Samples</h3>
     {{if .MetricSamples}}
     <table>
-      <thead><tr><th>Collected</th><th>Server</th><th>Host</th><th>Platform</th><th>Status</th><th>Payload</th></tr></thead>
+      <thead><tr><th>Collected</th><th>Server</th><th>Platform</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk /</th><th>Load</th><th>Ping</th></tr></thead>
       <tbody>
       {{range .MetricSamples}}
         <tr>
           <td>{{.CollectedAt}}</td>
           <td>{{.ServerName}}</td>
-          <td>{{.Host}}</td>
           <td>{{.Platform}}</td>
           <td>{{if .HasError}}<span class="badge badge-error">error</span>{{else}}<span class="badge badge-ok">ok</span>{{end}}</td>
-          <td><code>{{printf "%.96s" .PayloadJSON}}{{if gt (len .PayloadJSON) 96}}…{{end}}</code></td>
+          <td>{{fmtOptFloat .CPUUsage}}</td>
+          <td>{{fmtOptFloat .MemoryUsage}}</td>
+          <td>{{fmtOptFloat .DiskRootUsage}}</td>
+          <td>{{fmtOptFloat .Load1}}</td>
+          <td>{{fmtOptBool .PingOK}}{{if .PingLatencyMS}} ({{fmtOptFloat .PingLatencyMS}} ms){{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -815,7 +818,7 @@ const allTemplates = `
   <div class="form-wrap">
     <h3>History Storage</h3>
     <p style="font-size:.82rem;color:#888;margin:0 0 .75rem">Storage changes require a restart to take effect.</p>
-    <div class="form-row">
+    <div class="form-row w3">
       <div>
         <label>Storage Type</label>
         <select name="storage_type">
@@ -827,6 +830,17 @@ const allTemplates = `
         <label>tinySQL Database File</label>
         <input type="text" name="storage_path" value="{{.Config.Storage.Path}}" placeholder="./watchssh.tinysql">
       </div>
+      <div>
+        <label>Retention Days <small style="color:#888">(0 = disabled)</small></label>
+        <input type="number" name="storage_retention_days" value="{{.Config.Storage.RetentionDays}}" min="0">
+      </div>
+    </div>
+    <div class="form-row">
+      <div>
+        <label>Max Size MB <small style="color:#888">(0 = disabled)</small></label>
+        <input type="number" name="storage_max_size_mb" value="{{.Config.Storage.MaxSizeMB}}" min="0">
+      </div>
+      <div></div>
     </div>
   </div>
 

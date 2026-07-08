@@ -26,6 +26,8 @@ var funcMap = template.FuncMap{
 	"pbarClass":            pbarClass,
 	"clamp":                clamp,
 	"fmtBytes":             fmtBytes,
+	"fmtOptBool":           fmtOptBool,
+	"fmtOptFloat":          fmtOptFloat,
 	"fmtUptime":            fmtUptime,
 	"timeAgo":              timeAgo,
 	"rootDisk":             rootDisk,
@@ -112,6 +114,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/metrics", s.handleAPIMetrics)
 	s.mux.HandleFunc("/api/history/metrics", s.handleAPIHistoryMetrics)
 	s.mux.HandleFunc("/api/history/alerts", s.handleAPIHistoryAlerts)
+	s.mux.HandleFunc("/api/history/summary", s.handleAPIHistorySummary)
+	s.mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
 	s.mux.HandleFunc("/server/", s.handleServerDetail)
 	s.mux.HandleFunc("/history", s.handleHistory)
 	s.mux.HandleFunc("/servers/add", s.handleAddServer)
@@ -625,6 +629,11 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	if storageType == "tinysql" && storagePath == "" {
 		storagePath = "watchssh.tinysql"
 	}
+	storageRetentionDays, _ := strconv.Atoi(r.FormValue("storage_retention_days"))
+	if storageType == "tinysql" && storageRetentionDays == 0 {
+		storageRetentionDays = 30
+	}
+	storageMaxSizeMB, _ := strconv.Atoi(r.FormValue("storage_max_size_mb"))
 	knownHostsPath := strings.TrimSpace(r.FormValue("known_hosts_path"))
 
 	var strictHostKey *bool
@@ -633,7 +642,7 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		strictHostKey = &b
 	}
 
-	s.state.UpdateGlobalSettings(interval, timeout, workers, outputType, outputFile, storageType, storagePath, webListen, webEnabled, knownHostsPath, strictHostKey)
+	s.state.UpdateGlobalSettings(interval, timeout, workers, outputType, outputFile, storageType, storagePath, storageRetentionDays, storageMaxSizeMB, webListen, webEnabled, knownHostsPath, strictHostKey)
 
 	if err := s.state.SaveConfig(); err != nil {
 		redirectWithFlash(w, r, "/config", "Failed to save config: "+err.Error(), true)
@@ -686,9 +695,154 @@ func (s *Server) handleAPIHistoryAlerts(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, records)
 }
 
+type historySummary struct {
+	ServerName      string   `json:"server_name"`
+	Samples         int      `json:"samples"`
+	LatestAt        string   `json:"latest_at"`
+	LatestCPU       *float64 `json:"latest_cpu_usage,omitempty"`
+	LatestMemory    *float64 `json:"latest_memory_usage,omitempty"`
+	LatestDiskRoot  *float64 `json:"latest_disk_root_usage,omitempty"`
+	AverageCPU      *float64 `json:"average_cpu_usage,omitempty"`
+	AverageMemory   *float64 `json:"average_memory_usage,omitempty"`
+	AverageDiskRoot *float64 `json:"average_disk_root_usage,omitempty"`
+	Errors          int      `json:"errors"`
+}
+
+func (s *Server) handleAPIHistorySummary(w http.ResponseWriter, r *http.Request) {
+	if !s.historyEnabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	records, err := s.history.RecentMetrics(ctx, strings.TrimSpace(r.URL.Query().Get("server")), parseLimit(r, 500))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, summarizeHistory(records))
+}
+
+func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	var b strings.Builder
+	b.WriteString("# HELP watchssh_up Whether WatchSSH collected the host successfully.\n")
+	b.WriteString("# TYPE watchssh_up gauge\n")
+	b.WriteString("# HELP watchssh_cpu_usage_percent CPU usage percent.\n")
+	b.WriteString("# TYPE watchssh_cpu_usage_percent gauge\n")
+	b.WriteString("# HELP watchssh_memory_usage_percent Memory usage percent.\n")
+	b.WriteString("# TYPE watchssh_memory_usage_percent gauge\n")
+	b.WriteString("# HELP watchssh_disk_usage_percent Disk usage percent by mount point.\n")
+	b.WriteString("# TYPE watchssh_disk_usage_percent gauge\n")
+	for _, m := range s.state.Metrics() {
+		labels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "platform": m.Platform})
+		up := 1
+		if m.Error != "" {
+			up = 0
+		}
+		fmt.Fprintf(&b, "watchssh_up%s %d\n", labels, up)
+		if m.CPU != nil {
+			fmt.Fprintf(&b, "watchssh_cpu_usage_percent%s %.6f\n", labels, m.CPU.UsagePercent)
+		}
+		if m.Memory != nil {
+			fmt.Fprintf(&b, "watchssh_memory_usage_percent%s %.6f\n", labels, m.Memory.UsagePercent)
+		}
+		for _, d := range m.Disks {
+			diskLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "mount": d.MountPoint, "device": d.Device})
+			fmt.Fprintf(&b, "watchssh_disk_usage_percent%s %.6f\n", diskLabels, d.UsagePercent)
+		}
+	}
+	_, _ = w.Write([]byte(b.String()))
+}
+
+func summarizeHistory(records []history.MetricRecord) []historySummary {
+	type acc struct {
+		summary                      historySummary
+		cpuSum, memSum, dskSum       float64
+		cpuCount, memCount, dskCount int
+	}
+	byServer := make(map[string]*acc)
+	for _, r := range records {
+		a := byServer[r.ServerName]
+		if a == nil {
+			a = &acc{summary: historySummary{
+				ServerName:     r.ServerName,
+				LatestAt:       r.CollectedAt,
+				LatestCPU:      r.CPUUsage,
+				LatestMemory:   r.MemoryUsage,
+				LatestDiskRoot: r.DiskRootUsage,
+			}}
+			byServer[r.ServerName] = a
+		}
+		a.summary.Samples++
+		if r.HasError {
+			a.summary.Errors++
+		}
+		if r.CPUUsage != nil {
+			a.cpuSum += *r.CPUUsage
+			a.cpuCount++
+		}
+		if r.MemoryUsage != nil {
+			a.memSum += *r.MemoryUsage
+			a.memCount++
+		}
+		if r.DiskRootUsage != nil {
+			a.dskSum += *r.DiskRootUsage
+			a.dskCount++
+		}
+	}
+	out := make([]historySummary, 0, len(byServer))
+	for _, a := range byServer {
+		if a.cpuCount > 0 {
+			a.summary.AverageCPU = float64Ptr(a.cpuSum / float64(a.cpuCount))
+		}
+		if a.memCount > 0 {
+			a.summary.AverageMemory = float64Ptr(a.memSum / float64(a.memCount))
+		}
+		if a.dskCount > 0 {
+			a.summary.AverageDiskRoot = float64Ptr(a.dskSum / float64(a.dskCount))
+		}
+		out = append(out, a.summary)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ServerName < out[j].ServerName })
+	return out
+}
+
 func (s *Server) historyEnabled() bool {
 	cfg := s.state.Config()
 	return cfg.Storage.Type == "tinysql" && s.history != nil
+}
+
+func prometheusLabels(labels map[string]string) string {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if labels[k] == "" {
+			continue
+		}
+		parts = append(parts, k+`="`+prometheusEscape(labels[k])+`"`)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "{" + strings.Join(parts, ",") + "}"
+}
+
+func prometheusEscape(v string) string {
+	v = strings.ReplaceAll(v, `\`, `\\`)
+	v = strings.ReplaceAll(v, "\n", `\n`)
+	v = strings.ReplaceAll(v, `"`, `\"`)
+	return v
+}
+
+func float64Ptr(v float64) *float64 {
+	return &v
 }
 
 func parseLimit(r *http.Request, fallback int) int {
@@ -828,6 +982,23 @@ func fmtBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func fmtOptFloat(v *float64) string {
+	if v == nil {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f", *v)
+}
+
+func fmtOptBool(v *bool) string {
+	if v == nil {
+		return "n/a"
+	}
+	if *v {
+		return "ok"
+	}
+	return "failed"
 }
 
 func fmtUptime(sec float64) string {

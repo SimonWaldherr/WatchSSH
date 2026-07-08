@@ -208,16 +208,85 @@ func metricHistoryRecords(metrics []ServerMetrics) ([]history.MetricRecord, erro
 		}
 		collectedAt := m.Timestamp.UTC().Format(time.RFC3339Nano)
 		records = append(records, history.MetricRecord{
-			ID:          fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
-			CollectedAt: collectedAt,
-			ServerName:  m.ServerName,
-			Host:        m.Host,
-			Platform:    m.Platform,
-			HasError:    m.Error != "",
-			PayloadJSON: string(payload),
+			ID:            fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
+			CollectedAt:   collectedAt,
+			ServerName:    m.ServerName,
+			Host:          m.Host,
+			Platform:      m.Platform,
+			HasError:      m.Error != "",
+			CPUUsage:      metricCPUUsage(m),
+			MemoryUsage:   metricMemoryUsage(m),
+			SwapUsage:     metricSwapUsage(m),
+			Load1:         metricLoad1(m),
+			DiskRootUsage: metricRootDiskUsage(m),
+			PingOK:        metricPingOK(m),
+			PingLatencyMS: metricPingLatency(m),
+			PayloadJSON:   string(payload),
 		})
 	}
 	return records, nil
+}
+
+func metricCPUUsage(m ServerMetrics) *float64 {
+	if m.CPU == nil {
+		return nil
+	}
+	return float64Ptr(m.CPU.UsagePercent)
+}
+
+func metricMemoryUsage(m ServerMetrics) *float64 {
+	if m.Memory == nil {
+		return nil
+	}
+	return float64Ptr(m.Memory.UsagePercent)
+}
+
+func metricSwapUsage(m ServerMetrics) *float64 {
+	if m.Swap == nil {
+		return nil
+	}
+	return float64Ptr(m.Swap.Percent)
+}
+
+func metricLoad1(m ServerMetrics) *float64 {
+	if m.Load == nil {
+		return nil
+	}
+	return float64Ptr(m.Load.Load1)
+}
+
+func metricRootDiskUsage(m ServerMetrics) *float64 {
+	for _, d := range m.Disks {
+		if d.MountPoint == "/" {
+			return float64Ptr(d.UsagePercent)
+		}
+	}
+	if len(m.Disks) == 0 {
+		return nil
+	}
+	return float64Ptr(m.Disks[0].UsagePercent)
+}
+
+func metricPingOK(m ServerMetrics) *bool {
+	if !m.Connectivity.PingEnabled {
+		return nil
+	}
+	return boolPtr(m.Connectivity.PingOK)
+}
+
+func metricPingLatency(m ServerMetrics) *float64 {
+	if !m.Connectivity.PingEnabled || !m.Connectivity.PingOK {
+		return nil
+	}
+	return float64Ptr(m.Connectivity.PingLatency)
+}
+
+func float64Ptr(v float64) *float64 {
+	return &v
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func firingHistoryRecords(firings []Firing) ([]history.FiringRecord, error) {

@@ -127,7 +127,7 @@ func (s *State) RemoveAlertRule(name string) {
 }
 
 // UpdateGlobalSettings replaces the global (non-server, non-alert) config fields.
-func (s *State) UpdateGlobalSettings(interval, timeout, workers int, outputType, outputFile, storageType, storagePath, webListen string, webEnabled bool, knownHostsPath string, strictHostKey *bool) {
+func (s *State) UpdateGlobalSettings(interval, timeout, workers int, outputType, outputFile, storageType, storagePath string, storageRetentionDays, storageMaxSizeMB int, webListen string, webEnabled bool, knownHostsPath string, strictHostKey *bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.cfg.Interval = interval
@@ -137,6 +137,8 @@ func (s *State) UpdateGlobalSettings(interval, timeout, workers int, outputType,
 	s.cfg.Output.File = outputFile
 	s.cfg.Storage.Type = storageType
 	s.cfg.Storage.Path = storagePath
+	s.cfg.Storage.RetentionDays = storageRetentionDays
+	s.cfg.Storage.MaxSizeMB = storageMaxSizeMB
 	s.cfg.Web.Enabled = webEnabled
 	s.cfg.Web.Listen = webListen
 	s.cfg.KnownHostsPath = knownHostsPath

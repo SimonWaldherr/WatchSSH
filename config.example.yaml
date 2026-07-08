@@ -69,6 +69,13 @@ storage:
   # the full metric/alert JSON payload in an embedded tinySQL database file.
   # path: ./watchssh.tinysql
 
+  # Remove history records older than this many days. 0 disables age-based retention.
+  retention_days: 30
+
+  # Trim oldest history records when the database file grows beyond this size.
+  # 0 disables size-based retention.
+  max_size_mb: 512
+
 
 # -----------------------------------------------------------------------------
 # Web dashboard

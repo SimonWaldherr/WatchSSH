@@ -184,6 +184,8 @@ To keep a local history of metric samples and alert firings:
 storage:
   type: tinysql
   path: ./watchssh.tinysql
+  retention_days: 30
+  max_size_mb: 512
 ```
 
 ## CLI Flags
@@ -345,17 +347,28 @@ history storage can be enabled with:
 storage:
   type: tinysql
   path: ./watchssh.tinysql
+  retention_days: 30
+  max_size_mb: 512
 ```
 
 When enabled, WatchSSH writes each collected server sample to `metric_samples`
 and each newly-triggered alert to `alert_firings`. The tables include compact
-query columns such as timestamp, server name, platform, metric, and error
-status, plus the full JSON payload for forward-compatible analysis.
+query columns such as timestamp, server name, platform, CPU usage, memory usage,
+root disk usage, load, ping status, alert metric, and error status, plus the
+full JSON payload for forward-compatible analysis.
+
+`retention_days` removes older records. `max_size_mb` trims the oldest history
+records after the database file grows beyond the configured size.
 
 The web dashboard exposes the stored data at `/history`. JSON consumers can use:
 
 - `GET /api/history/metrics?server=<name>&limit=100`
 - `GET /api/history/alerts?limit=100`
+- `GET /api/history/summary?server=<name>&limit=500`
+
+WatchSSH also exposes current live values in Prometheus text format at
+`GET /metrics`. This endpoint reports current state only; persisted history
+remains in the configured history store.
 
 ## Alerting
 

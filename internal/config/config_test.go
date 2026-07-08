@@ -152,6 +152,9 @@ servers:
 	if cfg.Storage.Path != "watchssh.tinysql" {
 		t.Errorf("Storage.Path = %q, want watchssh.tinysql", cfg.Storage.Path)
 	}
+	if cfg.Storage.RetentionDays != 30 {
+		t.Errorf("Storage.RetentionDays = %d, want 30", cfg.Storage.RetentionDays)
+	}
 }
 
 func TestLoad_InvalidStorageType(t *testing.T) {
@@ -165,6 +168,21 @@ servers:
 	_, err := config.Load(path)
 	if err == nil {
 		t.Fatal("expected error for invalid storage type")
+	}
+}
+
+func TestLoad_InvalidStorageRetention(t *testing.T) {
+	path := writeConfig(t, `
+storage:
+  type: tinysql
+  retention_days: -1
+servers:
+  - host: "10.0.0.1"
+    username: "admin"
+`)
+	_, err := config.Load(path)
+	if err == nil {
+		t.Fatal("expected error for invalid retention_days")
 	}
 }
 

@@ -10,13 +10,20 @@ import (
 
 // MetricRecord is the storage-friendly representation of one metrics sample.
 type MetricRecord struct {
-	ID          string
-	CollectedAt string
-	ServerName  string
-	Host        string
-	Platform    string
-	HasError    bool
-	PayloadJSON string
+	ID            string
+	CollectedAt   string
+	ServerName    string
+	Host          string
+	Platform      string
+	HasError      bool
+	CPUUsage      *float64
+	MemoryUsage   *float64
+	SwapUsage     *float64
+	Load1         *float64
+	DiskRootUsage *float64
+	PingOK        *bool
+	PingLatencyMS *float64
+	PayloadJSON   string
 }
 
 // FiringRecord is the storage-friendly representation of one alert firing.
@@ -48,7 +55,7 @@ func New(cfg config.StorageConfig) (Store, error) {
 	case "", "none":
 		return noopStore{}, nil
 	case "tinysql":
-		return OpenTinySQL(cfg.Path)
+		return OpenTinySQLWithConfig(cfg)
 	default:
 		return nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
 	}

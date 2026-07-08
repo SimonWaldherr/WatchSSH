@@ -115,6 +115,10 @@ type StorageConfig struct {
 	Type string `yaml:"type"`
 	// Path is the file path used by the tinySQL backend.
 	Path string `yaml:"path"`
+	// RetentionDays removes history records older than this many days. 0 disables age-based retention.
+	RetentionDays int `yaml:"retention_days"`
+	// MaxSizeMB trims oldest history records after the database file grows beyond this size. 0 disables size-based retention.
+	MaxSizeMB int `yaml:"max_size_mb"`
 }
 
 // WebConfig configures the built-in HTTP monitoring dashboard.
@@ -274,6 +278,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Storage.Type == "tinysql" && cfg.Storage.Path == "" {
 		cfg.Storage.Path = "watchssh.tinysql"
 	}
+	if cfg.Storage.Type == "tinysql" && cfg.Storage.RetentionDays == 0 {
+		cfg.Storage.RetentionDays = 30
+	}
 	if cfg.Web.Listen == "" {
 		cfg.Web.Listen = ":8080"
 	}
@@ -337,6 +344,12 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.Type == "tinysql" && strings.TrimSpace(cfg.Storage.Path) == "" {
 		return fmt.Errorf("storage.path is required when storage.type is tinysql")
+	}
+	if cfg.Storage.RetentionDays < 0 {
+		return fmt.Errorf("storage.retention_days must be >= 0")
+	}
+	if cfg.Storage.MaxSizeMB < 0 {
+		return fmt.Errorf("storage.max_size_mb must be >= 0")
 	}
 	for i, srv := range cfg.Servers {
 		if srv.Local {

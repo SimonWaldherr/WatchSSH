@@ -147,12 +147,14 @@ func TestHistoryPageAndAPI(t *testing.T) {
 	}
 	defer store.Close()
 
+	cpuUsage := 12.5
 	if err := store.RecordMetrics(httptest.NewRequest(http.MethodGet, "/", nil).Context(), []history.MetricRecord{{
 		ID:          "metric-1",
 		CollectedAt: "2026-07-08T12:00:00Z",
 		ServerName:  "localhost",
 		Host:        "127.0.0.1",
 		Platform:    "Linux",
+		CPUUsage:    &cpuUsage,
 		PayloadJSON: `{"server_name":"localhost"}`,
 	}}); err != nil {
 		t.Fatalf("RecordMetrics() error = %v", err)
@@ -198,5 +200,42 @@ func TestHistoryPageAndAPI(t *testing.T) {
 	}
 	if len(metrics) != 1 || metrics[0].ServerName != "localhost" {
 		t.Fatalf("history API metrics = %#v, want localhost record", metrics)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/history/summary?limit=10", nil)
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history summary status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), `"average_cpu_usage": 12.5`) {
+		t.Fatalf("history summary missing average CPU: %s", rec.Body.String())
+	}
+}
+
+func TestPrometheusMetricsEndpoint(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	state.Update([]monitor.ServerMetrics{{
+		ServerName: "localhost",
+		Host:       "127.0.0.1",
+		Platform:   "Linux",
+		CPU:        &monitor.CPUStats{UsagePercent: 12.5},
+		Memory:     &monitor.MemoryStats{UsagePercent: 43.2},
+		Disks:      []monitor.DiskStats{{MountPoint: "/", Device: "/dev/disk1", UsagePercent: 55.5}},
+	}}, nil)
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("prometheus metrics missing %q: %s", want, body)
+		}
 	}
 }
