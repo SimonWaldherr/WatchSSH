@@ -34,6 +34,7 @@ type ServerMetrics struct {
 	Users           []LoggedInUser       `json:"logged_in_users,omitempty"`
 	// Containers is populated on Linux hosts when docker.enabled is true.
 	Containers   []ContainerInfo     `json:"containers,omitempty"`
+	Board        *BoardInfo          `json:"board,omitempty"`
 	Connectivity ConnectivityStats   `json:"connectivity"`
 	CustomChecks []CustomCheckResult `json:"custom_checks,omitempty"`
 
@@ -243,6 +244,20 @@ type FileDescriptorStats struct {
 	Unused       int64   `json:"unused"`
 	Max          int64   `json:"max"`
 	UsagePercent float64 `json:"usage_percent"`
+}
+
+// BoardInfo contains optional Raspberry Pi / SBC diagnostics.
+type BoardInfo struct {
+	Model            string   `json:"model,omitempty"`
+	TemperatureC     *float64 `json:"temperature_c,omitempty"`
+	CPUFrequencyMHz  *float64 `json:"cpu_frequency_mhz,omitempty"`
+	ThrottledHex     string   `json:"throttled_hex,omitempty"`
+	UnderVoltageNow  bool     `json:"under_voltage_now,omitempty"`
+	ThrottledNow     bool     `json:"throttled_now,omitempty"`
+	UnderVoltageSeen bool     `json:"under_voltage_seen,omitempty"`
+	ThrottledSeen    bool     `json:"throttled_seen,omitempty"`
+	WiFiInterface    string   `json:"wifi_interface,omitempty"`
+	WiFiRSSIDbm      *float64 `json:"wifi_rssi_dbm,omitempty"`
 }
 
 // Firing represents an alert rule that has been triggered for a server.

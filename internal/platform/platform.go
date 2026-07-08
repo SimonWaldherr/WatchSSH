@@ -81,6 +81,7 @@ type Snapshot struct {
 	Processes  []ProcessInfo
 	Users      []LoggedInUser
 	Containers []ContainerInfo
+	Board      *BoardInfo
 	// FileDescriptors is collected on platforms with kernel-wide descriptor counters.
 	FileDescriptors *FileDescriptorStats
 	Caps            map[string]string // metric name → "ok"|"unsupported"|"unavailable"|"error"
@@ -200,6 +201,20 @@ type FileDescriptorStats struct {
 	Unused       int64
 	Max          int64
 	UsagePercent float64
+}
+
+// BoardInfo holds single-board-computer diagnostics when available.
+type BoardInfo struct {
+	Model            string
+	TemperatureC     *float64
+	CPUFrequencyMHz  *float64
+	ThrottledHex     string
+	UnderVoltageNow  bool
+	ThrottledNow     bool
+	UnderVoltageSeen bool
+	ThrottledSeen    bool
+	WiFiInterface    string
+	WiFiRSSIDbm      *float64
 }
 
 // LoggedInUser represents one active login session reported by who(1).

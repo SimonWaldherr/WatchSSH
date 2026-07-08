@@ -176,7 +176,9 @@ type AlertRule struct {
 	//         disk_usage, ping_latency, ping_failed, port_closed,
 	//         http_failed, dns_failed, dns_latency, traceroute_failed,
 	//         traceroute_hops, tls_failed, custom_failed.
-	//         cert_expires_days, tls_cert_expires_days.
+	//         cert_expires_days, tls_cert_expires_days,
+	//         board_temperature, board_under_voltage, board_throttled,
+	//         board_wifi_rssi.
 	Metric string `yaml:"metric"`
 	// Operator: ">", "<", ">=", "<=", "==", "!=".
 	Operator  string  `yaml:"operator"`

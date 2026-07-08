@@ -208,23 +208,28 @@ func metricHistoryRecords(metrics []ServerMetrics) ([]history.MetricRecord, erro
 		}
 		collectedAt := m.Timestamp.UTC().Format(time.RFC3339Nano)
 		records = append(records, history.MetricRecord{
-			ID:             fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
-			CollectedAt:    collectedAt,
-			ServerName:     m.ServerName,
-			Host:           m.Host,
-			Platform:       m.Platform,
-			HasError:       m.Error != "",
-			CPUUsage:       metricCPUUsage(m),
-			MemoryUsage:    metricMemoryUsage(m),
-			SwapUsage:      metricSwapUsage(m),
-			Load1:          metricLoad1(m),
-			DiskRootUsage:  metricRootDiskUsage(m),
-			PingOK:         metricPingOK(m),
-			PingLatencyMS:  metricPingLatency(m),
-			DNSOK:          metricDNSOK(m),
-			TLSCertMinDays: metricTLSCertMinDays(m),
-			TracerouteHops: metricTracerouteHops(m),
-			PayloadJSON:    string(payload),
+			ID:                   fmt.Sprintf("%s-%d-%s", collectedAt, i, m.ServerName),
+			CollectedAt:          collectedAt,
+			ServerName:           m.ServerName,
+			Host:                 m.Host,
+			Platform:             m.Platform,
+			HasError:             m.Error != "",
+			CPUUsage:             metricCPUUsage(m),
+			MemoryUsage:          metricMemoryUsage(m),
+			SwapUsage:            metricSwapUsage(m),
+			Load1:                metricLoad1(m),
+			DiskRootUsage:        metricRootDiskUsage(m),
+			PingOK:               metricPingOK(m),
+			PingLatencyMS:        metricPingLatency(m),
+			DNSOK:                metricDNSOK(m),
+			TLSCertMinDays:       metricTLSCertMinDays(m),
+			TracerouteHops:       metricTracerouteHops(m),
+			BoardTemperatureC:    metricBoardTemperature(m),
+			BoardCPUFrequencyMHz: metricBoardCPUFrequency(m),
+			BoardWiFiRSSIDbm:     metricBoardWiFiRSSI(m),
+			BoardUnderVoltageNow: metricBoardUnderVoltage(m),
+			BoardThrottledNow:    metricBoardThrottled(m),
+			PayloadJSON:          string(payload),
 		})
 	}
 	return records, nil
@@ -323,6 +328,41 @@ func metricTracerouteHops(m ServerMetrics) *float64 {
 		}
 	}
 	return float64Ptr(float64(maxHops))
+}
+
+func metricBoardTemperature(m ServerMetrics) *float64 {
+	if m.Board == nil {
+		return nil
+	}
+	return m.Board.TemperatureC
+}
+
+func metricBoardCPUFrequency(m ServerMetrics) *float64 {
+	if m.Board == nil {
+		return nil
+	}
+	return m.Board.CPUFrequencyMHz
+}
+
+func metricBoardWiFiRSSI(m ServerMetrics) *float64 {
+	if m.Board == nil {
+		return nil
+	}
+	return m.Board.WiFiRSSIDbm
+}
+
+func metricBoardUnderVoltage(m ServerMetrics) *bool {
+	if m.Board == nil {
+		return nil
+	}
+	return boolPtr(m.Board.UnderVoltageNow)
+}
+
+func metricBoardThrottled(m ServerMetrics) *bool {
+	if m.Board == nil {
+		return nil
+	}
+	return boolPtr(m.Board.ThrottledNow)
 }
 
 func float64Ptr(v float64) *float64 {
@@ -722,6 +762,20 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 			Unused:       snap.FileDescriptors.Unused,
 			Max:          snap.FileDescriptors.Max,
 			UsagePercent: snap.FileDescriptors.UsagePercent,
+		}
+	}
+	if snap.Board != nil {
+		m.Board = &BoardInfo{
+			Model:            snap.Board.Model,
+			TemperatureC:     snap.Board.TemperatureC,
+			CPUFrequencyMHz:  snap.Board.CPUFrequencyMHz,
+			ThrottledHex:     snap.Board.ThrottledHex,
+			UnderVoltageNow:  snap.Board.UnderVoltageNow,
+			ThrottledNow:     snap.Board.ThrottledNow,
+			UnderVoltageSeen: snap.Board.UnderVoltageSeen,
+			ThrottledSeen:    snap.Board.ThrottledSeen,
+			WiFiInterface:    snap.Board.WiFiInterface,
+			WiFiRSSIDbm:      snap.Board.WiFiRSSIDbm,
 		}
 	}
 	m.Capabilities = snap.Caps

@@ -290,6 +290,24 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return *t.CertExpiresDays, true
 			}
 		}
+	case "board_temperature":
+		if srv.Board == nil || srv.Board.TemperatureC == nil {
+			return 0, false
+		}
+		return *srv.Board.TemperatureC, cmp(*srv.Board.TemperatureC, rule.Operator, rule.Threshold)
+	case "board_under_voltage":
+		if srv.Board != nil && srv.Board.UnderVoltageNow {
+			return 1, true
+		}
+	case "board_throttled":
+		if srv.Board != nil && srv.Board.ThrottledNow {
+			return 1, true
+		}
+	case "board_wifi_rssi":
+		if srv.Board == nil || srv.Board.WiFiRSSIDbm == nil {
+			return 0, false
+		}
+		return *srv.Board.WiFiRSSIDbm, cmp(*srv.Board.WiFiRSSIDbm, rule.Operator, rule.Threshold)
 	case "custom_failed":
 		for _, c := range srv.CustomChecks {
 			if !c.OK {

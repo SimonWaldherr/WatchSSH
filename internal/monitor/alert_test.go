@@ -287,6 +287,36 @@ func TestAlertManager_NetworkProbeMetrics(t *testing.T) {
 	}
 }
 
+func TestAlertManager_BoardMetrics(t *testing.T) {
+	temp := 82.5
+	rssi := -78.0
+	metrics := []ServerMetrics{{
+		ServerName: "pi-01",
+		Board: &BoardInfo{
+			TemperatureC:    &temp,
+			UnderVoltageNow: true,
+			ThrottledNow:    true,
+			WiFiRSSIDbm:     &rssi,
+		},
+	}}
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			Cooldown: 0,
+			Rules: []config.AlertRule{
+				{Name: "PiHot", Metric: "board_temperature", Operator: ">", Threshold: 80},
+				{Name: "PiUndervoltage", Metric: "board_under_voltage", Operator: "==", Threshold: 1},
+				{Name: "PiThrottled", Metric: "board_throttled", Operator: "==", Threshold: 1},
+				{Name: "PiWiFiWeak", Metric: "board_wifi_rssi", Operator: "<", Threshold: -75},
+			},
+		},
+	}
+
+	firings := NewAlertManager().Evaluate(metrics, cfg)
+	if len(firings) != 4 {
+		t.Fatalf("firings len = %d, want 4: %#v", len(firings), firings)
+	}
+}
+
 func TestCmp(t *testing.T) {
 	tests := []struct {
 		value    float64

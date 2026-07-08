@@ -728,6 +728,8 @@ type historySummary struct {
 	LatestDNSOK     *bool    `json:"latest_dns_ok,omitempty"`
 	LatestTLSDays   *float64 `json:"latest_tls_cert_min_days,omitempty"`
 	LatestTraceHops *float64 `json:"latest_traceroute_hops,omitempty"`
+	LatestBoardTemp *float64 `json:"latest_board_temperature_c,omitempty"`
+	LatestBoardRSSI *float64 `json:"latest_board_wifi_rssi_dbm,omitempty"`
 	AverageCPU      *float64 `json:"average_cpu_usage,omitempty"`
 	AverageMemory   *float64 `json:"average_memory_usage,omitempty"`
 	AverageDiskRoot *float64 `json:"average_disk_root_usage,omitempty"`
@@ -774,6 +776,16 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_traceroute_probe_up gauge\n")
 	b.WriteString("# HELP watchssh_traceroute_hops Observed traceroute hop count.\n")
 	b.WriteString("# TYPE watchssh_traceroute_hops gauge\n")
+	b.WriteString("# HELP watchssh_board_temperature_celsius Board temperature in Celsius for Raspberry Pi and compatible SBCs.\n")
+	b.WriteString("# TYPE watchssh_board_temperature_celsius gauge\n")
+	b.WriteString("# HELP watchssh_board_cpu_frequency_mhz Current board CPU frequency in MHz.\n")
+	b.WriteString("# TYPE watchssh_board_cpu_frequency_mhz gauge\n")
+	b.WriteString("# HELP watchssh_board_wifi_rssi_dbm Wi-Fi RSSI in dBm from /proc/net/wireless.\n")
+	b.WriteString("# TYPE watchssh_board_wifi_rssi_dbm gauge\n")
+	b.WriteString("# HELP watchssh_board_under_voltage Whether the board is currently under-voltage throttled.\n")
+	b.WriteString("# TYPE watchssh_board_under_voltage gauge\n")
+	b.WriteString("# HELP watchssh_board_throttled Whether the board is currently throttled.\n")
+	b.WriteString("# TYPE watchssh_board_throttled gauge\n")
 	for _, m := range s.state.Metrics() {
 		labels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "platform": m.Platform})
 		up := 1
@@ -808,6 +820,21 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			fmt.Fprintf(&b, "watchssh_traceroute_probe_up%s %d\n", probeLabels, boolGauge(t.OK))
 			fmt.Fprintf(&b, "watchssh_traceroute_hops%s %d\n", probeLabels, t.Hops)
 		}
+		if m.Board != nil {
+			boardLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "model": m.Board.Model})
+			if m.Board.TemperatureC != nil {
+				fmt.Fprintf(&b, "watchssh_board_temperature_celsius%s %.6f\n", boardLabels, *m.Board.TemperatureC)
+			}
+			if m.Board.CPUFrequencyMHz != nil {
+				fmt.Fprintf(&b, "watchssh_board_cpu_frequency_mhz%s %.6f\n", boardLabels, *m.Board.CPUFrequencyMHz)
+			}
+			if m.Board.WiFiRSSIDbm != nil {
+				wifiLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "model": m.Board.Model, "interface": m.Board.WiFiInterface})
+				fmt.Fprintf(&b, "watchssh_board_wifi_rssi_dbm%s %.6f\n", wifiLabels, *m.Board.WiFiRSSIDbm)
+			}
+			fmt.Fprintf(&b, "watchssh_board_under_voltage%s %d\n", boardLabels, boolGauge(m.Board.UnderVoltageNow))
+			fmt.Fprintf(&b, "watchssh_board_throttled%s %d\n", boardLabels, boolGauge(m.Board.ThrottledNow))
+		}
 	}
 	_, _ = w.Write([]byte(b.String()))
 }
@@ -831,6 +858,8 @@ func summarizeHistory(records []history.MetricRecord) []historySummary {
 				LatestDNSOK:     r.DNSOK,
 				LatestTLSDays:   r.TLSCertMinDays,
 				LatestTraceHops: r.TracerouteHops,
+				LatestBoardTemp: r.BoardTemperatureC,
+				LatestBoardRSSI: r.BoardWiFiRSSIDbm,
 			}}
 			byServer[r.ServerName] = a
 		}

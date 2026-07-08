@@ -20,16 +20,20 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 	ctx := context.Background()
 	cpuUsage := 12.5
 	memUsage := 43.2
+	boardTemp := 51.2
+	boardThrottled := true
 	if err := store.RecordMetrics(ctx, []MetricRecord{{
-		ID:          "metric-1",
-		CollectedAt: "2026-07-08T12:00:00Z",
-		ServerName:  "localhost",
-		Host:        "127.0.0.1",
-		Platform:    "Linux",
-		HasError:    false,
-		CPUUsage:    &cpuUsage,
-		MemoryUsage: &memUsage,
-		PayloadJSON: `{"server_name":"localhost"}`,
+		ID:                "metric-1",
+		CollectedAt:       "2026-07-08T12:00:00Z",
+		ServerName:        "localhost",
+		Host:              "127.0.0.1",
+		Platform:          "Linux",
+		HasError:          false,
+		CPUUsage:          &cpuUsage,
+		MemoryUsage:       &memUsage,
+		BoardTemperatureC: &boardTemp,
+		BoardThrottledNow: &boardThrottled,
+		PayloadJSON:       `{"server_name":"localhost"}`,
 	}}); err != nil {
 		t.Fatalf("RecordMetrics() error = %v", err)
 	}
@@ -59,6 +63,12 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 	}
 	if metrics[0].CPUUsage == nil || *metrics[0].CPUUsage != cpuUsage {
 		t.Fatalf("RecentMetrics()[0].CPUUsage = %v, want %v", metrics[0].CPUUsage, cpuUsage)
+	}
+	if metrics[0].BoardTemperatureC == nil || *metrics[0].BoardTemperatureC != boardTemp {
+		t.Fatalf("RecentMetrics()[0].BoardTemperatureC = %v, want %v", metrics[0].BoardTemperatureC, boardTemp)
+	}
+	if metrics[0].BoardThrottledNow == nil || *metrics[0].BoardThrottledNow != boardThrottled {
+		t.Fatalf("RecentMetrics()[0].BoardThrottledNow = %v, want %v", metrics[0].BoardThrottledNow, boardThrottled)
 	}
 
 	firings, err := store.RecentFirings(ctx, 10)

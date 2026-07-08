@@ -220,6 +220,44 @@ servers:
     docker:
       enabled: true   # Collect local Docker container stats when available (Linux only)
 
+  # ── HARP reverse proxy profile ──────────────────────────────────────────
+  # HARP exposes the same kind of operational surface WatchSSH already probes:
+  # liveness/readiness HTTP endpoints, public DNS, TLS certificate freshness,
+  # and an optional Prometheus-compatible /metrics endpoint.
+  - name: harp-proxy
+    host: harp.example.com
+    port: 22
+    username: monitor
+    auth:
+      type: key
+      key_file: ~/.ssh/id_ed25519
+    tags:
+      - harp
+      - reverse-proxy
+    checks:
+      http:
+        - url: https://harp.example.com/health
+          expected_status: 200
+          timeout: 5
+        - url: https://harp.example.com/readyz
+          expected_status: 200
+          timeout: 5
+        - url: https://harp.example.com/metrics
+          expected_status: 200
+          timeout: 5
+      dns:
+        - name: harp-public-dns
+          host: harp.example.com
+          type: A
+          server: 1.1.1.1
+          timeout: 5
+      tls:
+        - name: harp-public-cert
+          host: harp.example.com
+          port: 443
+          server_name: harp.example.com
+          timeout: 5
+
 
 # -----------------------------------------------------------------------------
 # Alerts
@@ -338,6 +376,42 @@ alerts:
       metric: tls_cert_expires_days
       operator: "<"
       threshold: 30
+
+    # Raspberry Pi / SBC board health
+    - name: BoardTooHot
+      metric: board_temperature
+      operator: ">"
+      threshold: 80
+
+    - name: BoardUnderVoltage
+      metric: board_under_voltage
+      operator: "=="
+      threshold: 1
+
+    - name: BoardThrottled
+      metric: board_throttled
+      operator: "=="
+      threshold: 1
+
+    - name: BoardWiFiWeak
+      metric: board_wifi_rssi
+      operator: "<"
+      threshold: -75
+
+    # HARP reverse proxy checks
+    - name: HARPHealthDown
+      metric: http_failed
+      operator: "=="
+      threshold: 1
+      servers:
+        - harp-proxy
+
+    - name: HARPCertExpiringSoon
+      metric: tls_cert_expires_days
+      operator: "<"
+      threshold: 30
+      servers:
+        - harp-proxy
 
     # Custom check failure
     - name: NginxDown

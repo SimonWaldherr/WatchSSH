@@ -69,9 +69,12 @@ them through standard tools:
   `network[].drops_*`)
 - Linux/macOS file descriptor pressure from `/proc/sys/fs/file-nr` or `sysctl`
   (`file_descriptors`)
+- Linux Raspberry Pi / SBC board diagnostics when exposed by the host:
+  model, thermal zone temperature, CPU frequency, `vcgencmd get_throttled`
+  flags, and Wi-Fi RSSI from `/proc/net/wireless` (`board`)
 
 Capability keys for these metrics are `cpu_cores`, `disk_inodes`, and
-`file_descriptors`.
+`file_descriptors`. Board diagnostics use the `board` capability key.
 
 ## CPU Measurement
 
@@ -422,6 +425,41 @@ and `/metrics`. WatchSSH does not try to become a distributed RIPE Atlas
 replacement; it keeps the single-monitoring-host model and makes probe results
 consistent enough for alerts and exports.
 
+## HARP Integration
+
+For [HARP](https://github.com/SimonWaldherr/HARP), WatchSSH should start with
+the operational checks that are cheap and already supported: health endpoint,
+readiness endpoint, public `/metrics` reachability, DNS resolution, and TLS
+certificate expiry. Example:
+
+```yaml
+servers:
+  - name: harp-proxy
+    host: harp.example.com
+    username: monitor
+    checks:
+      http:
+        - url: https://harp.example.com/health
+          expected_status: 200
+        - url: https://harp.example.com/readyz
+          expected_status: 200
+        - url: https://harp.example.com/metrics
+          expected_status: 200
+      dns:
+        - name: harp-public-dns
+          host: harp.example.com
+          type: A
+      tls:
+        - name: harp-public-cert
+          host: harp.example.com
+          port: 443
+          server_name: harp.example.com
+```
+
+The `/metrics` check currently verifies that HARP's metrics endpoint is up and
+responds with the expected status. Parsing selected HARP counters into native
+WatchSSH metrics can be added later once the HARP metric names are stable.
+
 ## Alerting
 
 Configure threshold-based alerts in the `alerts` section of `config.yaml`.
@@ -430,7 +468,9 @@ Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
 `processes_total`, `file_descriptor_usage`, `network_errors`, `network_drops`,
 `ping_latency`, `ping_failed`, `port_closed`, `http_failed`, `dns_failed`,
 `dns_latency`, `traceroute_failed`, `traceroute_hops`, `tls_failed`,
-`custom_failed`, `cert_expires_days`, `tls_cert_expires_days`.
+`custom_failed`, `cert_expires_days`, `tls_cert_expires_days`,
+`board_temperature`, `board_under_voltage`, `board_throttled`,
+`board_wifi_rssi`.
 
 Email notifications via SMTP (with STARTTLS or TLS) are supported.
 

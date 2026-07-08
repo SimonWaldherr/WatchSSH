@@ -210,7 +210,7 @@ const allTemplates = `
     <h3>Metric Samples</h3>
     {{if .MetricSamples}}
     <table>
-      <thead><tr><th>Collected</th><th>Server</th><th>Platform</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk /</th><th>Load</th><th>Ping</th><th>DNS</th><th>TLS</th><th>Trace</th></tr></thead>
+      <thead><tr><th>Collected</th><th>Server</th><th>Platform</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk /</th><th>Load</th><th>Ping</th><th>DNS</th><th>TLS</th><th>Trace</th><th>Board</th></tr></thead>
       <tbody>
       {{range .MetricSamples}}
         <tr>
@@ -226,6 +226,7 @@ const allTemplates = `
           <td>{{fmtOptBool .DNSOK}}</td>
           <td>{{fmtOptFloat .TLSCertMinDays}}</td>
           <td>{{fmtOptFloat .TracerouteHops}}</td>
+          <td>{{fmtOptFloat .BoardTemperatureC}}{{if .BoardWiFiRSSIDbm}} / {{fmtOptFloat .BoardWiFiRSSIDbm}} dBm{{end}}</td>
         </tr>
       {{end}}
       </tbody>
@@ -316,6 +317,22 @@ const allTemplates = `
       <tr><td class="m-label">In Use</td><td>{{fdInUse .Metrics.FileDescriptors}} / {{.Metrics.FileDescriptors.Max}} ({{printf "%.1f" .Metrics.FileDescriptors.UsagePercent}}%)</td></tr>
       <tr><td class="m-label">Allocated</td><td>{{.Metrics.FileDescriptors.Allocated}}</td></tr>
       <tr><td class="m-label">Unused Allocated</td><td>{{.Metrics.FileDescriptors.Unused}}</td></tr>
+    </tbody></table>
+  </div>
+  {{end}}
+  {{if .Metrics.Board}}
+  <div class="section">
+    <h3>Board</h3>
+    <table><tbody>
+      {{if .Metrics.Board.Model}}<tr><td class="m-label">Model</td><td>{{.Metrics.Board.Model}}</td></tr>{{end}}
+      <tr><td class="m-label">Temperature</td><td>{{fmtOptFloat .Metrics.Board.TemperatureC}} °C</td></tr>
+      <tr><td class="m-label">CPU Frequency</td><td>{{fmtOptFloat .Metrics.Board.CPUFrequencyMHz}} MHz</td></tr>
+      {{if .Metrics.Board.WiFiRSSIDbm}}<tr><td class="m-label">Wi-Fi RSSI</td><td>{{if .Metrics.Board.WiFiInterface}}{{.Metrics.Board.WiFiInterface}}: {{end}}{{fmtOptFloat .Metrics.Board.WiFiRSSIDbm}} dBm</td></tr>{{end}}
+      {{if .Metrics.Board.ThrottledHex}}<tr><td class="m-label">Throttled Flags</td><td><code>{{.Metrics.Board.ThrottledHex}}</code></td></tr>{{end}}
+      <tr><td class="m-label">Under-voltage Now</td><td>{{if .Metrics.Board.UnderVoltageNow}}yes{{else}}no{{end}}</td></tr>
+      <tr><td class="m-label">Throttled Now</td><td>{{if .Metrics.Board.ThrottledNow}}yes{{else}}no{{end}}</td></tr>
+      <tr><td class="m-label">Under-voltage Seen</td><td>{{if .Metrics.Board.UnderVoltageSeen}}yes{{else}}no{{end}}</td></tr>
+      <tr><td class="m-label">Throttled Seen</td><td>{{if .Metrics.Board.ThrottledSeen}}yes{{else}}no{{end}}</td></tr>
     </tbody></table>
   </div>
   {{end}}

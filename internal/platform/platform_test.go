@@ -139,6 +139,32 @@ func TestParseSolarisSwapS(t *testing.T) {
 	}
 }
 
+func TestParseLinuxBoardValues(t *testing.T) {
+	temp, err := parseLinuxMilliValue("52000\n", 1000)
+	if err != nil {
+		t.Fatalf("parseLinuxMilliValue() error = %v", err)
+	}
+	if temp != 52 {
+		t.Fatalf("temperature = %v, want 52", temp)
+	}
+
+	flags, err := parseVcgencmdThrottled("throttled=0x50005\n")
+	if err != nil {
+		t.Fatalf("parseVcgencmdThrottled() error = %v", err)
+	}
+	if flags.Hex != "0x50005" || !flags.UnderVoltageNow || !flags.ThrottledNow || !flags.UnderVoltageSeen || !flags.ThrottledSeen {
+		t.Fatalf("flags = %#v, want all key throttling flags set", flags)
+	}
+
+	iface, rssi, err := parseProcNetWirelessRSSI("wlan0 -61.\n")
+	if err != nil {
+		t.Fatalf("parseProcNetWirelessRSSI() error = %v", err)
+	}
+	if iface != "wlan0" || rssi != -61 {
+		t.Fatalf("wifi = %s/%v, want wlan0/-61", iface, rssi)
+	}
+}
+
 // TestParseDFOutput verifies POSIX df -kP parsing.
 func TestParseDFOutput(t *testing.T) {
 	input := `Filesystem     1024-blocks      Used Available Capacity Mounted on

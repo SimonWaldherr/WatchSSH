@@ -84,6 +84,11 @@ func (s *TinySQLStore) initSchema(ctx context.Context) error {
 			dns_ok BOOL,
 			tls_cert_min_days FLOAT,
 			traceroute_hops FLOAT,
+			board_temperature_c FLOAT,
+			board_cpu_frequency_mhz FLOAT,
+			board_wifi_rssi_dbm FLOAT,
+			board_under_voltage_now BOOL,
+			board_throttled_now BOOL,
 			payload_json TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS alert_firings (
@@ -120,6 +125,11 @@ func (s *TinySQLStore) ensureMetricColumns(ctx context.Context) error {
 		`ALTER TABLE metric_samples ADD COLUMN dns_ok BOOL`,
 		`ALTER TABLE metric_samples ADD COLUMN tls_cert_min_days FLOAT`,
 		`ALTER TABLE metric_samples ADD COLUMN traceroute_hops FLOAT`,
+		`ALTER TABLE metric_samples ADD COLUMN board_temperature_c FLOAT`,
+		`ALTER TABLE metric_samples ADD COLUMN board_cpu_frequency_mhz FLOAT`,
+		`ALTER TABLE metric_samples ADD COLUMN board_wifi_rssi_dbm FLOAT`,
+		`ALTER TABLE metric_samples ADD COLUMN board_under_voltage_now BOOL`,
+		`ALTER TABLE metric_samples ADD COLUMN board_throttled_now BOOL`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnError(err) {
@@ -146,10 +156,10 @@ func (s *TinySQLStore) RecordMetrics(ctx context.Context, records []MetricRecord
 	defer tx.Rollback() //nolint:errcheck
 
 	const stmt = `INSERT INTO metric_samples
-		(id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, payload_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+		(id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, board_temperature_c, board_cpu_frequency_mhz, board_wifi_rssi_dbm, board_under_voltage_now, board_throttled_now, payload_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 	for _, r := range records {
-		if _, err := tx.ExecContext(ctx, stmt, r.ID, r.CollectedAt, r.ServerName, r.Host, r.Platform, r.HasError, nullableFloat(r.CPUUsage), nullableFloat(r.MemoryUsage), nullableFloat(r.SwapUsage), nullableFloat(r.Load1), nullableFloat(r.DiskRootUsage), nullableBool(r.PingOK), nullableFloat(r.PingLatencyMS), nullableBool(r.DNSOK), nullableFloat(r.TLSCertMinDays), nullableFloat(r.TracerouteHops), r.PayloadJSON); err != nil {
+		if _, err := tx.ExecContext(ctx, stmt, r.ID, r.CollectedAt, r.ServerName, r.Host, r.Platform, r.HasError, nullableFloat(r.CPUUsage), nullableFloat(r.MemoryUsage), nullableFloat(r.SwapUsage), nullableFloat(r.Load1), nullableFloat(r.DiskRootUsage), nullableBool(r.PingOK), nullableFloat(r.PingLatencyMS), nullableBool(r.DNSOK), nullableFloat(r.TLSCertMinDays), nullableFloat(r.TracerouteHops), nullableFloat(r.BoardTemperatureC), nullableFloat(r.BoardCPUFrequencyMHz), nullableFloat(r.BoardWiFiRSSIDbm), nullableBool(r.BoardUnderVoltageNow), nullableBool(r.BoardThrottledNow), r.PayloadJSON); err != nil {
 			return fmt.Errorf("insert metric history: %w", err)
 		}
 	}
@@ -195,13 +205,13 @@ func (s *TinySQLStore) RecentMetrics(ctx context.Context, serverName string, lim
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	query := `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, payload_json
+	query := `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, board_temperature_c, board_cpu_frequency_mhz, board_wifi_rssi_dbm, board_under_voltage_now, board_throttled_now, payload_json
 		FROM metric_samples
 		ORDER BY collected_at DESC
 		LIMIT ?`
 	args := []any{limit}
 	if serverName != "" {
-		query = `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, payload_json
+		query = `SELECT id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, board_temperature_c, board_cpu_frequency_mhz, board_wifi_rssi_dbm, board_under_voltage_now, board_throttled_now, payload_json
 			FROM metric_samples
 			WHERE server_name = ?
 			ORDER BY collected_at DESC
@@ -218,9 +228,9 @@ func (s *TinySQLStore) RecentMetrics(ctx context.Context, serverName string, lim
 	var records []MetricRecord
 	for rows.Next() {
 		var r MetricRecord
-		var cpuUsage, memoryUsage, swapUsage, load1, diskRootUsage, pingLatency, tlsCertMinDays, tracerouteHops sql.NullFloat64
-		var pingOK, dnsOK sql.NullBool
-		if err := rows.Scan(&r.ID, &r.CollectedAt, &r.ServerName, &r.Host, &r.Platform, &r.HasError, &cpuUsage, &memoryUsage, &swapUsage, &load1, &diskRootUsage, &pingOK, &pingLatency, &dnsOK, &tlsCertMinDays, &tracerouteHops, &r.PayloadJSON); err != nil {
+		var cpuUsage, memoryUsage, swapUsage, load1, diskRootUsage, pingLatency, tlsCertMinDays, tracerouteHops, boardTemperature, boardCPUFrequency, boardWiFiRSSI sql.NullFloat64
+		var pingOK, dnsOK, boardUnderVoltage, boardThrottled sql.NullBool
+		if err := rows.Scan(&r.ID, &r.CollectedAt, &r.ServerName, &r.Host, &r.Platform, &r.HasError, &cpuUsage, &memoryUsage, &swapUsage, &load1, &diskRootUsage, &pingOK, &pingLatency, &dnsOK, &tlsCertMinDays, &tracerouteHops, &boardTemperature, &boardCPUFrequency, &boardWiFiRSSI, &boardUnderVoltage, &boardThrottled, &r.PayloadJSON); err != nil {
 			return nil, fmt.Errorf("scan metric history: %w", err)
 		}
 		r.CPUUsage = floatPtr(cpuUsage)
@@ -233,6 +243,11 @@ func (s *TinySQLStore) RecentMetrics(ctx context.Context, serverName string, lim
 		r.DNSOK = boolPtr(dnsOK)
 		r.TLSCertMinDays = floatPtr(tlsCertMinDays)
 		r.TracerouteHops = floatPtr(tracerouteHops)
+		r.BoardTemperatureC = floatPtr(boardTemperature)
+		r.BoardCPUFrequencyMHz = floatPtr(boardCPUFrequency)
+		r.BoardWiFiRSSIDbm = floatPtr(boardWiFiRSSI)
+		r.BoardUnderVoltageNow = boolPtr(boardUnderVoltage)
+		r.BoardThrottledNow = boolPtr(boardThrottled)
 		records = append(records, r)
 	}
 	if err := rows.Err(); err != nil {

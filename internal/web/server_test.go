@@ -216,6 +216,9 @@ func TestHistoryPageAndAPI(t *testing.T) {
 func TestPrometheusMetricsEndpoint(t *testing.T) {
 	state := NewState(&config.Config{}, "")
 	tlsDays := 12.5
+	boardTemp := 52.3
+	boardFreq := 1400.0
+	boardRSSI := -61.0
 	state.Update([]monitor.ServerMetrics{{
 		ServerName: "localhost",
 		Host:       "127.0.0.1",
@@ -228,6 +231,14 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 			TLS:        []monitor.TLSResult{{Name: "tls", Host: "example.com", Port: 443, OK: true, CertExpiresDays: &tlsDays}},
 			Traceroute: []monitor.TracerouteResult{{Name: "trace", Host: "example.com", OK: true, Hops: 8}},
 		},
+		Board: &monitor.BoardInfo{
+			Model:           "Raspberry Pi 5 Model B",
+			TemperatureC:    &boardTemp,
+			CPUFrequencyMHz: &boardFreq,
+			WiFiInterface:   "wlan0",
+			WiFiRSSIDbm:     &boardRSSI,
+			ThrottledNow:    true,
+		},
 	}}, nil)
 	srv := NewServer(state, ":0")
 
@@ -239,7 +250,7 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops"} {
+	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops", "watchssh_board_temperature_celsius", "watchssh_board_wifi_rssi_dbm", "watchssh_board_throttled"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("prometheus metrics missing %q: %s", want, body)
 		}

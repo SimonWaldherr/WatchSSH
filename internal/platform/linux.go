@@ -188,10 +188,105 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 		}
 	}
 
+	collectLinuxBoardInfo(ctx, r, s)
+
 	// 9. Optional modules from standard Unix tools.
 	collectStandardUnixMetrics(ctx, r, s)
 
 	return s, nil
+}
+
+func collectLinuxBoardInfo(ctx context.Context, r Runner, s *Snapshot) {
+	board := &BoardInfo{}
+	modelOut, err := r.Run(ctx, "cat /proc/device-tree/model 2>/dev/null || cat /sys/firmware/devicetree/base/model 2>/dev/null")
+	if err == nil {
+		board.Model = strings.Trim(strings.TrimSpace(modelOut), "\x00")
+	}
+
+	tempOut, err := r.Run(ctx, "cat /sys/class/thermal/thermal_zone0/temp 2>/dev/null")
+	if err == nil {
+		if temp, err := parseLinuxMilliValue(tempOut, 1000); err == nil {
+			board.TemperatureC = &temp
+		}
+	}
+
+	freqOut, err := r.Run(ctx, "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null")
+	if err == nil {
+		if mhz, err := parseLinuxMilliValue(freqOut, 1000); err == nil {
+			board.CPUFrequencyMHz = &mhz
+		}
+	}
+
+	throttledOut, err := r.Run(ctx, "vcgencmd get_throttled 2>/dev/null")
+	if err == nil {
+		if flags, err := parseVcgencmdThrottled(throttledOut); err == nil {
+			board.ThrottledHex = flags.Hex
+			board.UnderVoltageNow = flags.UnderVoltageNow
+			board.ThrottledNow = flags.ThrottledNow
+			board.UnderVoltageSeen = flags.UnderVoltageSeen
+			board.ThrottledSeen = flags.ThrottledSeen
+		}
+	}
+
+	wifiOut, err := r.Run(ctx, "awk 'NR>2 {gsub(\":\",\"\",$1); print $1, $4; exit}' /proc/net/wireless 2>/dev/null")
+	if err == nil {
+		if iface, rssi, err := parseProcNetWirelessRSSI(wifiOut); err == nil {
+			board.WiFiInterface = iface
+			board.WiFiRSSIDbm = &rssi
+		}
+	}
+
+	if board.Model == "" && board.TemperatureC == nil && board.CPUFrequencyMHz == nil && board.ThrottledHex == "" && board.WiFiRSSIDbm == nil {
+		s.setUnsupported("board")
+		return
+	}
+	s.Board = board
+	s.setOK("board")
+}
+
+func parseLinuxMilliValue(output string, divisor float64) (float64, error) {
+	value, err := strconv.ParseFloat(strings.TrimSpace(output), 64)
+	if err != nil {
+		return 0, err
+	}
+	return value / divisor, nil
+}
+
+type throttledFlags struct {
+	Hex              string
+	UnderVoltageNow  bool
+	ThrottledNow     bool
+	UnderVoltageSeen bool
+	ThrottledSeen    bool
+}
+
+func parseVcgencmdThrottled(output string) (throttledFlags, error) {
+	value := strings.TrimSpace(output)
+	value = strings.TrimPrefix(value, "throttled=")
+	parsed, err := strconv.ParseUint(value, 0, 32)
+	if err != nil {
+		return throttledFlags{}, err
+	}
+	return throttledFlags{
+		Hex:              value,
+		UnderVoltageNow:  parsed&(1<<0) != 0,
+		ThrottledNow:     parsed&(1<<2) != 0,
+		UnderVoltageSeen: parsed&(1<<16) != 0,
+		ThrottledSeen:    parsed&(1<<18) != 0,
+	}, nil
+}
+
+func parseProcNetWirelessRSSI(output string) (string, float64, error) {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) < 2 {
+		return "", 0, fmt.Errorf("parseProcNetWirelessRSSI: expected iface and level")
+	}
+	level := strings.TrimSuffix(fields[1], ".")
+	rssi, err := strconv.ParseFloat(level, 64)
+	if err != nil {
+		return "", 0, err
+	}
+	return fields[0], rssi, nil
 }
 
 // parseLinuxUptime parses /proc/uptime. First field is uptime in seconds.
