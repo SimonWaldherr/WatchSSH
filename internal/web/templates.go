@@ -39,6 +39,9 @@ tr:hover td{background:#fafbfc}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem}
 .form-row.w3{grid-template-columns:1fr 1fr 1fr}
 .form-row.wide{grid-template-columns:1fr}
+.form-block{border-top:1px solid #eee;margin-top:1rem;padding-top:1rem}
+.form-block h4{font-size:.82rem;color:#666;margin:0 0 .75rem}
+.inline-check{display:flex;align-items:center;gap:.35rem;font-size:.82rem;color:#555;margin:.45rem 0}
 label{display:block;font-size:.8rem;color:#555;margin-bottom:.25rem;font-weight:500}
 input[type=text],input[type=number],input[type=password],input[type=email],select{width:100%;padding:.38rem .6rem;border:1px solid #d1d5da;border-radius:5px;font-size:.85rem;background:#fff}
 input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px rgba(0,102,204,.15)}
@@ -56,8 +59,10 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 .dot-ok{background:#22863a}.dot-err{background:#cb2431}.dot-unk{background:#888}
 .tag{display:inline-block;padding:.1rem .4rem;border-radius:3px;font-size:.72rem;font-weight:600;margin-left:.3rem}
 .tag-ok{background:#dff0d8;color:#22863a}.tag-err{background:#f8d7da;color:#cb2431}
+.pill{display:inline-block;background:#eef2f7;color:#445;padding:.08rem .38rem;border-radius:3px;font-size:.72rem;margin:.05rem .15rem .05rem 0}
 .empty{color:#888;font-size:.87rem;padding:1rem 0}
-@media(max-width:650px){.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}}
+.table-scroll{overflow-x:auto}
+@media(max-width:760px){header{height:auto;align-items:flex-start;flex-direction:column;padding:.75rem 1rem;gap:.5rem}header nav{flex-wrap:wrap}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-actions{flex-wrap:wrap}}
 `
 
 // allTemplates is parsed once at startup into the global template set.
@@ -580,8 +585,9 @@ const allTemplates = `
 <div class="section">
   <h3>Configured Servers ({{len .Servers}})</h3>
   {{if .Servers}}
+  <div class="table-scroll">
   <table>
-    <thead><tr><th>Name</th><th>Host</th><th>Port</th><th>User</th><th>Type</th><th>Status</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Host</th><th>Port</th><th>User</th><th>Type</th><th>Tags</th><th>Checks</th><th>Status</th><th></th></tr></thead>
     <tbody>
     {{range .Servers}}
     <tr>
@@ -590,6 +596,8 @@ const allTemplates = `
       <td>{{if not .Host}}—{{else}}{{.Port}}{{end}}</td>
       <td>{{if .Username}}{{.Username}}{{else}}—{{end}}</td>
       <td>{{if not .Host}}local{{else}}SSH{{end}}</td>
+      <td>{{range .Tags}}<span class="pill">{{.}}</span>{{else}}—{{end}}</td>
+      <td>{{.CheckSummary}}</td>
       <td><span class="badge badge-{{serverStatus .ServerMetrics}}">{{serverStatusLabel .ServerMetrics}}</span></td>
       <td>
         <form method="post" action="/servers/remove" style="display:inline">
@@ -602,6 +610,7 @@ const allTemplates = `
     {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <p class="empty">No servers configured yet.</p>
   {{end}}
@@ -610,6 +619,22 @@ const allTemplates = `
 <div class="form-wrap">
   <h3>Add Server</h3>
   <form method="post" action="/servers/add">
+    <div class="form-row">
+      <div>
+        <label>Profile</label>
+        <select name="profile" id="server-profile">
+          <option value="">Custom</option>
+          <option value="web">Web / HTTPS service</option>
+          <option value="harp">HARP reverse proxy</option>
+          <option value="raspberry-pi">Raspberry Pi / SBC</option>
+          <option value="local">Local machine</option>
+        </select>
+      </div>
+      <div>
+        <label>Tags</label>
+        <input type="text" name="tags" placeholder="linux, production, edge">
+      </div>
+    </div>
     <div class="form-row">
       <div><label>Name *</label><input type="text" name="name" placeholder="web-01" required></div>
       <div><label>Host / IP *</label><input type="text" name="host" placeholder="192.168.1.10"></div>
@@ -631,16 +656,77 @@ const allTemplates = `
     </div>
     <div class="form-row">
       <div>
-        <label>
+        <label class="inline-check">
           <input type="checkbox" name="local" value="1">
           Monitor this machine locally (no SSH)
         </label>
       </div>
       <div>
-        <label>
+        <label class="inline-check">
           <input type="checkbox" name="ping" value="1">
           Enable ping check
         </label>
+      </div>
+    </div>
+    <div class="form-row w3">
+      <div><label>Ping Count</label><input type="number" name="ping_count" value="3" min="1" max="10"></div>
+      <div><label>Ping Timeout</label><input type="number" name="ping_timeout" value="5" min="1"></div>
+      <div>
+        <label class="inline-check" style="margin-top:1.35rem">
+          <input type="checkbox" name="docker_enabled" value="1">
+          Docker metrics
+        </label>
+      </div>
+    </div>
+
+    <div class="form-block">
+      <h4>Connectivity Checks</h4>
+      <div class="form-row">
+        <div>
+          <label>TCP Ports</label>
+          <input type="text" name="ports" placeholder="22, 80, 443">
+        </div>
+        <div><label>Port Timeout</label><input type="number" name="port_timeout" value="5" min="1"></div>
+      </div>
+      <div class="form-row">
+        <div>
+          <label>HTTP URLs</label>
+          <input type="text" name="http_urls" placeholder="https://example.com/health, https://example.com/readyz">
+        </div>
+        <div class="form-row" style="margin:0">
+          <div><label>Expected Status</label><input type="number" name="http_expected_status" value="200" min="100" max="599"></div>
+          <div><label>HTTP Timeout</label><input type="number" name="http_timeout" value="10" min="1"></div>
+        </div>
+      </div>
+      <div class="form-row w3">
+        <div><label>DNS Hosts</label><input type="text" name="dns_hosts" placeholder="example.com"></div>
+        <div><label>DNS Type</label><input type="text" name="dns_type" value="A"></div>
+        <div><label>DNS Resolver</label><input type="text" name="dns_server" placeholder="1.1.1.1"></div>
+      </div>
+      <div class="form-row">
+        <div><label>DNS Expected Answer</label><input type="text" name="dns_expected_answer" placeholder="optional substring"></div>
+        <div><label>DNS Timeout</label><input type="number" name="dns_timeout" value="5" min="1"></div>
+      </div>
+      <div class="form-row w3">
+        <div><label>TLS Hosts</label><input type="text" name="tls_hosts" placeholder="example.com"></div>
+        <div><label>TLS Port</label><input type="number" name="tls_port" value="443" min="1" max="65535"></div>
+        <div><label>TLS Server Name</label><input type="text" name="tls_server_name" placeholder="blank = host"></div>
+      </div>
+      <div class="form-row">
+        <div><label>Traceroute Hosts</label><input type="text" name="traceroute_hosts" placeholder="example.com"></div>
+        <div class="form-row" style="margin:0">
+          <div><label>Max Hops</label><input type="number" name="traceroute_max_hops" value="30" min="1"></div>
+          <div><label>Trace Timeout</label><input type="number" name="traceroute_timeout" value="10" min="1"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-block">
+      <h4>Custom Check</h4>
+      <div class="form-row w3">
+        <div><label>Name</label><input type="text" name="custom_name" placeholder="service-running"></div>
+        <div><label>Command</label><input type="text" name="custom_command" placeholder="pgrep -x nginx && echo OK"></div>
+        <div><label>Expected Output</label><input type="text" name="custom_expected_output" placeholder="OK"></div>
       </div>
     </div>
     <div class="form-actions">
@@ -654,6 +740,55 @@ const allTemplates = `
 (function(){
   var btn = document.getElementById('btn-test-conn');
   var result = document.getElementById('test-conn-result');
+  var profile = document.getElementById('server-profile');
+  function setIfEmpty(form, name, value){
+    var el = form.querySelector('[name='+name+']');
+    if(el && !el.value.trim()) el.value = value;
+  }
+  function appendList(form, name, value){
+    var el = form.querySelector('[name='+name+']');
+    if(!el || !value) return;
+    var items = el.value.split(/[,\n;]/).map(function(v){ return v.trim(); }).filter(Boolean);
+    if(items.indexOf(value) === -1) items.push(value);
+    el.value = items.join(', ');
+  }
+  if(profile){
+    profile.addEventListener('change', function(){
+      var form = profile.closest('form');
+      var host = form.querySelector('[name=host]').value.trim() || 'example.com';
+      var local = form.querySelector('[name=local]');
+      if(profile.value === 'local'){
+        if(local) local.checked = true;
+        appendList(form, 'tags', 'local');
+      }
+      if(profile.value === 'web'){
+        appendList(form, 'tags', 'web');
+        appendList(form, 'ports', '80');
+        appendList(form, 'ports', '443');
+        appendList(form, 'http_urls', 'https://'+host+'/health');
+        appendList(form, 'dns_hosts', host);
+        appendList(form, 'tls_hosts', host);
+      }
+      if(profile.value === 'harp'){
+        appendList(form, 'tags', 'harp');
+        appendList(form, 'tags', 'reverse-proxy');
+        appendList(form, 'ports', '80');
+        appendList(form, 'ports', '443');
+        appendList(form, 'http_urls', 'https://'+host+'/health');
+        appendList(form, 'http_urls', 'https://'+host+'/readyz');
+        appendList(form, 'http_urls', 'https://'+host+'/metrics');
+        appendList(form, 'dns_hosts', host);
+        appendList(form, 'tls_hosts', host);
+        setIfEmpty(form, 'dns_server', '1.1.1.1');
+      }
+      if(profile.value === 'raspberry-pi'){
+        appendList(form, 'tags', 'raspberry-pi');
+        appendList(form, 'tags', 'sbc');
+        var ping = form.querySelector('[name=ping]');
+        if(ping) ping.checked = true;
+      }
+    });
+  }
   if(!btn) return;
   btn.addEventListener('click', function(){
     var form = btn.closest('form');
@@ -739,6 +874,7 @@ const allTemplates = `
       <div>
         <label>Metric *</label>
         <select name="metric" required>
+          <optgroup label="System">
           <option value="cpu_usage">cpu_usage (%)</option>
           <option value="mem_usage">mem_usage (%)</option>
           <option value="swap_usage">swap_usage (%)</option>
@@ -752,12 +888,27 @@ const allTemplates = `
           <option value="file_descriptor_usage">file_descriptor_usage (%)</option>
           <option value="network_errors">network_errors</option>
           <option value="network_drops">network_drops</option>
+          </optgroup>
+          <optgroup label="Connectivity">
           <option value="ping_failed">ping_failed</option>
           <option value="ping_latency">ping_latency (ms)</option>
           <option value="port_closed">port_closed</option>
           <option value="http_failed">http_failed</option>
           <option value="cert_expires_days">cert_expires_days (days)</option>
+          <option value="dns_failed">dns_failed</option>
+          <option value="dns_latency">dns_latency (ms)</option>
+          <option value="traceroute_failed">traceroute_failed</option>
+          <option value="traceroute_hops">traceroute_hops</option>
+          <option value="tls_failed">tls_failed</option>
+          <option value="tls_cert_expires_days">tls_cert_expires_days (days)</option>
           <option value="custom_failed">custom_failed</option>
+          </optgroup>
+          <optgroup label="Board">
+          <option value="board_temperature">board_temperature (°C)</option>
+          <option value="board_under_voltage">board_under_voltage</option>
+          <option value="board_throttled">board_throttled</option>
+          <option value="board_wifi_rssi">board_wifi_rssi (dBm)</option>
+          </optgroup>
         </select>
       </div>
     </div>

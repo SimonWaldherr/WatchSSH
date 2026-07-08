@@ -495,6 +495,12 @@ If your config has an empty `servers:` list, the UI and CLI still show a
 temporary `localhost` diagnostic target so you can inspect the host running
 WatchSSH before scaling out to more systems.
 
+The server form can now create common profiles directly from the UI:
+custom SSH targets, web/HTTPS services, HARP reverse proxies, Raspberry Pi/SBC
+hosts, and local monitoring targets. It also supports tags, Docker collection,
+ping, TCP port, HTTP, DNS, TLS, traceroute, and one custom command check without
+editing YAML by hand.
+
 Health endpoints for automation:
 
 - `GET /healthz` → liveness (`200 ok`)

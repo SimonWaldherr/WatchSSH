@@ -263,10 +263,13 @@ type serversData struct {
 }
 
 type serverRow struct {
-	ServerName string
-	Host       string
-	Port       int
-	Username   string
+	ServerName    string
+	Host          string
+	Port          int
+	Username      string
+	Tags          []string
+	CheckSummary  string
+	DockerEnabled bool
 	monitor.ServerMetrics
 }
 
@@ -282,10 +285,13 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 	rows := make([]serverRow, 0, len(cfg.Servers))
 	for _, srv := range cfg.Servers {
 		row := serverRow{
-			ServerName: srv.Name,
-			Host:       srv.Host,
-			Port:       srv.Port,
-			Username:   srv.Username,
+			ServerName:    srv.Name,
+			Host:          srv.Host,
+			Port:          srv.Port,
+			Username:      srv.Username,
+			Tags:          srv.Tags,
+			CheckSummary:  serverCheckSummary(srv),
+			DockerEnabled: srv.Docker.Enabled,
 		}
 		if m, ok := metricsMap[srv.Name]; ok {
 			row.ServerMetrics = m
@@ -345,6 +351,15 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pingEnabled := r.FormValue("ping") == "1"
+	profile := strings.TrimSpace(r.FormValue("profile"))
+	tags := splitList(r.FormValue("tags"))
+	checks := checksFromServerForm(r)
+	if pingEnabled {
+		checks.Ping = config.PingCheck{Enabled: true, Count: formInt(r, "ping_count", 3), Timeout: formInt(r, "ping_timeout", 5)}
+	}
+	if profile != "" {
+		applyServerProfile(profile, host, &tags, &checks, &isLocal)
+	}
 	srv := config.Server{
 		Name:     name,
 		Host:     host,
@@ -352,19 +367,244 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 		Username: r.FormValue("username"),
 		Auth:     auth,
 		Local:    isLocal,
-		Checks: config.Checks{
-			Ping: config.PingCheck{
-				Enabled: pingEnabled,
-				Count:   3,
-				Timeout: 5,
-			},
-		},
+		Tags:     tags,
+		Checks:   checks,
+		Docker:   config.DockerConfig{Enabled: r.FormValue("docker_enabled") == "1"},
+	}
+	if srv.Local {
+		srv.Host = ""
+		srv.Port = 0
+		srv.Username = ""
+		srv.Auth = config.Auth{}
 	}
 	s.state.AddServer(srv)
 	if err := s.state.SaveConfig(); err != nil {
 		log.Printf("auto-save config after AddServer: %v", err)
 	}
 	redirectWithFlash(w, r, "/servers", fmt.Sprintf("Server %q added.", name), false)
+}
+
+func checksFromServerForm(r *http.Request) config.Checks {
+	httpStatus := formInt(r, "http_expected_status", 200)
+	httpTimeout := formInt(r, "http_timeout", 10)
+	dnsType := strings.TrimSpace(r.FormValue("dns_type"))
+	if dnsType == "" {
+		dnsType = "A"
+	}
+	dnsTimeout := formInt(r, "dns_timeout", 5)
+	tlsTimeout := formInt(r, "tls_timeout", 5)
+	traceTimeout := formInt(r, "traceroute_timeout", 10)
+
+	checks := config.Checks{}
+	for _, port := range parsePorts(r.FormValue("ports")) {
+		checks.Ports = append(checks.Ports, config.PortCheck{Port: port, Timeout: formInt(r, "port_timeout", 5)})
+	}
+	for _, rawURL := range splitList(r.FormValue("http_urls")) {
+		checks.HTTP = append(checks.HTTP, config.HTTPCheck{URL: rawURL, ExpectedStatus: httpStatus, Timeout: httpTimeout})
+	}
+	for _, dnsHost := range splitList(r.FormValue("dns_hosts")) {
+		checks.DNS = append(checks.DNS, config.DNSCheck{
+			Name:           dnsHost,
+			Host:           dnsHost,
+			Type:           dnsType,
+			Server:         strings.TrimSpace(r.FormValue("dns_server")),
+			ExpectedAnswer: strings.TrimSpace(r.FormValue("dns_expected_answer")),
+			Timeout:        dnsTimeout,
+		})
+	}
+	for _, traceHost := range splitList(r.FormValue("traceroute_hosts")) {
+		checks.Trace = append(checks.Trace, config.TracerouteCheck{Name: traceHost, Host: traceHost, MaxHops: formInt(r, "traceroute_max_hops", 30), Timeout: traceTimeout})
+	}
+	for _, tlsHost := range splitList(r.FormValue("tls_hosts")) {
+		checks.TLS = append(checks.TLS, config.TLSCheck{
+			Name:       tlsHost,
+			Host:       tlsHost,
+			Port:       formInt(r, "tls_port", 443),
+			ServerName: defaultString(strings.TrimSpace(r.FormValue("tls_server_name")), tlsHost),
+			Timeout:    tlsTimeout,
+		})
+	}
+	customName := strings.TrimSpace(r.FormValue("custom_name"))
+	customCommand := strings.TrimSpace(r.FormValue("custom_command"))
+	if customName != "" && customCommand != "" {
+		checks.Custom = append(checks.Custom, config.CustomCheck{
+			Name:           customName,
+			Command:        customCommand,
+			ExpectedOutput: strings.TrimSpace(r.FormValue("custom_expected_output")),
+		})
+	}
+	return checks
+}
+
+func applyServerProfile(profile, host string, tags *[]string, checks *config.Checks, isLocal *bool) {
+	switch profile {
+	case "local":
+		*isLocal = true
+		addTags(tags, "local")
+	case "web":
+		addTags(tags, "web")
+		addPort(checks, 80, 5)
+		addPort(checks, 443, 5)
+		if host != "" {
+			addHTTP(checks, "https://"+host+"/health", 200, 10)
+			addDNS(checks, host, "A", "", "", 5)
+			addTLS(checks, host, 443, host, 5)
+		}
+	case "harp":
+		addTags(tags, "harp", "reverse-proxy")
+		addPort(checks, 80, 5)
+		addPort(checks, 443, 5)
+		if host != "" {
+			addHTTP(checks, "https://"+host+"/health", 200, 5)
+			addHTTP(checks, "https://"+host+"/readyz", 200, 5)
+			addHTTP(checks, "https://"+host+"/metrics", 200, 5)
+			addDNS(checks, host, "A", "1.1.1.1", "", 5)
+			addTLS(checks, host, 443, host, 5)
+		}
+	case "raspberry-pi":
+		addTags(tags, "raspberry-pi", "sbc")
+		if !checks.Ping.Enabled {
+			checks.Ping = config.PingCheck{Enabled: true, Count: 3, Timeout: 5}
+		}
+	}
+}
+
+func serverCheckSummary(srv config.Server) string {
+	var parts []string
+	if srv.Checks.Ping.Enabled {
+		parts = append(parts, "ping")
+	}
+	if len(srv.Checks.Ports) > 0 {
+		parts = append(parts, fmt.Sprintf("%d ports", len(srv.Checks.Ports)))
+	}
+	if len(srv.Checks.HTTP) > 0 {
+		parts = append(parts, fmt.Sprintf("%d http", len(srv.Checks.HTTP)))
+	}
+	if len(srv.Checks.DNS) > 0 {
+		parts = append(parts, fmt.Sprintf("%d dns", len(srv.Checks.DNS)))
+	}
+	if len(srv.Checks.TLS) > 0 {
+		parts = append(parts, fmt.Sprintf("%d tls", len(srv.Checks.TLS)))
+	}
+	if len(srv.Checks.Trace) > 0 {
+		parts = append(parts, fmt.Sprintf("%d trace", len(srv.Checks.Trace)))
+	}
+	if len(srv.Checks.Custom) > 0 {
+		parts = append(parts, fmt.Sprintf("%d custom", len(srv.Checks.Custom)))
+	}
+	if srv.Docker.Enabled {
+		parts = append(parts, "docker")
+	}
+	if len(parts) == 0 {
+		return "system metrics"
+	}
+	return strings.Join(parts, ", ")
+}
+
+func splitList(input string) []string {
+	fields := strings.FieldsFunc(input, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ';'
+	})
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		v := strings.TrimSpace(field)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func parsePorts(input string) []int {
+	parts := splitList(input)
+	ports := make([]int, 0, len(parts))
+	seen := make(map[int]struct{}, len(parts))
+	for _, part := range parts {
+		port, err := strconv.Atoi(part)
+		if err != nil || port < 1 || port > 65535 {
+			continue
+		}
+		if _, ok := seen[port]; ok {
+			continue
+		}
+		seen[port] = struct{}{}
+		ports = append(ports, port)
+	}
+	return ports
+}
+
+func formInt(r *http.Request, name string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(r.FormValue(name)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func addTags(tags *[]string, values ...string) {
+	existing := make(map[string]struct{}, len(*tags)+len(values))
+	for _, tag := range *tags {
+		existing[tag] = struct{}{}
+	}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := existing[value]; ok {
+			continue
+		}
+		*tags = append(*tags, value)
+		existing[value] = struct{}{}
+	}
+}
+
+func addPort(checks *config.Checks, port int, timeout int) {
+	for _, p := range checks.Ports {
+		if p.Port == port {
+			return
+		}
+	}
+	checks.Ports = append(checks.Ports, config.PortCheck{Port: port, Timeout: timeout})
+}
+
+func addHTTP(checks *config.Checks, rawURL string, status int, timeout int) {
+	for _, h := range checks.HTTP {
+		if h.URL == rawURL {
+			return
+		}
+	}
+	checks.HTTP = append(checks.HTTP, config.HTTPCheck{URL: rawURL, ExpectedStatus: status, Timeout: timeout})
+}
+
+func addDNS(checks *config.Checks, host string, typ string, server string, expected string, timeout int) {
+	for _, d := range checks.DNS {
+		if d.Host == host && d.Type == typ && d.Server == server {
+			return
+		}
+	}
+	checks.DNS = append(checks.DNS, config.DNSCheck{Name: host, Host: host, Type: typ, Server: server, ExpectedAnswer: expected, Timeout: timeout})
+}
+
+func addTLS(checks *config.Checks, host string, port int, serverName string, timeout int) {
+	for _, t := range checks.TLS {
+		if t.Host == host && t.Port == port && t.ServerName == serverName {
+			return
+		}
+	}
+	checks.TLS = append(checks.TLS, config.TLSCheck{Name: host, Host: host, Port: port, ServerName: serverName, Timeout: timeout})
 }
 
 func (s *Server) handleRemoveServer(w http.ResponseWriter, r *http.Request) {

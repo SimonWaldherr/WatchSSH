@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -120,6 +121,53 @@ func TestServerDetailShowsDockerAndCollectorDiagnostics(t *testing.T) {
 	for _, want := range []string{"Docker Containers", "Collector Status", "docker socket not mounted", "ghcr.io/example/api:latest"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
+		}
+	}
+}
+
+func TestAddServerWithProfileAndChecks(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := &config.Config{}
+	state := NewState(cfg, cfgPath)
+	srv := NewServer(state, ":0")
+
+	form := url.Values{}
+	form.Set("profile", "harp")
+	form.Set("name", "harp-edge")
+	form.Set("host", "harp.example.com")
+	form.Set("port", "22")
+	form.Set("username", "monitor")
+	form.Set("auth_type", "key")
+	form.Set("auth_credential", "~/.ssh/id_ed25519")
+	form.Set("tags", "edge")
+	form.Set("ports", "22")
+	form.Set("ping", "1")
+	form.Set("docker_enabled", "1")
+	req := httptest.NewRequest(http.MethodPost, "/servers/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	got := state.Config()
+	if len(got.Servers) != 1 {
+		t.Fatalf("servers len = %d, want 1", len(got.Servers))
+	}
+	added := got.Servers[0]
+	if added.Name != "harp-edge" || added.Host != "harp.example.com" || !added.Docker.Enabled || !added.Checks.Ping.Enabled {
+		t.Fatalf("added server basics = %#v", added)
+	}
+	if len(added.Checks.HTTP) != 3 || len(added.Checks.DNS) != 1 || len(added.Checks.TLS) != 1 {
+		t.Fatalf("profile checks = %#v, want 3 http/1 dns/1 tls", added.Checks)
+	}
+	if len(added.Checks.Ports) != 3 {
+		t.Fatalf("ports = %#v, want manual 22 plus profile 80/443", added.Checks.Ports)
+	}
+	for _, want := range []string{"edge", "harp", "reverse-proxy"} {
+		if !containsString(added.Tags, want) {
+			t.Fatalf("tags = %#v, missing %q", added.Tags, want)
 		}
 	}
 }
@@ -278,4 +326,13 @@ func TestAPIProbes(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"dns"`) {
 		t.Fatalf("probe API missing dns result: %s", rec.Body.String())
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
