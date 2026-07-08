@@ -352,6 +352,11 @@ and each newly-triggered alert to `alert_firings`. The tables include compact
 query columns such as timestamp, server name, platform, metric, and error
 status, plus the full JSON payload for forward-compatible analysis.
 
+The web dashboard exposes the stored data at `/history`. JSON consumers can use:
+
+- `GET /api/history/metrics?server=<name>&limit=100`
+- `GET /api/history/alerts?limit=100`
+
 ## Alerting
 
 Configure threshold-based alerts in the `alerts` section of `config.yaml`.
