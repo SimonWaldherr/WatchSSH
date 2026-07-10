@@ -83,6 +83,14 @@ code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
 .window-bar b { margin-left: .3rem; font-weight: 500; }
 pre { margin: 0; padding: 1.45rem; overflow-x: auto; font-size: .8rem; line-height: 1.65; }
 
+.team-section { background: #e5ebea; }
+.team-layout { margin-top: 3.5rem; display: grid; grid-template-columns: minmax(0, .72fr) minmax(0, 1fr); gap: clamp(2.5rem, 10vw, 10rem); }
+.team-layout > p { margin: 0; color: var(--muted); font-size: 1.04rem; }
+.team-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid #b8c4c1; }
+.team-list li { padding: .9rem 0; display: grid; grid-template-columns: minmax(130px, .42fr) 1fr; gap: 1rem; border-bottom: 1px solid #b8c4c1; font-size: .88rem; }
+.team-list strong { color: var(--teal-dark); }
+.team-list span { color: #445257; }
+
 .workflow-section { background: #fbfaf6; }
 .workflow { margin: 3.5rem 0 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
 .workflow li { display: flex; gap: 1rem; padding-top: 1.1rem; border-top: 1px solid #cbd4d1; }
@@ -103,7 +111,7 @@ footer a { color: #d5e4e2; }
   nav { display: none; }
   .hero { min-height: 780px; padding-top: 8rem; background-position: 62% center; }
   .signal-bar { grid-template-columns: 1fr 1fr; }
-  .intro, .probe-layout, .platform-section { grid-template-columns: 1fr; }
+  .intro, .probe-layout, .platform-section, .team-layout { grid-template-columns: 1fr; }
   .capabilities, .workflow { grid-template-columns: 1fr; }
   .capabilities article { min-height: auto; }
   .capabilities h3 { margin-top: 1rem; }
@@ -122,6 +130,7 @@ footer a { color: #d5e4e2; }
   .probe-list { grid-template-columns: 1fr; }
   .probe-list div:nth-child(odd), .probe-list div:nth-child(even) { padding: .85rem 0; border-left: 0; }
   .platform-section { grid-template-columns: minmax(0, 1fr); }
+  .team-list li { grid-template-columns: 1fr; gap: .25rem; }
   pre { padding: 1rem; font-size: .7rem; }
   .closing { display: block; }
   .closing .button { margin-top: 1.7rem; }
