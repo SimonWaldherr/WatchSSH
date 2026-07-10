@@ -124,6 +124,21 @@ func TestAlertManager_NilCPU(t *testing.T) {
 	}
 }
 
+func TestAlertManager_NTPOffset(t *testing.T) {
+	am := NewAlertManager()
+	cfg := &config.Config{Alerts: config.AlertsConfig{Rules: []config.AlertRule{{
+		Name: "ClockDrift", Metric: "ntp_offset", Operator: ">", Threshold: 50,
+	}}, Cooldown: 0}}
+	metrics := []ServerMetrics{{
+		ServerName:   "srv1",
+		Timestamp:    time.Now(),
+		Connectivity: ConnectivityStats{NTP: []NTPResult{{Host: "time.example", OK: true, OffsetMs: 73}}},
+	}}
+	if firings := am.Evaluate(metrics, cfg); len(firings) != 1 {
+		t.Fatalf("expected NTP offset alert, got %d", len(firings))
+	}
+}
+
 func TestAlertManager_DiskUsage(t *testing.T) {
 	am := NewAlertManager()
 	cfg := &config.Config{

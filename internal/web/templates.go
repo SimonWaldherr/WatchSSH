@@ -39,8 +39,10 @@ tr:hover td{background:#fafbfc}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem}
 .form-row.w3{grid-template-columns:1fr 1fr 1fr}
 .form-row.wide{grid-template-columns:1fr}
+.form-grow{grid-column:span 2}
 .form-block{border-top:1px solid #eee;margin-top:1rem;padding-top:1rem}
 .form-block h4{font-size:.82rem;color:#666;margin:0 0 .75rem}
+.probe-details{border-top:1px solid #eee;margin-top:.8rem;padding-top:.8rem}.probe-details summary{cursor:pointer;color:#0066cc;font-size:.82rem;font-weight:600;user-select:none}.probe-details[open] summary{margin-bottom:.85rem}.probe-details summary:hover{color:#0055bb}.m-error{width:100%;font-family:monospace;font-size:.72rem;color:#a51c26;word-break:break-word;margin-top:.15rem}
 .inline-check{display:flex;align-items:center;gap:.35rem;font-size:.82rem;color:#555;margin:.45rem 0}
 label{display:block;font-size:.8rem;color:#555;margin-bottom:.25rem;font-weight:500}
 input[type=text],input[type=number],input[type=password],input[type=email],select{width:100%;padding:.38rem .6rem;border:1px solid #d1d5da;border-radius:5px;font-size:.85rem;background:#fff}
@@ -62,7 +64,7 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 .pill{display:inline-block;background:#eef2f7;color:#445;padding:.08rem .38rem;border-radius:3px;font-size:.72rem;margin:.05rem .15rem .05rem 0}
 .empty{color:#888;font-size:.87rem;padding:1rem 0}
 .table-scroll{overflow-x:auto}
-@media(max-width:760px){header{height:auto;align-items:flex-start;flex-direction:column;padding:.75rem 1rem;gap:.5rem}header nav{flex-wrap:wrap}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-actions{flex-wrap:wrap}}
+@media(max-width:760px){header{height:auto;align-items:flex-start;flex-direction:column;padding:.75rem 1rem;gap:.5rem}header nav{flex-wrap:wrap}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
 `
 
 // allTemplates is parsed once at startup into the global template set.
@@ -354,15 +356,17 @@ const allTemplates = `
     </div>
     {{end}}
     {{range .Ports}}
-    <div class="m-row">
+    <div class="m-row" style="flex-wrap:wrap">
       <span class="m-label">Port {{.Port}}</span>
-      <span>{{if .Open}}<span class="dot dot-ok"></span>Open{{else}}<span class="dot dot-err"></span>Closed{{end}}</span>
+      <span>{{if .Open}}<span class="dot dot-ok"></span>Open{{else}}<span class="dot dot-err"></span>Closed{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
+      {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
     </div>
     {{end}}
     {{range .HTTP}}
     <div class="m-row" style="flex-wrap:wrap">
-      <span class="m-label" style="word-break:break-all">{{.URL}}</span>
+      <span class="m-label" style="word-break:break-all">{{.Method}} {{.URL}}</span>
       <span>{{if .OK}}<span class="dot dot-ok"></span>{{.StatusCode}}{{else}}<span class="dot dot-err"></span>{{if .StatusCode}}{{.StatusCode}}{{else}}ERR{{end}}{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
+      {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
     </div>
     {{end}}
     {{range .DNS}}
@@ -383,7 +387,14 @@ const allTemplates = `
       <span>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED{{end}}{{if .CertExpiresDays}} — {{fmtOptFloat .CertExpiresDays}} days{{end}}</span>
     </div>
     {{end}}
-    {{if and (not .PingEnabled) (not .Ports) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS)}}
+    {{range .NTP}}
+    <div class="m-row" style="flex-wrap:wrap">
+      <span class="m-label">NTP {{.Host}}:{{.Port}}</span>
+      <span>{{if .OK}}<span class="dot dot-ok"></span>stratum {{.Stratum}}{{else}}<span class="dot dot-err"></span>FAILED{{end}} — {{printf "%.1f" .OffsetMs}} ms offset, {{printf "%.0f" .LatencyMs}} ms</span>
+      {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
+    </div>
+    {{end}}
+    {{if and (not .PingEnabled) (not .Ports) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS) (not .NTP)}}
     <p class="empty">No connectivity checks configured for this server.</p>
     {{end}}
     {{end}}
@@ -699,26 +710,38 @@ const allTemplates = `
         </div>
       </div>
       <div class="form-row w3">
-        <div><label>DNS Hosts</label><input type="text" name="dns_hosts" placeholder="example.com"></div>
-        <div><label>DNS Type</label><input type="text" name="dns_type" value="A"></div>
-        <div><label>DNS Resolver</label><input type="text" name="dns_server" placeholder="1.1.1.1"></div>
+        <div><label>HTTP Method</label><select name="http_method"><option value="GET">GET</option><option value="HEAD">HEAD</option><option value="OPTIONS">OPTIONS</option></select></div>
+        <div class="form-grow"><label>Expected Body</label><input type="text" name="http_expected_body" placeholder="optional response substring"></div>
       </div>
-      <div class="form-row">
-        <div><label>DNS Expected Answer</label><input type="text" name="dns_expected_answer" placeholder="optional substring"></div>
-        <div><label>DNS Timeout</label><input type="number" name="dns_timeout" value="5" min="1"></div>
-      </div>
-      <div class="form-row w3">
-        <div><label>TLS Hosts</label><input type="text" name="tls_hosts" placeholder="example.com"></div>
-        <div><label>TLS Port</label><input type="number" name="tls_port" value="443" min="1" max="65535"></div>
-        <div><label>TLS Server Name</label><input type="text" name="tls_server_name" placeholder="blank = host"></div>
-      </div>
-      <div class="form-row">
-        <div><label>Traceroute Hosts</label><input type="text" name="traceroute_hosts" placeholder="example.com"></div>
-        <div class="form-row" style="margin:0">
-          <div><label>Max Hops</label><input type="number" name="traceroute_max_hops" value="30" min="1"></div>
-          <div><label>Trace Timeout</label><input type="number" name="traceroute_timeout" value="10" min="1"></div>
+      <details class="probe-details">
+        <summary>Additional network probes</summary>
+        <div class="form-row w3">
+          <div><label>DNS Hosts</label><input type="text" name="dns_hosts" placeholder="example.com"></div>
+          <div><label>DNS Type</label><input type="text" name="dns_type" value="A"></div>
+          <div><label>DNS Resolver</label><input type="text" name="dns_server" placeholder="1.1.1.1"></div>
         </div>
-      </div>
+        <div class="form-row">
+          <div><label>DNS Expected Answer</label><input type="text" name="dns_expected_answer" placeholder="optional substring"></div>
+          <div><label>DNS Timeout</label><input type="number" name="dns_timeout" value="5" min="1"></div>
+        </div>
+        <div class="form-row w3">
+          <div><label>TLS Hosts</label><input type="text" name="tls_hosts" placeholder="example.com"></div>
+          <div><label>TLS Port</label><input type="number" name="tls_port" value="443" min="1" max="65535"></div>
+          <div><label>TLS Server Name</label><input type="text" name="tls_server_name" placeholder="blank = host"></div>
+        </div>
+        <div class="form-row">
+          <div><label>Traceroute Hosts</label><input type="text" name="traceroute_hosts" placeholder="example.com"></div>
+          <div class="form-row" style="margin:0">
+            <div><label>Max Hops</label><input type="number" name="traceroute_max_hops" value="30" min="1"></div>
+            <div><label>Trace Timeout</label><input type="number" name="traceroute_timeout" value="10" min="1"></div>
+          </div>
+        </div>
+        <div class="form-row w3">
+          <div><label>NTP Servers</label><input type="text" name="ntp_hosts" placeholder="time.cloudflare.com"></div>
+          <div><label>NTP Max Offset (ms)</label><input type="number" name="ntp_max_offset_ms" placeholder="0 = do not validate" min="0" step="0.1"></div>
+          <div class="form-row" style="margin:0"><div><label>NTP Port</label><input type="number" name="ntp_port" value="123" min="1" max="65535"></div><div><label>NTP Timeout</label><input type="number" name="ntp_timeout" value="5" min="1"></div></div>
+        </div>
+      </details>
     </div>
 
     <div class="form-block">
@@ -893,7 +916,9 @@ const allTemplates = `
           <option value="ping_failed">ping_failed</option>
           <option value="ping_latency">ping_latency (ms)</option>
           <option value="port_closed">port_closed</option>
+          <option value="port_latency">port_latency (ms)</option>
           <option value="http_failed">http_failed</option>
+          <option value="http_latency">http_latency (ms)</option>
           <option value="cert_expires_days">cert_expires_days (days)</option>
           <option value="dns_failed">dns_failed</option>
           <option value="dns_latency">dns_latency (ms)</option>
@@ -901,6 +926,9 @@ const allTemplates = `
           <option value="traceroute_hops">traceroute_hops</option>
           <option value="tls_failed">tls_failed</option>
           <option value="tls_cert_expires_days">tls_cert_expires_days (days)</option>
+          <option value="ntp_failed">ntp_failed</option>
+          <option value="ntp_latency">ntp_latency (ms)</option>
+          <option value="ntp_offset">ntp_offset (ms)</option>
           <option value="custom_failed">custom_failed</option>
           </optgroup>
           <optgroup label="Board">

@@ -5,7 +5,10 @@ package check
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"fmt"
+	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -76,65 +79,162 @@ func parsePingAvg(output string) float64 {
 
 // PortResult holds the outcome of a TCP port check.
 type PortResult struct {
-	Port int
-	Open bool
+	Port      int
+	Open      bool
+	LatencyMs float64
+	Err       error
 }
 
 // CheckPort tests whether host:port accepts TCP connections within timeoutSec.
 func CheckPort(host string, port, timeoutSec int) PortResult {
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	start := time.Now()
 	conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutSec)*time.Second)
+	latencyMs := float64(time.Since(start).Milliseconds())
 	if err != nil {
-		return PortResult{Port: port, Open: false}
+		return PortResult{Port: port, Open: false, LatencyMs: latencyMs, Err: err}
 	}
 	_ = conn.Close()
-	return PortResult{Port: port, Open: true}
+	return PortResult{Port: port, Open: true, LatencyMs: latencyMs}
 }
 
 // HTTPResult holds the outcome of an HTTP health check.
 type HTTPResult struct {
 	URL             string
+	Method          string
 	StatusCode      int
 	OK              bool
 	LatencyMs       float64
 	CertExpiresDays *float64
+	Error           string
 }
 
 // CheckHTTP sends a GET request to url and checks the response status.
 // Redirects are not followed so that the direct response status is observed.
 // A context with the given timeout governs the entire request.
 func CheckHTTP(url string, expectedStatus, timeoutSec int) HTTPResult {
+	return CheckHTTPWithOptions(url, http.MethodGet, expectedStatus, "", timeoutSec)
+}
+
+// CheckHTTPWithOptions sends a body-less HTTP request and optionally checks a
+// substring in the first MiB of its response body. Redirects are not followed.
+func CheckHTTPWithOptions(rawURL, method string, expectedStatus int, expectedBody string, timeoutSec int) HTTPResult {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = http.MethodGet
+	}
 
 	client := &http.Client{
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
 	if err != nil {
-		return HTTPResult{URL: url, OK: false}
+		return HTTPResult{URL: rawURL, Method: method, OK: false, Error: err.Error()}
 	}
 	start := time.Now()
 	resp, err := client.Do(req)
 	latencyMs := float64(time.Since(start).Milliseconds())
 	if err != nil {
-		return HTTPResult{URL: url, OK: false, LatencyMs: latencyMs}
+		return HTTPResult{URL: rawURL, Method: method, OK: false, LatencyMs: latencyMs, Error: err.Error()}
 	}
 	defer resp.Body.Close()
+	ok := resp.StatusCode == expectedStatus
+	if ok && expectedBody != "" {
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if readErr != nil {
+			return HTTPResult{URL: rawURL, Method: method, StatusCode: resp.StatusCode, LatencyMs: latencyMs, Error: readErr.Error()}
+		}
+		ok = strings.Contains(string(body), expectedBody)
+	}
 	var certDays *float64
-	if shouldCheckTLSCert(url, req.URL.Scheme) && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
+	if shouldCheckTLSCert(rawURL, req.URL.Scheme) && resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		days := time.Until(resp.TLS.PeerCertificates[0].NotAfter).Hours() / 24
 		certDays = &days
 	}
 	return HTTPResult{
-		URL:             url,
+		URL:             rawURL,
+		Method:          method,
 		StatusCode:      resp.StatusCode,
-		OK:              resp.StatusCode == expectedStatus,
+		OK:              ok,
 		LatencyMs:       latencyMs,
 		CertExpiresDays: certDays,
 	}
+}
+
+// NTPResult holds the outcome of an SNTP time probe.
+type NTPResult struct {
+	Name      string
+	Host      string
+	Port      int
+	OK        bool
+	LatencyMs float64
+	OffsetMs  float64
+	Stratum   int
+	Err       error
+}
+
+const ntpEpochOffset = 2208988800
+
+// CheckNTP sends a minimal SNTP client request and measures the server clock
+// offset against the midpoint of the request round trip.
+func CheckNTP(name, host string, port int, maxOffsetMs float64, timeoutSec int) NTPResult {
+	if port <= 0 {
+		port = 123
+	}
+	if timeoutSec <= 0 {
+		timeoutSec = 5
+	}
+	result := NTPResult{Name: name, Host: host, Port: port}
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(host, strconv.Itoa(port)), time.Duration(timeoutSec)*time.Second)
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	defer conn.Close()
+
+	packet := make([]byte, 48)
+	packet[0] = 0x1b // leap=0, version=3, mode=client
+	start := time.Now()
+	if _, err := conn.Write(packet); err != nil {
+		result.Err = err
+		return result
+	}
+	_ = conn.SetDeadline(start.Add(time.Duration(timeoutSec) * time.Second))
+	if _, err := io.ReadFull(conn, packet); err != nil {
+		result.LatencyMs = float64(time.Since(start).Milliseconds())
+		result.Err = err
+		return result
+	}
+	elapsed := time.Since(start)
+	result.LatencyMs = float64(elapsed.Milliseconds())
+	result.Stratum = int(packet[1])
+	mode := packet[0] & 0x7
+	if mode != 4 && mode != 5 {
+		result.Err = fmt.Errorf("unexpected NTP response mode %d", mode)
+		return result
+	}
+	if result.Stratum == 0 || result.Stratum > 15 {
+		result.Err = fmt.Errorf("NTP server returned stratum %d", result.Stratum)
+		return result
+	}
+	seconds := binary.BigEndian.Uint32(packet[40:44])
+	fraction := binary.BigEndian.Uint32(packet[44:48])
+	if seconds == 0 {
+		result.Err = fmt.Errorf("NTP server did not provide a transmit timestamp")
+		return result
+	}
+	serverTime := time.Unix(int64(seconds)-ntpEpochOffset, int64(fraction)*1e9/(1<<32))
+	midpoint := start.Add(elapsed / 2)
+	result.OffsetMs = float64(serverTime.Sub(midpoint).Microseconds()) / 1000
+	result.OK = maxOffsetMs <= 0 || math.Abs(result.OffsetMs) <= maxOffsetMs
+	if !result.OK {
+		result.Err = fmt.Errorf("clock offset %.1f ms exceeds %.1f ms", result.OffsetMs, maxOffsetMs)
+	}
+	return result
 }
 
 func shouldCheckTLSCert(rawURL, reqScheme string) bool {

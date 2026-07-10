@@ -400,6 +400,11 @@ monitoring host:
 
 ```yaml
 checks:
+  http:
+    - url: https://example.com/health
+      method: GET
+      expected_status: 200
+      expected_body: '"status":"ready"' # optional response substring
   dns:
     - name: public-dns
       host: example.com
@@ -417,6 +422,11 @@ checks:
       host: example.com
       port: 443
       server_name: example.com
+      timeout: 5
+  ntp:
+    - name: cloudflare-time
+      host: time.cloudflare.com
+      max_offset_ms: 100 # optional: fail on excessive clock drift
       timeout: 5
 ```
 
@@ -466,8 +476,9 @@ Configure threshold-based alerts in the `alerts` section of `config.yaml`.
 Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
 `load15`, `disk_usage`, `disk_inode_usage`, `processes_running`,
 `processes_total`, `file_descriptor_usage`, `network_errors`, `network_drops`,
-`ping_latency`, `ping_failed`, `port_closed`, `http_failed`, `dns_failed`,
-`dns_latency`, `traceroute_failed`, `traceroute_hops`, `tls_failed`,
+`ping_latency`, `ping_failed`, `port_closed`, `port_latency`, `http_failed`,
+`http_latency`, `dns_failed`, `dns_latency`, `traceroute_failed`,
+`traceroute_hops`, `tls_failed`, `ntp_failed`, `ntp_latency`, `ntp_offset`,
 `custom_failed`, `cert_expires_days`, `tls_cert_expires_days`,
 `board_temperature`, `board_under_voltage`, `board_throttled`,
 `board_wifi_rssi`.
@@ -498,8 +509,9 @@ WatchSSH before scaling out to more systems.
 The server form can now create common profiles directly from the UI:
 custom SSH targets, web/HTTPS services, HARP reverse proxies, Raspberry Pi/SBC
 hosts, and local monitoring targets. It also supports tags, Docker collection,
-ping, TCP port, HTTP, DNS, TLS, traceroute, and one custom command check without
-editing YAML by hand.
+ping, TCP port, HTTP response content, DNS, TLS, traceroute, NTP, and one custom
+command check without editing YAML by hand. Frequent TCP and HTTP settings stay
+visible; less common network probes are grouped in an expandable section.
 
 Health endpoints for automation:
 
@@ -529,7 +541,7 @@ main.go
 │   ├── windows.go      — Windows-over-OpenSSH detection with unsupported Unix metrics
 │   └── docker.go       — Optional Docker container collector (Linux only)
 ├── internal/ssh        — SSH client with strict host key checking
-├── internal/check      — Ping, port, HTTP, DNS, traceroute, and TLS probes
+├── internal/check      — Ping, TCP, HTTP, DNS, traceroute, TLS, and NTP probes
 └── internal/web        — Embedded web dashboard (HTML/CSS/JS)
 ```
 

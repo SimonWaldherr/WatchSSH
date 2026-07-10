@@ -458,17 +458,23 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 
 	for _, pc := range srv.Checks.Ports {
 		r := check.CheckPort(srv.Host, pc.Port, pc.Timeout)
-		cs.Ports = append(cs.Ports, PortResult{Port: r.Port, Open: r.Open})
+		result := PortResult{Port: r.Port, Open: r.Open, LatencyMs: r.LatencyMs}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.Ports = append(cs.Ports, result)
 	}
 
 	for _, hc := range srv.Checks.HTTP {
 		r := check.CheckHTTP(hc.URL, hc.ExpectedStatus, hc.Timeout)
 		cs.HTTP = append(cs.HTTP, HTTPResult{
 			URL:             r.URL,
+			Method:          r.Method,
 			StatusCode:      r.StatusCode,
 			OK:              r.OK,
 			LatencyMs:       r.LatencyMs,
 			CertExpiresDays: r.CertExpiresDays,
+			Error:           r.Error,
 		})
 	}
 
@@ -523,6 +529,15 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 		cs.TLS = append(cs.TLS, result)
 	}
 
+	for _, nc := range srv.Checks.NTP {
+		r := check.CheckNTP(nc.Name, nc.Host, nc.Port, nc.MaxOffsetMs, nc.Timeout)
+		result := NTPResult{Name: r.Name, Host: r.Host, Port: r.Port, OK: r.OK, LatencyMs: r.LatencyMs, OffsetMs: r.OffsetMs, Stratum: r.Stratum}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.NTP = append(cs.NTP, result)
+	}
+
 	return cs
 }
 
@@ -534,17 +549,23 @@ func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
 	host := "127.0.0.1"
 	for _, pc := range srv.Checks.Ports {
 		r := check.CheckPort(host, pc.Port, pc.Timeout)
-		cs.Ports = append(cs.Ports, PortResult{Port: r.Port, Open: r.Open})
+		result := PortResult{Port: r.Port, Open: r.Open, LatencyMs: r.LatencyMs}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.Ports = append(cs.Ports, result)
 	}
 
 	for _, hc := range srv.Checks.HTTP {
 		r := check.CheckHTTP(hc.URL, hc.ExpectedStatus, hc.Timeout)
 		cs.HTTP = append(cs.HTTP, HTTPResult{
 			URL:             r.URL,
+			Method:          r.Method,
 			StatusCode:      r.StatusCode,
 			OK:              r.OK,
 			LatencyMs:       r.LatencyMs,
 			CertExpiresDays: r.CertExpiresDays,
+			Error:           r.Error,
 		})
 	}
 
@@ -573,6 +594,15 @@ func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
 			result.Error = r.Err.Error()
 		}
 		cs.TLS = append(cs.TLS, result)
+	}
+
+	for _, nc := range srv.Checks.NTP {
+		r := check.CheckNTP(nc.Name, nc.Host, nc.Port, nc.MaxOffsetMs, nc.Timeout)
+		result := NTPResult{Name: r.Name, Host: r.Host, Port: r.Port, OK: r.OK, LatencyMs: r.LatencyMs, OffsetMs: r.OffsetMs, Stratum: r.Stratum}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.NTP = append(cs.NTP, result)
 	}
 
 	return cs

@@ -387,6 +387,8 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 func checksFromServerForm(r *http.Request) config.Checks {
 	httpStatus := formInt(r, "http_expected_status", 200)
 	httpTimeout := formInt(r, "http_timeout", 10)
+	httpMethod := strings.ToUpper(defaultString(strings.TrimSpace(r.FormValue("http_method")), http.MethodGet))
+	httpExpectedBody := strings.TrimSpace(r.FormValue("http_expected_body"))
 	dnsType := strings.TrimSpace(r.FormValue("dns_type"))
 	if dnsType == "" {
 		dnsType = "A"
@@ -400,7 +402,7 @@ func checksFromServerForm(r *http.Request) config.Checks {
 		checks.Ports = append(checks.Ports, config.PortCheck{Port: port, Timeout: formInt(r, "port_timeout", 5)})
 	}
 	for _, rawURL := range splitList(r.FormValue("http_urls")) {
-		checks.HTTP = append(checks.HTTP, config.HTTPCheck{URL: rawURL, ExpectedStatus: httpStatus, Timeout: httpTimeout})
+		checks.HTTP = append(checks.HTTP, config.HTTPCheck{URL: rawURL, Method: httpMethod, ExpectedStatus: httpStatus, ExpectedBody: httpExpectedBody, Timeout: httpTimeout})
 	}
 	for _, dnsHost := range splitList(r.FormValue("dns_hosts")) {
 		checks.DNS = append(checks.DNS, config.DNSCheck{
@@ -422,6 +424,15 @@ func checksFromServerForm(r *http.Request) config.Checks {
 			Port:       formInt(r, "tls_port", 443),
 			ServerName: defaultString(strings.TrimSpace(r.FormValue("tls_server_name")), tlsHost),
 			Timeout:    tlsTimeout,
+		})
+	}
+	for _, ntpHost := range splitList(r.FormValue("ntp_hosts")) {
+		checks.NTP = append(checks.NTP, config.NTPCheck{
+			Name:        ntpHost,
+			Host:        ntpHost,
+			Port:        formInt(r, "ntp_port", 123),
+			MaxOffsetMs: formFloat(r, "ntp_max_offset_ms", 0),
+			Timeout:     formInt(r, "ntp_timeout", 5),
 		})
 	}
 	customName := strings.TrimSpace(r.FormValue("custom_name"))
@@ -489,6 +500,9 @@ func serverCheckSummary(srv config.Server) string {
 	if len(srv.Checks.Trace) > 0 {
 		parts = append(parts, fmt.Sprintf("%d trace", len(srv.Checks.Trace)))
 	}
+	if len(srv.Checks.NTP) > 0 {
+		parts = append(parts, fmt.Sprintf("%d ntp", len(srv.Checks.NTP)))
+	}
 	if len(srv.Checks.Custom) > 0 {
 		parts = append(parts, fmt.Sprintf("%d custom", len(srv.Checks.Custom)))
 	}
@@ -542,6 +556,14 @@ func parsePorts(input string) []int {
 func formInt(r *http.Request, name string, fallback int) int {
 	value, err := strconv.Atoi(strings.TrimSpace(r.FormValue(name)))
 	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func formFloat(r *http.Request, name string, fallback float64) float64 {
+	value, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue(name)), 64)
+	if err != nil || value < 0 {
 		return fallback
 	}
 	return value
@@ -1006,6 +1028,14 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_disk_usage_percent gauge\n")
 	b.WriteString("# HELP watchssh_dns_probe_up Whether a DNS probe succeeded.\n")
 	b.WriteString("# TYPE watchssh_dns_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_tcp_probe_up Whether a TCP port probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_tcp_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_tcp_probe_latency_ms TCP port probe latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_tcp_probe_latency_ms gauge\n")
+	b.WriteString("# HELP watchssh_http_probe_up Whether an HTTP probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_http_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_http_probe_latency_ms HTTP probe latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_http_probe_latency_ms gauge\n")
 	b.WriteString("# HELP watchssh_dns_probe_latency_ms DNS probe latency in milliseconds.\n")
 	b.WriteString("# TYPE watchssh_dns_probe_latency_ms gauge\n")
 	b.WriteString("# HELP watchssh_tls_probe_up Whether a TLS probe succeeded.\n")
@@ -1016,6 +1046,12 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_traceroute_probe_up gauge\n")
 	b.WriteString("# HELP watchssh_traceroute_hops Observed traceroute hop count.\n")
 	b.WriteString("# TYPE watchssh_traceroute_hops gauge\n")
+	b.WriteString("# HELP watchssh_ntp_probe_up Whether an NTP probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_ntp_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_ntp_probe_latency_ms NTP probe latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_ntp_probe_latency_ms gauge\n")
+	b.WriteString("# HELP watchssh_ntp_offset_ms NTP clock offset in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_ntp_offset_ms gauge\n")
 	b.WriteString("# HELP watchssh_board_temperature_celsius Board temperature in Celsius for Raspberry Pi and compatible SBCs.\n")
 	b.WriteString("# TYPE watchssh_board_temperature_celsius gauge\n")
 	b.WriteString("# HELP watchssh_board_cpu_frequency_mhz Current board CPU frequency in MHz.\n")
@@ -1043,6 +1079,16 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			diskLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "mount": d.MountPoint, "device": d.Device})
 			fmt.Fprintf(&b, "watchssh_disk_usage_percent%s %.6f\n", diskLabels, d.UsagePercent)
 		}
+		for _, p := range m.Connectivity.Ports {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "port": strconv.Itoa(p.Port)})
+			fmt.Fprintf(&b, "watchssh_tcp_probe_up%s %d\n", probeLabels, boolGauge(p.Open))
+			fmt.Fprintf(&b, "watchssh_tcp_probe_latency_ms%s %.6f\n", probeLabels, p.LatencyMs)
+		}
+		for _, h := range m.Connectivity.HTTP {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "target": h.URL, "method": h.Method})
+			fmt.Fprintf(&b, "watchssh_http_probe_up%s %d\n", probeLabels, boolGauge(h.OK))
+			fmt.Fprintf(&b, "watchssh_http_probe_latency_ms%s %.6f\n", probeLabels, h.LatencyMs)
+		}
 		for _, d := range m.Connectivity.DNS {
 			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": d.Name, "target": d.Host, "type": d.Type, "resolver": d.Server})
 			fmt.Fprintf(&b, "watchssh_dns_probe_up%s %d\n", probeLabels, boolGauge(d.OK))
@@ -1059,6 +1105,12 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": t.Name, "target": t.Host})
 			fmt.Fprintf(&b, "watchssh_traceroute_probe_up%s %d\n", probeLabels, boolGauge(t.OK))
 			fmt.Fprintf(&b, "watchssh_traceroute_hops%s %d\n", probeLabels, t.Hops)
+		}
+		for _, n := range m.Connectivity.NTP {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": n.Name, "target": n.Host, "port": strconv.Itoa(n.Port), "stratum": strconv.Itoa(n.Stratum)})
+			fmt.Fprintf(&b, "watchssh_ntp_probe_up%s %d\n", probeLabels, boolGauge(n.OK))
+			fmt.Fprintf(&b, "watchssh_ntp_probe_latency_ms%s %.6f\n", probeLabels, n.LatencyMs)
+			fmt.Fprintf(&b, "watchssh_ntp_offset_ms%s %.6f\n", probeLabels, n.OffsetMs)
 		}
 		if m.Board != nil {
 			boardLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "model": m.Board.Model})
@@ -1261,6 +1313,26 @@ func serverStatus(m monitor.ServerMetrics) string {
 	}
 	for _, h := range m.Connectivity.HTTP {
 		if !h.OK {
+			return "warn"
+		}
+	}
+	for _, d := range m.Connectivity.DNS {
+		if !d.OK {
+			return "warn"
+		}
+	}
+	for _, t := range m.Connectivity.Traceroute {
+		if !t.OK {
+			return "warn"
+		}
+	}
+	for _, t := range m.Connectivity.TLS {
+		if !t.OK {
+			return "warn"
+		}
+	}
+	for _, n := range m.Connectivity.NTP {
+		if !n.OK {
 			return "warn"
 		}
 	}

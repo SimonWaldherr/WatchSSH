@@ -46,7 +46,9 @@ type PortCheck struct {
 // HTTPCheck configures an HTTP health check run from the monitoring machine.
 type HTTPCheck struct {
 	URL            string `yaml:"url"`
+	Method         string `yaml:"method"`          // GET (default), HEAD, or another HTTP method without a request body
 	ExpectedStatus int    `yaml:"expected_status"` // default 200
+	ExpectedBody   string `yaml:"expected_body"`   // optional substring required in the response body
 	Timeout        int    `yaml:"timeout"`         // seconds (default 10)
 }
 
@@ -77,6 +79,16 @@ type TLSCheck struct {
 	Timeout    int    `yaml:"timeout"`     // seconds (default 5)
 }
 
+// NTPCheck configures an SNTP time probe run from the monitoring machine.
+// MaxOffsetMs is optional; when set, larger clock offsets make the probe fail.
+type NTPCheck struct {
+	Name        string  `yaml:"name"`
+	Host        string  `yaml:"host"`
+	Port        int     `yaml:"port"`          // default 123
+	MaxOffsetMs float64 `yaml:"max_offset_ms"` // 0 disables offset validation
+	Timeout     int     `yaml:"timeout"`       // seconds (default 5)
+}
+
 // DockerConfig enables optional Docker container observability on Linux hosts.
 // When enabled, WatchSSH runs `docker ps` and `docker stats --no-stream` to
 // discover running containers and collect their resource usage. This feature
@@ -104,6 +116,7 @@ type Checks struct {
 	DNS    []DNSCheck        `yaml:"dns"`
 	Trace  []TracerouteCheck `yaml:"traceroute"`
 	TLS    []TLSCheck        `yaml:"tls"`
+	NTP    []NTPCheck        `yaml:"ntp"`
 	Custom []CustomCheck     `yaml:"custom"`
 }
 
@@ -173,9 +186,10 @@ type EmailConfig struct {
 type AlertRule struct {
 	Name string `yaml:"name"`
 	// Metric: cpu_usage, mem_usage, swap_usage, load1, load5, load15,
-	//         disk_usage, ping_latency, ping_failed, port_closed,
-	//         http_failed, dns_failed, dns_latency, traceroute_failed,
-	//         traceroute_hops, tls_failed, custom_failed.
+	//         disk_usage, ping_latency, ping_failed, port_closed, port_latency,
+	//         http_failed, http_latency, dns_failed, dns_latency,
+	//         traceroute_failed, traceroute_hops, tls_failed, ntp_failed,
+	//         ntp_latency, ntp_offset, custom_failed.
 	//         cert_expires_days, tls_cert_expires_days,
 	//         board_temperature, board_under_voltage, board_throttled,
 	//         board_wifi_rssi.
@@ -359,6 +373,9 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 		for j := range srv.Checks.HTTP {
+			if srv.Checks.HTTP[j].Method == "" {
+				srv.Checks.HTTP[j].Method = "GET"
+			}
 			if srv.Checks.HTTP[j].ExpectedStatus == 0 {
 				srv.Checks.HTTP[j].ExpectedStatus = 200
 			}
@@ -388,6 +405,14 @@ func applyDefaults(cfg *Config) {
 			}
 			if srv.Checks.TLS[j].Timeout == 0 {
 				srv.Checks.TLS[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.NTP {
+			if srv.Checks.NTP[j].Port == 0 {
+				srv.Checks.NTP[j].Port = 123
+			}
+			if srv.Checks.NTP[j].Timeout == 0 {
+				srv.Checks.NTP[j].Timeout = 5
 			}
 		}
 	}

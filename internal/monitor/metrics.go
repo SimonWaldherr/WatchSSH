@@ -160,21 +160,26 @@ type ConnectivityStats struct {
 	DNS         []DNSResult        `json:"dns,omitempty"`
 	Traceroute  []TracerouteResult `json:"traceroute,omitempty"`
 	TLS         []TLSResult        `json:"tls,omitempty"`
+	NTP         []NTPResult        `json:"ntp,omitempty"`
 }
 
 // PortResult holds the outcome of a single TCP port check.
 type PortResult struct {
-	Port int  `json:"port"`
-	Open bool `json:"open"`
+	Port      int     `json:"port"`
+	Open      bool    `json:"open"`
+	LatencyMs float64 `json:"latency_ms"`
+	Error     string  `json:"error,omitempty"`
 }
 
 // HTTPResult holds the outcome of a single HTTP health check.
 type HTTPResult struct {
 	URL             string   `json:"url"`
+	Method          string   `json:"method,omitempty"`
 	StatusCode      int      `json:"status_code"`
 	OK              bool     `json:"ok"`
 	LatencyMs       float64  `json:"latency_ms"`
 	CertExpiresDays *float64 `json:"cert_expires_days,omitempty"`
+	Error           string   `json:"error,omitempty"`
 }
 
 // DNSResult holds the outcome of a single DNS probe.
@@ -211,6 +216,18 @@ type TLSResult struct {
 	Issuer          string   `json:"issuer,omitempty"`
 	Subject         string   `json:"subject,omitempty"`
 	Error           string   `json:"error,omitempty"`
+}
+
+// NTPResult holds the outcome of an SNTP clock probe.
+type NTPResult struct {
+	Name      string  `json:"name,omitempty"`
+	Host      string  `json:"host"`
+	Port      int     `json:"port"`
+	OK        bool    `json:"ok"`
+	LatencyMs float64 `json:"latency_ms"`
+	OffsetMs  float64 `json:"offset_ms"`
+	Stratum   int     `json:"stratum"`
+	Error     string  `json:"error,omitempty"`
 }
 
 // CustomCheckResult holds the outcome of a custom SSH command check.

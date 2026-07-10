@@ -141,6 +141,9 @@ func TestAddServerWithProfileAndChecks(t *testing.T) {
 	form.Set("auth_credential", "~/.ssh/id_ed25519")
 	form.Set("tags", "edge")
 	form.Set("ports", "22")
+	form.Set("http_method", "HEAD")
+	form.Set("ntp_hosts", "time.example.com")
+	form.Set("ntp_max_offset_ms", "50")
 	form.Set("ping", "1")
 	form.Set("docker_enabled", "1")
 	req := httptest.NewRequest(http.MethodPost, "/servers/add", strings.NewReader(form.Encode()))
@@ -164,6 +167,9 @@ func TestAddServerWithProfileAndChecks(t *testing.T) {
 	}
 	if len(added.Checks.Ports) != 3 {
 		t.Fatalf("ports = %#v, want manual 22 plus profile 80/443", added.Checks.Ports)
+	}
+	if len(added.Checks.NTP) != 1 || added.Checks.NTP[0].Host != "time.example.com" || added.Checks.NTP[0].MaxOffsetMs != 50 {
+		t.Fatalf("NTP checks = %#v", added.Checks.NTP)
 	}
 	for _, want := range []string{"edge", "harp", "reverse-proxy"} {
 		if !containsString(added.Tags, want) {

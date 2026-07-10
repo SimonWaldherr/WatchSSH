@@ -130,7 +130,9 @@ servers:
 
       http:
         - url: https://web-01.example.com/health
+	          method: GET
           expected_status: 200
+	          expected_body: '"status":"ready"' # optional response substring
           timeout: 10
 
       dns:
@@ -152,6 +154,14 @@ servers:
           host: web-01.example.com
           port: 443
           server_name: web-01.example.com
+          timeout: 5
+
+      # SNTP time probe. The optional maximum offset turns clock drift into a failure.
+      ntp:
+        - name: cloudflare-time
+          host: time.cloudflare.com
+          port: 123
+          max_offset_ms: 100
           timeout: 5
 
       # Custom SSH command checks (run on the remote host via SSH).

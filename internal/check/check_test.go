@@ -1,7 +1,12 @@
 package check
 
 import (
+	"encoding/binary"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestParsePingAvgLinux(t *testing.T) {
@@ -63,6 +68,63 @@ func TestCheckHTTP(t *testing.T) {
 	r := CheckHTTP("http://127.0.0.1:19999/nonexistent", 200, 1)
 	if r.OK {
 		t.Error("expected HTTP check to fail for unreachable URL")
+	}
+}
+
+func TestCheckHTTPWithOptions(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("method = %q, want HEAD", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer ts.Close()
+
+	r := CheckHTTPWithOptions(ts.URL, http.MethodHead, http.StatusNoContent, "", 1)
+	if !r.OK || r.Method != http.MethodHead || r.StatusCode != http.StatusNoContent {
+		t.Fatalf("unexpected HTTP result: %+v", r)
+	}
+}
+
+func TestCheckHTTPWithExpectedBody(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ready"}`))
+	}))
+	defer ts.Close()
+
+	if r := CheckHTTPWithOptions(ts.URL, http.MethodGet, http.StatusOK, `"status":"ready"`, 1); !r.OK {
+		t.Fatalf("expected matching body result to succeed: %+v", r)
+	}
+	if r := CheckHTTPWithOptions(ts.URL, http.MethodGet, http.StatusOK, "missing", 1); r.OK {
+		t.Fatalf("expected mismatching body result to fail: %+v", r)
+	}
+}
+
+func TestCheckNTP(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	go func() {
+		request := make([]byte, 48)
+		n, addr, readErr := conn.ReadFromUDP(request)
+		if readErr != nil || n < 48 {
+			return
+		}
+		response := make([]byte, 48)
+		response[0] = 0x24 // version 4, server mode
+		response[1] = 2
+		now := time.Now().Add(2 * time.Millisecond)
+		binary.BigEndian.PutUint32(response[40:44], uint32(now.Unix()+ntpEpochOffset))
+		binary.BigEndian.PutUint32(response[44:48], uint32((uint64(now.Nanosecond())<<32)/1e9))
+		_, _ = conn.WriteToUDP(response, addr)
+	}()
+
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	r := CheckNTP("local-time", "127.0.0.1", port, 100, 1)
+	if !r.OK || r.Stratum != 2 || r.LatencyMs < 0 {
+		t.Fatalf("unexpected NTP result: %+v", r)
 	}
 }
 

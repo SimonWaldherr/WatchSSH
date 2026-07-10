@@ -235,10 +235,25 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return float64(p.Port), true
 			}
 		}
+	case "port_latency":
+		for _, p := range srv.Connectivity.Ports {
+			if rule.Port != 0 && p.Port != rule.Port {
+				continue
+			}
+			if cmp(p.LatencyMs, rule.Operator, rule.Threshold) {
+				return p.LatencyMs, true
+			}
+		}
 	case "http_failed":
 		for _, h := range srv.Connectivity.HTTP {
 			if !h.OK {
 				return float64(h.StatusCode), true
+			}
+		}
+	case "http_latency":
+		for _, h := range srv.Connectivity.HTTP {
+			if cmp(h.LatencyMs, rule.Operator, rule.Threshold) {
+				return h.LatencyMs, true
 			}
 		}
 	case "cert_expires_days":
@@ -288,6 +303,24 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 			}
 			if cmp(*t.CertExpiresDays, rule.Operator, rule.Threshold) {
 				return *t.CertExpiresDays, true
+			}
+		}
+	case "ntp_failed":
+		for _, n := range srv.Connectivity.NTP {
+			if !n.OK {
+				return 1, true
+			}
+		}
+	case "ntp_latency":
+		for _, n := range srv.Connectivity.NTP {
+			if cmp(n.LatencyMs, rule.Operator, rule.Threshold) {
+				return n.LatencyMs, true
+			}
+		}
+	case "ntp_offset":
+		for _, n := range srv.Connectivity.NTP {
+			if cmp(n.OffsetMs, rule.Operator, rule.Threshold) {
+				return n.OffsetMs, true
 			}
 		}
 	case "board_temperature":
