@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="WatchSSH monitors your SSH fleet from one place, using the standard tools already installed on each server.">
+    <title>WatchSSH | Agentless monitoring over SSH</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="WatchSSH home">
+        <span class="brand-mark" aria-hidden="true">W</span>
+        <span>WatchSSH</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#capabilities">Capabilities</a>
+        <a href="#probes">Probes</a>
+        <a href="#platforms">Platforms</a>
+      </nav>
+      <a class="header-link" href="https://github.com/SimonWaldherr/WatchSSH">GitHub</a>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-content">
+          <p class="eyebrow">Open-source infrastructure monitoring</p>
+          <h1 id="hero-title">WatchSSH</h1>
+          <p class="hero-lead">Monitor your SSH fleet. Install nothing on the servers.</p>
+          <p class="hero-copy">WatchSSH runs centrally, connects to many targets over SSH, executes core system tools already available on each host, and turns their output into useful operational signal.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/SimonWaldherr/WatchSSH">Explore on GitHub</a>
+            <a class="button button-secondary" href="https://github.com/SimonWaldherr/WatchSSH#quick-start">Quick start</a>
+          </div>
+          <p class="hero-command"><code>go run .</code><span>Starts the dashboard on <code>localhost:8080</code></span></p>
+        </div>
+      </section>
+
+      <section class="signal-bar" aria-label="WatchSSH highlights">
+        <p><strong>Zero agents</strong><span>Nothing to install on targets</span></p>
+        <p><strong>One monitor</strong><span>Connect to many SSH servers</span></p>
+        <p><strong>Native tools</strong><span>Use the utilities hosts already have</span></p>
+        <p><strong>Cross-platform</strong><span>Linux, macOS, BSD, Windows</span></p>
+      </section>
+
+      <section id="capabilities" class="section intro">
+        <div class="section-heading">
+          <p class="eyebrow">One process, many targets</p>
+          <h2>Monitor the fleet without modifying the fleet.</h2>
+        </div>
+        <p class="section-copy">Point one WatchSSH process at the servers you already manage. It reuses SSH access, runs familiar operating-system utilities remotely, and gathers host telemetry without an agent, daemon, or package rollout on every target.</p>
+      </section>
+
+      <section class="section capabilities" aria-label="WatchSSH capabilities">
+        <article>
+          <span class="feature-index">01</span>
+          <h3>Collect over SSH</h3>
+          <p>WatchSSH connects to each configured server and runs core system utilities, including coreutils and platform equivalents, to collect CPU, memory, disks, load, processes, users, and network counters.</p>
+        </article>
+        <article>
+          <span class="feature-index">02</span>
+          <h3>No target-side rollout</h3>
+          <p>No agent process, service unit, package, or database needs to live on the monitored server. SSH is the only required transport.</p>
+        </article>
+        <article>
+          <span class="feature-index">03</span>
+          <h3>See the wider picture</h3>
+          <p>Add Docker metrics, external probes, a built-in dashboard, tinySQL history, Prometheus export, email alerts, and guarded actions.</p>
+        </article>
+      </section>
+
+      <section id="probes" class="section probe-section">
+        <div class="section-heading">
+          <p class="eyebrow">Probe from the monitoring host</p>
+          <h2>Measure more than SSH availability.</h2>
+        </div>
+        <div class="probe-layout">
+          <div class="probe-copy">
+            <p>External probes are repeatable, alertable, and included in the JSON and Prometheus outputs. Use them to distinguish an unreachable host from a broken service, resolver, route, certificate, or clock.</p>
+            <a class="text-link" href="https://github.com/SimonWaldherr/WatchSSH#network-probes">Read the probe reference <span aria-hidden="true">→</span></a>
+          </div>
+          <dl class="probe-list">
+            <div><dt>ICMP</dt><dd>Reachability and average latency</dd></div>
+            <div><dt>TCP</dt><dd>Port state, connection latency, error detail</dd></div>
+            <div><dt>HTTP</dt><dd>Method, status, body match, response time</dd></div>
+            <div><dt>DNS</dt><dd>A, AAAA, CNAME, MX, TXT, and expected answers</dd></div>
+            <div><dt>TLS</dt><dd>Handshake, certificate identity, and expiry</dd></div>
+            <div><dt>NTP</dt><dd>Stratum, latency, and clock offset</dd></div>
+            <div><dt>Trace</dt><dd>Path reachability and observed hop count</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <section id="platforms" class="section platform-section">
+        <div class="platform-content">
+          <p class="eyebrow">A useful fit for mixed fleets</p>
+          <h2>From cloud instances to the small machines that run the edge.</h2>
+          <p>WatchSSH selects platform-aware collectors for Linux, macOS, FreeBSD, OpenBSD, NetBSD, generic Unix, and Windows over OpenSSH. It relies on familiar built-in tools and conservative fallbacks rather than a target-side agent. Raspberry Pi and compatible SBCs add board temperature, CPU frequency, Wi-Fi RSSI, throttling, and under-voltage diagnostics.</p>
+          <div class="platform-tags" aria-label="Supported operating systems">
+            <span>Linux</span><span>macOS</span><span>FreeBSD</span><span>OpenBSD</span><span>NetBSD</span><span>Windows</span><span>Raspberry Pi</span>
+          </div>
+        </div>
+        <aside class="configuration-example" aria-label="Configuration example">
+          <div class="window-bar"><span></span><span></span><span></span><b>config.yaml</b></div>
+          <pre><code>servers:
+  - name: edge-pi
+    host: 10.0.0.42
+    tags: [edge, raspberry-pi]
+    checks:
+      http:
+        - url: https://edge.example/health
+          expected_status: 200
+      ntp:
+        - host: time.cloudflare.com
+          max_offset_ms: 100</code></pre>
+        </aside>
+      </section>
+
+      <section class="section workflow-section">
+        <div class="section-heading">
+          <p class="eyebrow">A direct operating model</p>
+          <h2>Configure, observe, export.</h2>
+        </div>
+        <ol class="workflow">
+          <li><span>1</span><div><h3>List your servers</h3><p>Declare hosts and reuse their existing SSH access with strict host key verification.</p></div></li>
+          <li><span>2</span><div><h3>Collect remotely</h3><p>WatchSSH runs standard utilities on each target and gathers the metrics centrally.</p></div></li>
+          <li><span>3</span><div><h3>Act on signal</h3><p>Use the dashboard, history, Prometheus endpoint, email, or a guarded action.</p></div></li>
+        </ol>
+      </section>
+
+      <section class="closing">
+        <div>
+          <p class="eyebrow">WatchSSH</p>
+          <h2>Start monitoring with the SSH access you already have.</h2>
+        </div>
+        <a class="button button-primary" href="https://github.com/SimonWaldherr/WatchSSH">Get WatchSSH on GitHub</a>
+      </section>
+    </main>
+
+    <footer>
+      <span>WatchSSH is open source.</span>
+      <a href="https://github.com/SimonWaldherr/WatchSSH">github.com/SimonWaldherr/WatchSSH</a>
+    </footer>
+  </body>
+</html>
