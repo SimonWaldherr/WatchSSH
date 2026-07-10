@@ -183,6 +183,40 @@ For a single collection cycle:
 ./watchssh -config config.yaml -once
 ```
 
+### First Two Servers
+
+WatchSSH runs from one monitoring machine and connects to each target over the
+SSH access you already use. Start with a dedicated, non-root `monitor` account
+and a verified `known_hosts` file:
+
+```yaml
+interval: 60
+timeout: 20
+workers: 5
+known_hosts_path: /etc/watchssh/known_hosts
+
+servers:
+  - name: app-01
+    host: 10.20.0.11
+    username: monitor
+    auth:
+      type: key
+      key_file: /etc/watchssh/id_ed25519
+    tags: [production, application]
+
+  - name: db-01
+    host: 10.20.0.12
+    username: monitor
+    auth:
+      type: key
+      key_file: /etc/watchssh/id_ed25519
+    tags: [production, database]
+```
+
+No WatchSSH package, service, daemon, or agent is installed on `app-01` or
+`db-01`. WatchSSH uses standard tools already present on the selected platform
+and reports unsupported metrics explicitly instead of guessing.
+
 For a targeted single cycle (only matching servers and tags):
 
 ```bash
@@ -278,6 +312,65 @@ WatchSSH supports three authentication methods:
    listed below. Use `sudo` restrictions or dedicated paths if needed.
 5. **Keep known_hosts up to date** — Rotate host keys when servers are
    reprovisioned.
+
+### Small-Team Deployment
+
+For a small or medium-sized organization, run one WatchSSH instance on a
+managed internal Linux host or VM. Keep its configuration, SSH key, history,
+and logs in dedicated directories owned by a non-login `watchssh` user. Set a
+bounded `workers` value so an expanding fleet cannot exhaust the monitoring
+host or the targets' SSH connection limits.
+
+Use a reverse proxy with TLS and your existing identity provider when the
+dashboard is used by multiple people. For a compact internal deployment,
+WatchSSH can also protect the dashboard, JSON APIs, and Prometheus endpoint
+with bcrypt-backed HTTP Basic Authentication:
+
+```bash
+# Prompts for a password and prints: ops:$2y$12$...
+htpasswd -nBC 12 ops
+```
+
+```yaml
+web:
+  enabled: true
+  listen: "127.0.0.1:8080"
+  auth:
+    username: ops
+    password_hash: "$2y$12$copy-only-the-hash-after-ops:"
+```
+
+`/healthz` and `/readyz` stay public for service managers and load balancers.
+Everything else under the dashboard listener, including `/metrics`, requires
+authentication. Keep the listener on loopback when a reverse proxy terminates
+TLS; otherwise bind it only to a protected internal network.
+
+An example Linux service unit is included at
+[`deploy/systemd/watchssh.service`](deploy/systemd/watchssh.service):
+
+```ini
+[Unit]
+Description=WatchSSH agentless monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=watchssh
+Group=watchssh
+Environment=HOME=/var/lib/watchssh
+ExecStart=/usr/local/bin/watchssh -config /etc/watchssh/config.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/watchssh
+ReadWritePaths=/var/lib/watchssh
+
+[Install]
+WantedBy=multi-user.target
+```
 
 Commands run on target hosts:
 
@@ -497,10 +590,12 @@ Enable the built-in web UI:
 ```yaml
 web:
   enabled: true
-  listen: ":8080"
+  listen: "127.0.0.1:8080"
 ```
 
-Then open `http://localhost:8080` in your browser.
+Then open `http://localhost:8080` in your browser. Use `web.auth` or a TLS
+terminating reverse proxy before exposing the dashboard beyond a trusted local
+network. Set `web.enabled: false` to run WatchSSH without an HTTP listener.
 
 If your config has an empty `servers:` list, the UI and CLI still show a
 temporary `localhost` diagnostic target so you can inspect the host running

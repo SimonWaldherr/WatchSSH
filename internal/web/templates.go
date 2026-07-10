@@ -1063,7 +1063,7 @@ const allTemplates = `
 
   <div class="form-wrap">
     <h3>Web Dashboard</h3>
-    <p style="font-size:.82rem;color:#888;margin:0 0 .75rem">Changes to the listen address require a restart to take effect.</p>
+    <p style="font-size:.82rem;color:#888;margin:0 0 .75rem">Changes to the listen address require a restart to take effect. For shared access, configure <code>web.auth</code> with a bcrypt password hash in YAML or place the dashboard behind an authenticated TLS reverse proxy.</p>
     <div class="form-row">
       <div>
         <label>Enable Web Dashboard</label>

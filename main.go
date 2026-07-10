@@ -93,19 +93,21 @@ func main() {
 		return
 	}
 
-	// Always start the web UI — it includes the configuration editor so the
-	// user can set up WatchSSH even when no config file exists yet.
-	webListen := cfg.Web.Listen
-	if webListen == "" {
-		webListen = ":8080"
-	}
-	webSrv := web.NewServer(state, webListen, historyStore)
-	go func() {
-		if err := webSrv.Start(); err != nil {
-			log.Printf("Web server stopped: %v", err)
+	if cfg.Web.Enabled {
+		webListen := cfg.Web.Listen
+		if webListen == "" {
+			webListen = ":8080"
 		}
-	}()
-	log.Printf("Web dashboard available at http://%s", webListen)
+		webSrv := web.NewServer(state, webListen, historyStore)
+		go func() {
+			if err := webSrv.Start(); err != nil {
+				log.Printf("Web server stopped: %v", err)
+			}
+		}()
+		log.Printf("Web dashboard available at http://%s", webListen)
+	} else {
+		log.Printf("Web dashboard disabled by configuration")
+	}
 
 	if len(cfg.Servers) > 0 {
 		log.Printf("Polling every %ds", cfg.Interval)

@@ -1,0 +1,22 @@
+[Unit]
+Description=WatchSSH agentless monitoring
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=watchssh
+Group=watchssh
+Environment=HOME=/var/lib/watchssh
+ExecStart=/usr/local/bin/watchssh -config /etc/watchssh/config.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/etc/watchssh
+ReadWritePaths=/var/lib/watchssh
+
+[Install]
+WantedBy=multi-user.target

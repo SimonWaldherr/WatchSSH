@@ -83,7 +83,16 @@ storage:
 
 web:
   enabled: false
+  # Bind to loopback when a reverse proxy terminates TLS in front of WatchSSH.
+  # listen: "127.0.0.1:8080"
   listen: ":8080"    # TCP address and port to listen on
+
+  # Optional protection for the dashboard, JSON APIs, and /metrics.
+  # Keep healthz and readyz public for service managers and load balancers.
+  # Generate a bcrypt value interactively with: htpasswd -nBC 12 ops
+  # auth:
+  #   username: ops
+  #   password_hash: "$2y$12$replace-with-the-hash-after-ops:"
 
 
 # -----------------------------------------------------------------------------
@@ -130,9 +139,9 @@ servers:
 
       http:
         - url: https://web-01.example.com/health
-	          method: GET
+          method: GET
           expected_status: 200
-	          expected_body: '"status":"ready"' # optional response substring
+          expected_body: '"status":"ready"' # optional response substring
           timeout: 10
 
       dns:

@@ -13,6 +13,7 @@ import (
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
 	"github.com/SimonWaldherr/WatchSSH/internal/history"
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestHealthz(t *testing.T) {
@@ -28,6 +29,49 @@ func TestHealthz(t *testing.T) {
 	}
 	if got := rec.Body.String(); got != "ok\n" {
 		t.Fatalf("body = %q, want %q", got, "ok\n")
+	}
+}
+
+func TestDashboardAuthentication(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct horse battery staple"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := NewState(&config.Config{Web: config.WebConfig{Auth: &config.WebAuthConfig{
+		Username:     "ops",
+		PasswordHash: string(hash),
+	}}}, "")
+	srv := NewServer(state, ":0")
+
+	unauthenticated := httptest.NewRequest(http.MethodGet, "/", nil)
+	unauthenticatedRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(unauthenticatedRecorder, unauthenticated)
+	if unauthenticatedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated dashboard status = %d, want %d", unauthenticatedRecorder.Code, http.StatusUnauthorized)
+	}
+	if got := unauthenticatedRecorder.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options = %q, want DENY", got)
+	}
+	if got := unauthenticatedRecorder.Header().Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") {
+		t.Fatalf("Content-Security-Policy = %q, missing frame-ancestors", got)
+	}
+	if got := unauthenticatedRecorder.Header().Get("WWW-Authenticate"); !strings.Contains(got, "Basic") {
+		t.Fatalf("WWW-Authenticate = %q, want Basic challenge", got)
+	}
+
+	health := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(healthRecorder, health)
+	if healthRecorder.Code != http.StatusOK {
+		t.Fatalf("public health status = %d, want %d", healthRecorder.Code, http.StatusOK)
+	}
+
+	authenticated := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	authenticated.SetBasicAuth("ops", "correct horse battery staple")
+	authenticatedRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(authenticatedRecorder, authenticated)
+	if authenticatedRecorder.Code != http.StatusOK {
+		t.Fatalf("authenticated API status = %d, want %d", authenticatedRecorder.Code, http.StatusOK)
 	}
 }
 

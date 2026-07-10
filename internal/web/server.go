@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -17,6 +19,7 @@ import (
 	"github.com/SimonWaldherr/WatchSSH/internal/history"
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
 	sshclient "github.com/SimonWaldherr/WatchSSH/internal/ssh"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // funcMap provides helper functions available inside all HTML templates.
@@ -93,7 +96,52 @@ func NewServer(state *State, listen string, stores ...history.Store) *Server {
 // Start listens on s.listen. It blocks until the server stops or an error occurs.
 func (s *Server) Start() error {
 	log.Printf("Web dashboard at http://%s", s.listen)
-	return http.ListenAndServe(s.listen, s.mux) //nolint:gosec
+	return http.ListenAndServe(s.listen, s.Handler()) //nolint:gosec
+}
+
+// Handler returns the dashboard HTTP handler, including optional authentication.
+// Health endpoints remain public so service managers can perform liveness checks.
+func (s *Server) Handler() http.Handler {
+	return s.securityHeadersMiddleware(s.authMiddleware(s.mux))
+}
+
+func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
+		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		auth := s.state.Config().Web.Auth
+		if auth == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		username, password, ok := r.BasicAuth()
+		if ok && secureStringEqual(username, auth.Username) && bcrypt.CompareHashAndPassword([]byte(auth.PasswordHash), []byte(password)) == nil {
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("WWW-Authenticate", `Basic realm="WatchSSH", charset="UTF-8"`)
+		http.Error(w, "authentication required", http.StatusUnauthorized)
+	})
+}
+
+func secureStringEqual(a, b string) bool {
+	left := sha256.Sum256([]byte(a))
+	right := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(left[:], right[:]) == 1
 }
 
 type capabilityRow struct {

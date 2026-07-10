@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func writeConfig(t *testing.T, content string) string {
@@ -46,6 +47,36 @@ servers:
 	}
 	if cfg.Servers[0].Name != "192.168.1.1" {
 		t.Errorf("Name = %q, want %q", cfg.Servers[0].Name, "192.168.1.1")
+	}
+}
+
+func TestLoad_WebAuth(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, "web:\n  auth:\n    username: ops\n    password_hash: "+string(hash)+"\nservers:\n  - host: 192.0.2.10\n    username: monitor\n")
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Web.Auth == nil || cfg.Web.Auth.Username != "ops" {
+		t.Fatalf("Web.Auth = %#v, want configured credentials", cfg.Web.Auth)
+	}
+}
+
+func TestLoad_WebAuthRejectsInvalidHash(t *testing.T) {
+	path := writeConfig(t, `
+web:
+  auth:
+    username: ops
+    password_hash: not-a-bcrypt-hash
+servers:
+  - host: 192.0.2.10
+    username: monitor
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected invalid web auth hash to be rejected")
 	}
 }
 

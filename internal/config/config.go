@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -164,10 +165,19 @@ type StorageConfig struct {
 	MaxSizeMB int `yaml:"max_size_mb"`
 }
 
+// WebAuthConfig protects the dashboard, APIs, and Prometheus endpoint with
+// HTTP Basic Authentication. PasswordHash must be a bcrypt hash, never a
+// plaintext password. Liveness and readiness endpoints remain unauthenticated.
+type WebAuthConfig struct {
+	Username     string `yaml:"username"`
+	PasswordHash string `yaml:"password_hash"`
+}
+
 // WebConfig configures the built-in HTTP monitoring dashboard.
 type WebConfig struct {
-	Enabled bool   `yaml:"enabled"`
-	Listen  string `yaml:"listen"` // TCP address, default ":8080"
+	Enabled bool           `yaml:"enabled"`
+	Listen  string         `yaml:"listen"` // TCP address, default ":8080"
+	Auth    *WebAuthConfig `yaml:"auth"`
 }
 
 // EmailConfig holds SMTP settings for alert delivery.
@@ -432,6 +442,17 @@ func validate(cfg *Config) error {
 	}
 	if cfg.Storage.MaxSizeMB < 0 {
 		return fmt.Errorf("storage.max_size_mb must be >= 0")
+	}
+	if cfg.Web.Auth != nil {
+		if strings.TrimSpace(cfg.Web.Auth.Username) == "" {
+			return fmt.Errorf("web.auth.username is required when web.auth is set")
+		}
+		if strings.TrimSpace(cfg.Web.Auth.PasswordHash) == "" {
+			return fmt.Errorf("web.auth.password_hash is required when web.auth is set")
+		}
+		if _, err := bcrypt.Cost([]byte(cfg.Web.Auth.PasswordHash)); err != nil {
+			return fmt.Errorf("web.auth.password_hash must be a valid bcrypt hash: %w", err)
+		}
 	}
 	for i, srv := range cfg.Servers {
 		if srv.Local {
