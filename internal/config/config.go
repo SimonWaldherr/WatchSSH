@@ -17,18 +17,59 @@ type AuthType string
 const (
 	// AuthTypeKey uses a private key file (default).
 	AuthTypeKey AuthType = "key"
-	// AuthTypePassword uses a plaintext password.
+	// AuthTypePassword uses a password supplied inline or from a secret source.
 	AuthTypePassword AuthType = "password"
+	// AuthTypeKeyboardInteractive answers SSH keyboard-interactive prompts with a password.
+	AuthTypeKeyboardInteractive AuthType = "keyboard-interactive"
 	// AuthTypeAgent delegates to the SSH agent via SSH_AUTH_SOCK.
 	AuthTypeAgent AuthType = "agent"
 )
 
+// SecretSource resolves sensitive material without storing it in config.yaml.
+// Exactly one source may be set. File values have one trailing line ending
+// removed; environment and Vault values are used verbatim.
+type SecretSource struct {
+	Env     string         `yaml:"env"`
+	File    string         `yaml:"file"`
+	VaultKV *VaultKVSource `yaml:"vault_kv"`
+}
+
+// VaultKVSource identifies one field in a HashiCorp Vault KV secret.
+// Version defaults to the global Vault configuration (and then KV v2).
+type VaultKVSource struct {
+	Mount   string `yaml:"mount"`
+	Path    string `yaml:"path"`
+	Field   string `yaml:"field"`
+	Version int    `yaml:"version"`
+}
+
+// VaultConfig configures the shared HashiCorp Vault connection used by
+// VaultKV secret sources. Tokens are supplied from a file or environment
+// variable, never as plaintext YAML.
+type VaultConfig struct {
+	Address   string `yaml:"address"`
+	TokenEnv  string `yaml:"token_env"`
+	TokenFile string `yaml:"token_file"`
+	Namespace string `yaml:"namespace"`
+	KVVersion int    `yaml:"kv_version"` // default 2; supports 1 and 2
+}
+
+// SecretsConfig configures secret backends shared by server authentication.
+type SecretsConfig struct {
+	Vault *VaultConfig `yaml:"vault"`
+}
+
 // Auth holds authentication configuration for a server.
 type Auth struct {
-	Type       AuthType `yaml:"type"`
-	KeyFile    string   `yaml:"key_file"`
-	Passphrase string   `yaml:"passphrase"`
-	Password   string   `yaml:"password"`
+	Type             AuthType     `yaml:"type"`
+	KeyFile          string       `yaml:"key_file"`
+	PrivateKey       SecretSource `yaml:"private_key"`
+	Passphrase       string       `yaml:"passphrase"`
+	PassphraseSource SecretSource `yaml:"passphrase_source"`
+	CertificateFile  string       `yaml:"certificate_file"`
+	Certificate      SecretSource `yaml:"certificate"`
+	Password         string       `yaml:"password"`
+	PasswordSource   SecretSource `yaml:"password_source"`
 }
 
 // PingCheck configures a ping connectivity test run from the monitoring machine.
@@ -215,9 +256,36 @@ type AlertRule struct {
 	Servers []string `yaml:"servers"`
 }
 
+// WebhookConfig defines one outbound HTTP alert integration. HeaderEnv maps
+// header names to environment-variable names so API tokens do not need to be
+// stored in YAML. BodyTemplate is an optional Go text/template; it receives
+// Route, Alerts, Summary, and FiredAt, and provides a json helper function.
+type WebhookConfig struct {
+	URL          string            `yaml:"url"`
+	URLEnv       string            `yaml:"url_env"`
+	Method       string            `yaml:"method"` // default POST
+	Headers      map[string]string `yaml:"headers"`
+	HeaderEnv    map[string]string `yaml:"header_env"`
+	BodyTemplate string            `yaml:"body_template"`
+	Timeout      int               `yaml:"timeout"` // seconds, default 10
+}
+
+// AlertRoute sends matching alert firings to one webhook. All match fields are
+// optional; an empty route matches every firing. Continue permits later routes
+// to receive the same firing, enabling explicit fan-out or escalation chains.
+type AlertRoute struct {
+	Name     string        `yaml:"name"`
+	Rules    []string      `yaml:"rules"`
+	Metrics  []string      `yaml:"metrics"`
+	Servers  []string      `yaml:"servers"`
+	Continue bool          `yaml:"continue"`
+	Webhook  WebhookConfig `yaml:"webhook"`
+}
+
 // AlertsConfig holds all alerting configuration.
 type AlertsConfig struct {
 	Rules  []AlertRule        `yaml:"rules"`
+	Routes []AlertRoute       `yaml:"routes"`
 	Email  *EmailConfig       `yaml:"email"`
 	Action *AlertActionConfig `yaml:"action"`
 	// Cooldown is the minimum number of seconds between repeated alerts for
@@ -259,6 +327,7 @@ type Config struct {
 	Output  Output        `yaml:"output"`
 	Storage StorageConfig `yaml:"storage"`
 	Web     WebConfig     `yaml:"web"`
+	Secrets SecretsConfig `yaml:"secrets"`
 	Alerts  AlertsConfig  `yaml:"alerts"`
 }
 
@@ -346,6 +415,14 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Alerts.Action != nil && cfg.Alerts.Action.Timeout <= 0 {
 		cfg.Alerts.Action.Timeout = 10
+	}
+	for i := range cfg.Alerts.Routes {
+		if cfg.Alerts.Routes[i].Webhook.Method == "" {
+			cfg.Alerts.Routes[i].Webhook.Method = "POST"
+		}
+		if cfg.Alerts.Routes[i].Webhook.Timeout == 0 {
+			cfg.Alerts.Routes[i].Webhook.Timeout = 10
+		}
 	}
 	if cfg.Alerts.Email != nil {
 		if cfg.Alerts.Email.SMTPPort == 0 {
@@ -454,6 +531,9 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("web.auth.password_hash must be a valid bcrypt hash: %w", err)
 		}
 	}
+	if err := validateVaultConfig(cfg.Secrets.Vault); err != nil {
+		return err
+	}
 	for i, srv := range cfg.Servers {
 		if srv.Local {
 			continue // local servers don't need host/username
@@ -463,6 +543,9 @@ func validate(cfg *Config) error {
 		}
 		if srv.Username == "" {
 			return fmt.Errorf("server[%d] (%q): username is required", i, srv.Name)
+		}
+		if err := validateAuth(srv.Auth, cfg.Secrets.Vault); err != nil {
+			return fmt.Errorf("server[%d] (%q): auth: %w", i, srv.Name, err)
 		}
 	}
 	if cfg.Alerts.Action != nil {
@@ -480,7 +563,121 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("alerts.action.command executable %q is not in alerts.action.allowed_executables", parts[0])
 		}
 	}
+	if err := validateAlertRoutes(cfg.Alerts.Routes); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateAlertRoutes(routes []AlertRoute) error {
+	names := make(map[string]struct{}, len(routes))
+	for i, route := range routes {
+		name := strings.TrimSpace(route.Name)
+		if name == "" {
+			return fmt.Errorf("alerts.routes[%d].name is required", i)
+		}
+		if _, exists := names[name]; exists {
+			return fmt.Errorf("alerts.routes[%d].name %q is duplicated", i, name)
+		}
+		names[name] = struct{}{}
+		if (strings.TrimSpace(route.Webhook.URL) == "") == (strings.TrimSpace(route.Webhook.URLEnv) == "") {
+			return fmt.Errorf("alerts.routes[%d].webhook requires exactly one of url or url_env", i)
+		}
+		if route.Webhook.Timeout < 0 {
+			return fmt.Errorf("alerts.routes[%d].webhook.timeout must be >= 0", i)
+		}
+		for header, env := range route.Webhook.HeaderEnv {
+			if strings.TrimSpace(header) == "" || strings.TrimSpace(env) == "" {
+				return fmt.Errorf("alerts.routes[%d].webhook.header_env requires header names and environment variables", i)
+			}
+		}
+	}
+	return nil
+}
+
+func validateVaultConfig(vault *VaultConfig) error {
+	if vault == nil {
+		return nil
+	}
+	if strings.TrimSpace(vault.Address) == "" {
+		return fmt.Errorf("secrets.vault.address is required when secrets.vault is set")
+	}
+	if (strings.TrimSpace(vault.TokenEnv) == "") == (strings.TrimSpace(vault.TokenFile) == "") {
+		return fmt.Errorf("secrets.vault requires exactly one of token_env or token_file")
+	}
+	if vault.KVVersion != 0 && vault.KVVersion != 1 && vault.KVVersion != 2 {
+		return fmt.Errorf("secrets.vault.kv_version must be 1 or 2")
+	}
+	return nil
+}
+
+func validateAuth(auth Auth, vault *VaultConfig) error {
+	switch auth.Type {
+	case "", AuthTypeKey, AuthTypePassword, AuthTypeKeyboardInteractive, AuthTypeAgent:
+	default:
+		return fmt.Errorf("unsupported type %q", auth.Type)
+	}
+	if err := validateSecretSource("private_key", auth.PrivateKey, vault); err != nil {
+		return err
+	}
+	if err := validateSecretSource("passphrase_source", auth.PassphraseSource, vault); err != nil {
+		return err
+	}
+	if err := validateSecretSource("certificate", auth.Certificate, vault); err != nil {
+		return err
+	}
+	if err := validateSecretSource("password_source", auth.PasswordSource, vault); err != nil {
+		return err
+	}
+	if auth.Type == AuthTypeAgent && (auth.KeyFile != "" || secretSourceConfigured(auth.PrivateKey) || auth.CertificateFile != "" || secretSourceConfigured(auth.Certificate) || auth.Password != "" || secretSourceConfigured(auth.PasswordSource)) {
+		return fmt.Errorf("agent authentication cannot combine key, certificate, or password credentials")
+	}
+	if (auth.Type == AuthTypePassword || auth.Type == AuthTypeKeyboardInteractive) && strings.TrimSpace(auth.Password) == "" && !secretSourceConfigured(auth.PasswordSource) {
+		return fmt.Errorf("password or password_source is required for %s authentication", auth.Type)
+	}
+	if auth.Password != "" && secretSourceConfigured(auth.PasswordSource) {
+		return fmt.Errorf("password and password_source cannot both be configured")
+	}
+	if auth.Passphrase != "" && secretSourceConfigured(auth.PassphraseSource) {
+		return fmt.Errorf("passphrase and passphrase_source cannot both be configured")
+	}
+	if (auth.Type == "" || auth.Type == AuthTypeKey) && auth.KeyFile != "" && secretSourceConfigured(auth.PrivateKey) {
+		return fmt.Errorf("key_file and private_key cannot both be configured")
+	}
+	if auth.CertificateFile != "" && secretSourceConfigured(auth.Certificate) {
+		return fmt.Errorf("certificate_file and certificate cannot both be configured")
+	}
+	return nil
+}
+
+func validateSecretSource(name string, source SecretSource, vault *VaultConfig) error {
+	count := 0
+	if strings.TrimSpace(source.Env) != "" {
+		count++
+	}
+	if strings.TrimSpace(source.File) != "" {
+		count++
+	}
+	if source.VaultKV != nil {
+		count++
+		if vault == nil {
+			return fmt.Errorf("%s.vault_kv requires secrets.vault", name)
+		}
+		if strings.TrimSpace(source.VaultKV.Mount) == "" || strings.TrimSpace(source.VaultKV.Path) == "" || strings.TrimSpace(source.VaultKV.Field) == "" {
+			return fmt.Errorf("%s.vault_kv requires mount, path, and field", name)
+		}
+		if source.VaultKV.Version != 0 && source.VaultKV.Version != 1 && source.VaultKV.Version != 2 {
+			return fmt.Errorf("%s.vault_kv.version must be 1 or 2", name)
+		}
+	}
+	if count > 1 {
+		return fmt.Errorf("%s must configure only one of env, file, or vault_kv", name)
+	}
+	return nil
+}
+
+func secretSourceConfigured(source SecretSource) bool {
+	return strings.TrimSpace(source.Env) != "" || strings.TrimSpace(source.File) != "" || source.VaultKV != nil
 }
 
 func isAllowedExecutable(executable string, allowed []string) bool {

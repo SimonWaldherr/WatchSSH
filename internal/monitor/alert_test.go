@@ -1,6 +1,10 @@
 package monitor
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -375,5 +379,77 @@ func TestRunAlertAction_EmptyFiringsNoop(t *testing.T) {
 	}, nil)
 	if err != nil {
 		t.Fatalf("expected nil error for empty firings, got %v", err)
+	}
+}
+
+func TestSendAlertRoutes(t *testing.T) {
+	var received webhookPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	t.Setenv("WATCHSSH_WEBHOOK_TOKEN", "Bearer test-token")
+
+	firings := []Firing{{RuleName: "HighCPU", Metric: "cpu_usage", Server: "app-01", FiredAt: time.Now()}}
+	err := SendAlertRoutes([]config.AlertRoute{{
+		Name:    "primary",
+		Metrics: []string{"cpu_usage"},
+		Webhook: config.WebhookConfig{
+			URL:       server.URL,
+			Method:    http.MethodPost,
+			Timeout:   1,
+			HeaderEnv: map[string]string{"Authorization": "WATCHSSH_WEBHOOK_TOKEN"},
+		},
+	}}, firings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if received.Route != "primary" || len(received.Alerts) != 1 || received.Alerts[0].Server != "app-01" {
+		t.Fatalf("received payload = %#v", received)
+	}
+}
+
+func TestWebhookBodyTemplate(t *testing.T) {
+	body, err := webhookBody(`{"text": {{json .Summary}}, "count": {{json .Alerts}}}`, webhookPayload{
+		Summary: "High CPU",
+		Alerts:  []Firing{{Server: "app-01"}},
+	})
+	if err != nil || !json.Valid(body) {
+		t.Fatalf("body = %s, err = %v", body, err)
+	}
+}
+
+func TestSendAlertRoutesContinue(t *testing.T) {
+	var primaryCalls atomic.Int32
+	var escalationCalls atomic.Int32
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		primaryCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer primary.Close()
+	escalation := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		escalationCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer escalation.Close()
+
+	err := SendAlertRoutes([]config.AlertRoute{
+		{Name: "primary", Continue: true, Webhook: config.WebhookConfig{URL: primary.URL}},
+		{Name: "escalation", Webhook: config.WebhookConfig{URL: escalation.URL}},
+	}, []Firing{{RuleName: "HighCPU", Metric: "cpu_usage", Server: "app-01", FiredAt: time.Now()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if primaryCalls.Load() != 1 || escalationCalls.Load() != 1 {
+		t.Fatalf("route calls = primary:%d escalation:%d, want 1:1", primaryCalls.Load(), escalationCalls.Load())
 	}
 }

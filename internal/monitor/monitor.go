@@ -164,6 +164,11 @@ func (m *Monitor) collect() {
 			log.Printf("alert action: %v", err)
 		}
 	}
+	if len(firings) > 0 && len(cfg.Alerts.Routes) > 0 {
+		if err := SendAlertRoutes(cfg.Alerts.Routes, firings); err != nil {
+			log.Printf("alert webhook: %v", err)
+		}
+	}
 	if err := m.recordHistory(cfg, results, firings); err != nil {
 		log.Printf("history store: %v", err)
 	}

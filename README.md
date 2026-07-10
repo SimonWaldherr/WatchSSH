@@ -299,7 +299,54 @@ WatchSSH supports three authentication methods:
 |--------|--------|-------|
 | Private key | `auth.type: key` | Default. Uses `~/.ssh/id_rsa` if no `key_file` set |
 | SSH agent | `auth.type: agent` | Requires `SSH_AUTH_SOCK` to be set |
-| Password | `auth.type: password` | Least secure; prefer key-based auth |
+| Password | `auth.type: password` | Use a file, environment variable, or Vault source instead of inline YAML |
+| Keyboard-interactive | `auth.type: keyboard-interactive` | Supports SSH servers that expose password prompts through keyboard-interactive |
+
+### Credential Sources
+
+For `password`, `private_key`, `passphrase`, and SSH user certificates,
+WatchSSH supports inline configuration for compatibility and secure external
+sources for production. A source can be an environment variable, a file, or a
+HashiCorp Vault KV field. Use exactly one source per credential value.
+
+```yaml
+secrets:
+  vault:
+    address: https://vault.example.internal
+    token_env: VAULT_TOKEN
+    namespace: operations        # optional Vault Enterprise namespace
+    kv_version: 2                # KV v1 and v2 are supported
+
+servers:
+  - name: app-01
+    host: 10.20.0.11
+    username: monitor
+    auth:
+      type: key
+      private_key:
+        vault_kv:
+          mount: infrastructure
+          path: watchssh/app-01
+          field: private_key
+      passphrase_source:
+        env: WATCHSSH_APP01_KEY_PASSPHRASE
+      certificate_file: /etc/watchssh/app-01-cert.pub
+
+  - name: legacy-appliance
+    host: 10.20.0.42
+    username: monitor
+    auth:
+      type: keyboard-interactive
+      password_source:
+        file: /run/secrets/legacy-appliance-password
+```
+
+`private_key`, `passphrase_source`, `certificate`, and `password_source` all
+accept `env`, `file`, or `vault_kv`. The shared Vault token comes from
+`token_env` or `token_file`; it is never stored in YAML. Vault values are read
+when a connection is opened, so rotated credentials take effect on the next
+poll. For SSH certificates, use `certificate_file` or `certificate` alongside
+key authentication. SSH-agent authentication continues to use `SSH_AUTH_SOCK`.
 
 ### Security Best Practices
 
@@ -577,6 +624,45 @@ Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
 `board_wifi_rssi`.
 
 Email notifications via SMTP (with STARTTLS or TLS) are supported.
+
+### Alert Routing and Webhooks
+
+Routes provide ordered alert routing with filters for rule names, metrics, and
+servers. The first matching route handles a firing; set `continue: true` when
+the same firing should also reach later routes. This supports a primary
+integration plus deliberate fan-out or escalation paths without coupling
+WatchSSH to a single vendor.
+
+Each route sends one JSON batch to an arbitrary HTTP endpoint. The default
+payload contains `schema_version`, `route`, `fired_at`, `summary`, and an
+`alerts` array. `url_env` and `header_env` keep webhook URLs and API tokens out
+of `config.yaml`. A `body_template` can produce vendor-specific JSON and has
+access to `.Route`, `.Alerts`, `.Summary`, `.FiredAt`, and `{{json ...}}` for
+safe JSON encoding.
+
+```yaml
+alerts:
+  routes:
+    # Slack or Teams incoming webhooks: tailor the body to their schema.
+    - name: chatops
+      metrics: [cpu_usage, mem_usage, disk_usage, http_failed]
+      continue: true
+      webhook:
+        url_env: WATCHSSH_CHAT_WEBHOOK_URL
+        body_template: |
+          {"text": {{json .Summary}}}
+
+    # PagerDuty, Opsgenie, Jira, ServiceNow, or an internal incident gateway.
+    # Use provider-specific headers and a body template when required.
+    - name: incident-platform
+      servers: [app-01, db-01]
+      webhook:
+        url: https://events.example.internal/watchssh
+        header_env:
+          Authorization: WATCHSSH_INCIDENT_AUTHORIZATION
+        body_template: |
+          {"title": {{json .Summary}}, "alerts": {{json .Alerts}}}
+```
 
 Optional guarded alert actions are also supported via `alerts.action`:
 - command is executed directly (no shell)

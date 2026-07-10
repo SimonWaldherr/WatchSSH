@@ -25,6 +25,17 @@
 #   testing only). Prefer per-server insecure_ignore_host_key instead.
 strict_host_key_checking: true
 
+# Optional shared HashiCorp Vault configuration for auth.*_source.vault_kv.
+# The Vault token is intentionally read from an environment variable or a
+# root-owned file, never stored in config.yaml. KV v1 and v2 are supported.
+# secrets:
+#   vault:
+#     address: https://vault.example.internal
+#     token_env: VAULT_TOKEN
+#     # token_file: /run/secrets/watchssh-vault-token
+#     namespace: operations
+#     kv_version: 2
+
 
 # -----------------------------------------------------------------------------
 # Global polling settings
@@ -107,9 +118,18 @@ servers:
     username: monitor    # Use a dedicated monitoring user with minimal privileges
 
     auth:
-      type: key          # "key" (default), "agent", or "password"
+      type: key          # "key" (default), "agent", "password", or "keyboard-interactive"
       key_file: ~/.ssh/id_ed25519
       # passphrase: "secret"   # Uncomment if the key is passphrase-protected
+
+      # Credential alternatives: use exactly one source for each material.
+      # private_key:
+      #   file: /run/secrets/web-01-id_ed25519
+      #   # env: WATCHSSH_WEB01_PRIVATE_KEY
+      #   # vault_kv: {mount: infrastructure, path: watchssh/web-01, field: private_key}
+      # passphrase_source:
+      #   env: WATCHSSH_WEB01_KEY_PASSPHRASE
+      # certificate_file: /etc/watchssh/web-01-cert.pub
 
     # insecure_ignore_host_key: false   # Default: false. NEVER enable in production.
 
@@ -439,6 +459,30 @@ alerts:
       threshold: 1
       servers:
         - web-01
+
+  # Universal outbound alert routes (optional). Routes are evaluated in order.
+  # The first matching route handles an alert unless continue: true is set.
+  # Headers can come from environment variables to keep tokens out of YAML.
+  # routes:
+  #   - name: slack-production
+  #     metrics: [cpu_usage, mem_usage, disk_usage, http_failed]
+  #     continue: true
+  #     webhook:
+  #       url_env: WATCHSSH_SLACK_WEBHOOK_URL
+  #       header_env:
+  #         Authorization: WATCHSSH_SLACK_AUTHORIZATION
+  #       body_template: |
+  #         {"text": {{json .Summary}}}
+  #
+  #   - name: incident-platform
+  #     servers: [web-01, harp-proxy]
+  #     webhook:
+  #       url: https://events.example.internal/watchssh
+  #       method: POST
+  #       headers:
+  #         X-Integration: watchssh
+  #       # Without body_template WatchSSH sends its standard JSON envelope.
+  #       # Template fields: .Route, .Alerts, .Summary, .FiredAt
 
   # SMTP email notifications (optional)
   # email:

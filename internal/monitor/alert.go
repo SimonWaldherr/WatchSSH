@@ -5,8 +5,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/smtp"
 	"os"
 	"os/exec"
@@ -14,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
@@ -93,6 +97,148 @@ func SendAlertEmail(cfg config.EmailConfig, firings []Firing) error {
 
 	subject := fmt.Sprintf("WatchSSH: %d alert(s) triggered", len(firings))
 	return sendSMTPAlert(cfg, subject, sb.String())
+}
+
+type webhookPayload struct {
+	SchemaVersion string    `json:"schema_version"`
+	Route         string    `json:"route"`
+	FiredAt       time.Time `json:"fired_at"`
+	Summary       string    `json:"summary"`
+	Alerts        []Firing  `json:"alerts"`
+}
+
+// SendAlertRoutes delivers each firing to the first matching route. A route
+// with Continue set also permits following routes to receive the same firing.
+func SendAlertRoutes(routes []config.AlertRoute, firings []Firing) error {
+	if len(routes) == 0 || len(firings) == 0 {
+		return nil
+	}
+	handled := make([]bool, len(firings))
+	var errs []error
+	for _, route := range routes {
+		matched := make([]Firing, 0, len(firings))
+		matchedIndexes := make([]int, 0, len(firings))
+		for i, firing := range firings {
+			if handled[i] || !routeApplies(route, firing) {
+				continue
+			}
+			matched = append(matched, firing)
+			matchedIndexes = append(matchedIndexes, i)
+		}
+		if len(matched) == 0 {
+			continue
+		}
+		if err := sendWebhook(route, matched); err != nil {
+			errs = append(errs, fmt.Errorf("route %q: %w", route.Name, err))
+		}
+		if !route.Continue {
+			for _, i := range matchedIndexes {
+				handled[i] = true
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func routeApplies(route config.AlertRoute, firing Firing) bool {
+	return routeFieldMatches(route.Rules, firing.RuleName) &&
+		routeFieldMatches(route.Metrics, firing.Metric) &&
+		routeFieldMatches(route.Servers, firing.Server)
+}
+
+func routeFieldMatches(filters []string, value string) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	for _, filter := range filters {
+		if filter == value {
+			return true
+		}
+	}
+	return false
+}
+
+func sendWebhook(route config.AlertRoute, firings []Firing) error {
+	url := route.Webhook.URL
+	if route.Webhook.URLEnv != "" {
+		url = os.Getenv(route.Webhook.URLEnv)
+		if url == "" {
+			return fmt.Errorf("webhook URL environment variable %q is not set", route.Webhook.URLEnv)
+		}
+	}
+	payload := webhookPayload{
+		SchemaVersion: "1",
+		Route:         route.Name,
+		FiredAt:       firings[0].FiredAt,
+		Summary:       fmt.Sprintf("WatchSSH: %d alert(s) matched route %s", len(firings), route.Name),
+		Alerts:        firings,
+	}
+	body, err := webhookBody(route.Webhook.BodyTemplate, payload)
+	if err != nil {
+		return err
+	}
+	timeout := route.Webhook.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	method := route.Webhook.Method
+	if method == "" {
+		method = http.MethodPost
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "WatchSSH/2 alert-webhook")
+	for header, value := range route.Webhook.Headers {
+		req.Header.Set(header, value)
+	}
+	for header, env := range route.Webhook.HeaderEnv {
+		value, ok := os.LookupEnv(env)
+		if !ok {
+			return fmt.Errorf("webhook header environment variable %q is not set", env)
+		}
+		req.Header.Set(header, value)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		response, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("received %s: %s", resp.Status, strings.TrimSpace(string(response)))
+	}
+	return nil
+}
+
+func webhookBody(bodyTemplate string, payload webhookPayload) ([]byte, error) {
+	if strings.TrimSpace(bodyTemplate) == "" {
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("encoding payload: %w", err)
+		}
+		return body, nil
+	}
+	jsonValue := func(value any) (string, error) {
+		encoded, err := json.Marshal(value)
+		return string(encoded), err
+	}
+	tpl, err := template.New("webhook").Funcs(template.FuncMap{"json": jsonValue}).Option("missingkey=error").Parse(bodyTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("parsing body_template: %w", err)
+	}
+	var body bytes.Buffer
+	if err := tpl.Execute(&body, payload); err != nil {
+		return nil, fmt.Errorf("executing body_template: %w", err)
+	}
+	if !json.Valid(body.Bytes()) {
+		return nil, fmt.Errorf("body_template did not produce valid JSON")
+	}
+	return body.Bytes(), nil
 }
 
 // RunAlertAction executes a guarded local command when alerts fire.

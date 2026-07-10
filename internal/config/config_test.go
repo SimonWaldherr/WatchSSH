@@ -80,6 +80,33 @@ servers:
 	}
 }
 
+func TestLoad_VaultCredentialSource(t *testing.T) {
+	path := writeConfig(t, `
+secrets:
+  vault:
+    address: https://vault.example.test
+    token_env: VAULT_TOKEN
+    kv_version: 2
+servers:
+  - host: 192.0.2.10
+    username: monitor
+    auth:
+      type: keyboard-interactive
+      password_source:
+        vault_kv:
+          mount: infrastructure
+          path: watchssh/app-01
+          field: ssh_password
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Secrets.Vault == nil || cfg.Servers[0].Auth.PasswordSource.VaultKV == nil {
+		t.Fatalf("Vault credential source was not loaded: %#v", cfg)
+	}
+}
+
 func TestLoad_ExplicitValues(t *testing.T) {
 	path := writeConfig(t, `
 interval: 120
