@@ -304,3 +304,51 @@ alerts:
 		t.Fatal("expected error for command executable not in allowlist")
 	}
 }
+
+func TestLoad_AlertRouteProtocolDefaults(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - host: "10.0.0.1"
+    username: "admin"
+alerts:
+  routes:
+    - name: irc-ops
+      irc:
+        address: irc.example.test:6697
+        nick: watchssh
+        channel: "#ops"
+    - name: syslog
+      syslog:
+        address: syslog.example.test:514
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	irc := cfg.Alerts.Routes[0].IRC
+	if irc == nil || irc.Username != "watchssh" || irc.RealName != "WatchSSH" || irc.Timeout != 10 {
+		t.Fatalf("IRC defaults = %#v", irc)
+	}
+	syslog := cfg.Alerts.Routes[1].Syslog
+	if syslog == nil || syslog.Network != "udp" || syslog.AppName != "watchssh" || syslog.Timeout != 10 {
+		t.Fatalf("Syslog defaults = %#v", syslog)
+	}
+}
+
+func TestLoad_AlertRouteRejectsMultipleTargets(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - host: "10.0.0.1"
+    username: "admin"
+alerts:
+  routes:
+    - name: invalid
+      webhook:
+        url: https://example.test/watchssh
+      syslog:
+        address: syslog.example.test:514
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected alert route with multiple targets to be rejected")
+	}
+}

@@ -459,6 +459,7 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 		result := check.Ping(srv.Host, srv.Checks.Ping.Count, srv.Checks.Ping.Timeout)
 		cs.PingOK = result.OK
 		cs.PingLatency = result.LatencyMs
+		cs.PingLoss = result.PacketLoss
 	}
 
 	for _, pc := range srv.Checks.Ports {
@@ -468,6 +469,15 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 			result.Error = r.Err.Error()
 		}
 		cs.Ports = append(cs.Ports, result)
+	}
+
+	for _, bc := range srv.Checks.Banner {
+		r := check.CheckBanner(bc.Name, bc.Host, bc.Port, bc.ExpectedPrefix, bc.Timeout)
+		result := BannerResult{Name: r.Name, Host: r.Host, Port: r.Port, Banner: r.Banner, OK: r.OK, LatencyMs: r.LatencyMs}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.Banner = append(cs.Banner, result)
 	}
 
 	for _, hc := range srv.Checks.HTTP {
@@ -559,6 +569,15 @@ func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
 			result.Error = r.Err.Error()
 		}
 		cs.Ports = append(cs.Ports, result)
+	}
+
+	for _, bc := range srv.Checks.Banner {
+		r := check.CheckBanner(bc.Name, bc.Host, bc.Port, bc.ExpectedPrefix, bc.Timeout)
+		result := BannerResult{Name: r.Name, Host: r.Host, Port: r.Port, Banner: r.Banner, OK: r.OK, LatencyMs: r.LatencyMs}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		cs.Banner = append(cs.Banner, result)
 	}
 
 	for _, hc := range srv.Checks.HTTP {

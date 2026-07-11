@@ -157,6 +157,15 @@ servers:
         - port: 443
           timeout: 5
 
+      # Services such as SSH, SMTP, FTP, and Redis send a greeting first.
+      # This validates the expected protocol rather than only an open port.
+      banner:
+        - name: ssh-greeting
+          host: web-01.example.com
+          port: 22
+          expected_prefix: "SSH-"
+          timeout: 5
+
       http:
         - url: https://web-01.example.com/health
           method: GET
@@ -483,6 +492,25 @@ alerts:
   #         X-Integration: watchssh
   #       # Without body_template WatchSSH sends its standard JSON envelope.
   #       # Template fields: .Route, .Alerts, .Summary, .FiredAt
+  #
+  #   # Self-hosted ChatOps through standard IRC. Use TLS for public networks;
+  #   # the optional server password stays outside YAML.
+  #   - name: irc-operations
+  #     metrics: [cpu_usage, mem_usage, disk_usage, http_failed]
+  #     irc:
+  #       address: irc.example.internal:6697
+  #       tls: true
+  #       nick: watchssh
+  #       channel: "#operations"
+  #       password_env: WATCHSSH_IRC_PASSWORD
+  #
+  #   # RFC 5424 records for a local or central syslog/SIEM receiver.
+  #   - name: central-syslog
+  #     continue: true
+  #     syslog:
+  #       address: syslog.example.internal:514
+  #       network: tcp   # udp (default) or tcp
+  #       app_name: watchssh
 
   # SMTP email notifications (optional)
   # email:

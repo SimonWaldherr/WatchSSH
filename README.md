@@ -540,6 +540,14 @@ monitoring host:
 
 ```yaml
 checks:
+  ping:
+    enabled: true # reports latency and packet loss percentage
+  banner:
+    - name: ssh-greeting
+      host: example.com
+      port: 22
+      expected_prefix: "SSH-"
+      timeout: 5
   http:
     - url: https://example.com/health
       method: GET
@@ -616,9 +624,10 @@ Configure threshold-based alerts in the `alerts` section of `config.yaml`.
 Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
 `load15`, `disk_usage`, `disk_inode_usage`, `processes_running`,
 `processes_total`, `file_descriptor_usage`, `network_errors`, `network_drops`,
-`ping_latency`, `ping_failed`, `port_closed`, `port_latency`, `http_failed`,
-`http_latency`, `dns_failed`, `dns_latency`, `traceroute_failed`,
-`traceroute_hops`, `tls_failed`, `ntp_failed`, `ntp_latency`, `ntp_offset`,
+`ping_latency`, `ping_loss`, `ping_failed`, `port_closed`, `port_latency`,
+`banner_failed`, `banner_latency`, `http_failed`, `http_latency`, `dns_failed`,
+`dns_latency`, `traceroute_failed`, `traceroute_hops`, `tls_failed`,
+`tls_latency`, `ntp_failed`, `ntp_latency`, `ntp_offset`,
 `custom_failed`, `cert_expires_days`, `tls_cert_expires_days`,
 `board_temperature`, `board_under_voltage`, `board_throttled`,
 `board_wifi_rssi`.
@@ -633,10 +642,11 @@ the same firing should also reach later routes. This supports a primary
 integration plus deliberate fan-out or escalation paths without coupling
 WatchSSH to a single vendor.
 
-Each route sends one JSON batch to an arbitrary HTTP endpoint. The default
-payload contains `schema_version`, `route`, `fired_at`, `summary`, and an
-`alerts` array. `url_env` and `header_env` keep webhook URLs and API tokens out
-of `config.yaml`. A `body_template` can produce vendor-specific JSON and has
+Each route has exactly one target: an HTTP webhook, an IRC channel, or a Syslog
+receiver. HTTP sends one JSON batch; the default payload contains
+`schema_version`, `route`, `fired_at`, `summary`, and an `alerts` array.
+`url_env` and `header_env` keep webhook URLs and API tokens out of
+`config.yaml`. A `body_template` can produce vendor-specific JSON and has
 access to `.Route`, `.Alerts`, `.Summary`, `.FiredAt`, and `{{json ...}}` for
 safe JSON encoding.
 
@@ -662,6 +672,57 @@ alerts:
           Authorization: WATCHSSH_INCIDENT_AUTHORIZATION
         body_template: |
           {"title": {{json .Summary}}, "alerts": {{json .Alerts}}}
+```
+
+IRC is useful for self-hosted ChatOps. WatchSSH supports plain IRC and TLS,
+server passwords via `password_env`, and sends one short `PRIVMSG` per firing.
+It uses the standard IRC registration flow; use an IRC bouncer or gateway when
+your network requires SASL or OAuth.
+
+```yaml
+alerts:
+  routes:
+    - name: irc-ops
+      metrics: [cpu_usage, mem_usage, disk_usage, http_failed]
+      irc:
+        address: irc.example.internal:6697
+        tls: true
+        nick: watchssh
+        channel: "#operations"
+        password_env: WATCHSSH_IRC_PASSWORD
+```
+
+Syslog integrates with existing log collectors and SIEM pipelines. Each
+firing is emitted as an RFC 5424 `local0.err` record over UDP (default) or TCP.
+UDP is best effort; use TCP when delivery to the receiver matters.
+
+```yaml
+alerts:
+  routes:
+    - name: central-syslog
+      continue: true
+      syslog:
+        address: syslog.example.internal:514
+        network: tcp
+        app_name: watchssh
+```
+
+Meshtastic is a useful out-of-band destination when normal IP connectivity is
+part of the incident. WatchSSH deliberately uses its generic webhook route for
+this: run a small local bridge next to a Meshtastic radio (for example with the
+official Python client's serial or TCP interface) and let the bridge expose a
+protected HTTP endpoint. Route only concise, high-severity alerts to that
+endpoint; LoRa airtime and message delivery are constrained by the mesh.
+
+```yaml
+alerts:
+  routes:
+    - name: meshtastic-critical
+      rules: [PingFailed, HealthCheckFailed, TLSProbeFailed]
+      webhook:
+        url: http://127.0.0.1:8787/meshtastic/send
+        body_template: |
+          {"text": {{json .Summary}}}
 ```
 
 Optional guarded alert actions are also supported via `alerts.action`:

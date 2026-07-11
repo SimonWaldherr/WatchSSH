@@ -1,9 +1,12 @@
 package monitor
 
 import (
+	"bufio"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -140,6 +143,28 @@ func TestAlertManager_NTPOffset(t *testing.T) {
 	}}
 	if firings := am.Evaluate(metrics, cfg); len(firings) != 1 {
 		t.Fatalf("expected NTP offset alert, got %d", len(firings))
+	}
+}
+
+func TestAlertManager_ConnectivityLatencyAndLoss(t *testing.T) {
+	am := NewAlertManager()
+	cfg := &config.Config{Alerts: config.AlertsConfig{Rules: []config.AlertRule{
+		{Name: "Loss", Metric: "ping_loss", Operator: ">", Threshold: 5},
+		{Name: "Banner", Metric: "banner_failed", Operator: "==", Threshold: 1},
+		{Name: "TLS", Metric: "tls_latency", Operator: ">", Threshold: 100},
+	}, Cooldown: 0}}
+	metrics := []ServerMetrics{{
+		ServerName: "app-01",
+		Timestamp:  time.Now(),
+		Connectivity: ConnectivityStats{
+			PingEnabled: true,
+			PingLoss:    12.5,
+			Banner:      []BannerResult{{Host: "app-01", Port: 22, OK: false}},
+			TLS:         []TLSResult{{Host: "app-01", Port: 443, OK: true, LatencyMs: 150}},
+		},
+	}}
+	if firings := am.Evaluate(metrics, cfg); len(firings) != 3 {
+		t.Fatalf("expected 3 connectivity firings, got %#v", firings)
 	}
 }
 
@@ -451,5 +476,88 @@ func TestSendAlertRoutesContinue(t *testing.T) {
 	}
 	if primaryCalls.Load() != 1 || escalationCalls.Load() != 1 {
 		t.Fatalf("route calls = primary:%d escalation:%d, want 1:1", primaryCalls.Load(), escalationCalls.Load())
+	}
+}
+
+func TestSendAlertRoutesIRC(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+
+	lines := make(chan []string, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			lines <- nil
+			return
+		}
+		defer conn.Close()
+		reader := bufio.NewReader(conn)
+		var received []string
+		for {
+			line, readErr := reader.ReadString('\n')
+			if readErr != nil {
+				lines <- received
+				return
+			}
+			line = strings.TrimSpace(line)
+			received = append(received, line)
+			if strings.HasPrefix(line, "USER ") {
+				_, _ = conn.Write([]byte(":test 001 watchssh :Welcome\r\n"))
+			}
+			if strings.HasPrefix(line, "QUIT ") {
+				lines <- received
+				return
+			}
+		}
+	}()
+
+	err = SendAlertRoutes([]config.AlertRoute{{
+		Name: "irc", IRC: &config.IRCConfig{
+			Address: listener.Addr().String(), Nick: "watchssh", Username: "watchssh", RealName: "WatchSSH", Channel: "#ops", Timeout: 1,
+		},
+	}}, []Firing{{Message: "CPU high on app-01", FiredAt: time.Now()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := <-lines
+	joined, notified := false, false
+	for _, line := range got {
+		joined = joined || line == "JOIN #ops"
+		notified = notified || line == "PRIVMSG #ops :CPU high on app-01"
+	}
+	if !joined || !notified {
+		t.Fatalf("IRC commands = %#v, want JOIN and PRIVMSG", got)
+	}
+}
+
+func TestSendAlertRoutesSyslog(t *testing.T) {
+	receiver, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer receiver.Close()
+
+	err = SendAlertRoutes([]config.AlertRoute{{
+		Name: "syslog", Syslog: &config.SyslogConfig{
+			Address: receiver.LocalAddr().String(), Network: "udp", AppName: "watchssh-test", Timeout: 1,
+		},
+	}}, []Firing{{Message: "CPU high on app-01", FiredAt: time.Date(2026, 7, 11, 12, 0, 0, 0, time.UTC)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	buffer := make([]byte, 2048)
+	if err := receiver.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	n, _, err := receiver.ReadFrom(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(buffer[:n])
+	if !strings.HasPrefix(got, "<131>1 2026-07-11T12:00:00Z ") || !strings.Contains(got, " watchssh-test - WATCHSSH - CPU high on app-01") {
+		t.Fatalf("syslog record = %q", got)
 	}
 }

@@ -52,6 +52,12 @@ func TestParsePingAvgFallback(t *testing.T) {
 	}
 }
 
+func TestParsePingLoss(t *testing.T) {
+	if got := parsePingLoss("3 packets transmitted, 2 received, 33.3% packet loss"); got != 33.3 {
+		t.Fatalf("parsePingLoss = %v, want 33.3", got)
+	}
+}
+
 func TestCheckPort(t *testing.T) {
 	// Port 1 on localhost should always be closed.
 	r := CheckPort("127.0.0.1", 1, 1)
@@ -60,6 +66,28 @@ func TestCheckPort(t *testing.T) {
 	}
 	if r.Port != 1 {
 		t.Errorf("expected Port=1, got %d", r.Port)
+	}
+}
+
+func TestCheckBanner(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = conn.Write([]byte("SSH-2.0-WatchSSH-Test\r\n"))
+	}()
+
+	port := listener.Addr().(*net.TCPAddr).Port
+	result := CheckBanner("ssh", "127.0.0.1", port, "SSH-", 1)
+	if !result.OK || result.Banner != "SSH-2.0-WatchSSH-Test" {
+		t.Fatalf("banner result = %#v", result)
 	}
 }
 

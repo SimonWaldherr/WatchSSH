@@ -155,7 +155,9 @@ type ConnectivityStats struct {
 	PingEnabled bool               `json:"ping_enabled"`
 	PingOK      bool               `json:"ping_ok"`
 	PingLatency float64            `json:"ping_latency_ms"`
+	PingLoss    float64            `json:"ping_loss_percent"`
 	Ports       []PortResult       `json:"ports,omitempty"`
+	Banner      []BannerResult     `json:"banner,omitempty"`
 	HTTP        []HTTPResult       `json:"http,omitempty"`
 	DNS         []DNSResult        `json:"dns,omitempty"`
 	Traceroute  []TracerouteResult `json:"traceroute,omitempty"`
@@ -167,6 +169,17 @@ type ConnectivityStats struct {
 type PortResult struct {
 	Port      int     `json:"port"`
 	Open      bool    `json:"open"`
+	LatencyMs float64 `json:"latency_ms"`
+	Error     string  `json:"error,omitempty"`
+}
+
+// BannerResult holds the outcome of a TCP greeting/banner probe.
+type BannerResult struct {
+	Name      string  `json:"name,omitempty"`
+	Host      string  `json:"host"`
+	Port      int     `json:"port"`
+	Banner    string  `json:"banner,omitempty"`
+	OK        bool    `json:"ok"`
 	LatencyMs float64 `json:"latency_ms"`
 	Error     string  `json:"error,omitempty"`
 }

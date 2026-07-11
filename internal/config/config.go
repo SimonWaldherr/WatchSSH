@@ -85,6 +85,16 @@ type PortCheck struct {
 	Timeout int `yaml:"timeout"` // dial timeout in seconds (default 5)
 }
 
+// BannerCheck verifies a greeting sent immediately after a TCP connection,
+// for example SSH ("SSH-"), SMTP ("220"), or Redis ("+PONG").
+type BannerCheck struct {
+	Name           string `yaml:"name"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	ExpectedPrefix string `yaml:"expected_prefix"`
+	Timeout        int    `yaml:"timeout"` // seconds (default 5)
+}
+
 // HTTPCheck configures an HTTP health check run from the monitoring machine.
 type HTTPCheck struct {
 	URL            string `yaml:"url"`
@@ -154,6 +164,7 @@ type CustomCheck struct {
 type Checks struct {
 	Ping   PingCheck         `yaml:"ping"`
 	Ports  []PortCheck       `yaml:"ports"`
+	Banner []BannerCheck     `yaml:"banner"`
 	HTTP   []HTTPCheck       `yaml:"http"`
 	DNS    []DNSCheck        `yaml:"dns"`
 	Trace  []TracerouteCheck `yaml:"traceroute"`
@@ -237,9 +248,10 @@ type EmailConfig struct {
 type AlertRule struct {
 	Name string `yaml:"name"`
 	// Metric: cpu_usage, mem_usage, swap_usage, load1, load5, load15,
-	//         disk_usage, ping_latency, ping_failed, port_closed, port_latency,
-	//         http_failed, http_latency, dns_failed, dns_latency,
-	//         traceroute_failed, traceroute_hops, tls_failed, ntp_failed,
+	//         disk_usage, ping_latency, ping_loss, ping_failed, port_closed,
+	//         port_latency, banner_failed, banner_latency, http_failed,
+	//         http_latency, dns_failed, dns_latency, traceroute_failed,
+	//         traceroute_hops, tls_failed, tls_latency, ntp_failed,
 	//         ntp_latency, ntp_offset, custom_failed.
 	//         cert_expires_days, tls_cert_expires_days,
 	//         board_temperature, board_under_voltage, board_throttled,
@@ -270,7 +282,29 @@ type WebhookConfig struct {
 	Timeout      int               `yaml:"timeout"` // seconds, default 10
 }
 
-// AlertRoute sends matching alert firings to one webhook. All match fields are
+// IRCConfig sends concise alert messages to an IRC channel. PasswordEnv is
+// optional and is used for server passwords without storing them in YAML.
+type IRCConfig struct {
+	Address     string `yaml:"address"`
+	TLS         bool   `yaml:"tls"`
+	Nick        string `yaml:"nick"`
+	Username    string `yaml:"username"`
+	RealName    string `yaml:"real_name"`
+	PasswordEnv string `yaml:"password_env"`
+	Channel     string `yaml:"channel"`
+	Timeout     int    `yaml:"timeout"` // seconds, default 10
+}
+
+// SyslogConfig sends RFC 5424 alert records to a local or central syslog
+// receiver over UDP or TCP.
+type SyslogConfig struct {
+	Address string `yaml:"address"`
+	Network string `yaml:"network"` // udp (default) or tcp
+	AppName string `yaml:"app_name"`
+	Timeout int    `yaml:"timeout"` // seconds, default 10
+}
+
+// AlertRoute sends matching alert firings to one protocol target. All match fields are
 // optional; an empty route matches every firing. Continue permits later routes
 // to receive the same firing, enabling explicit fan-out or escalation chains.
 type AlertRoute struct {
@@ -280,6 +314,8 @@ type AlertRoute struct {
 	Servers  []string      `yaml:"servers"`
 	Continue bool          `yaml:"continue"`
 	Webhook  WebhookConfig `yaml:"webhook"`
+	IRC      *IRCConfig    `yaml:"irc"`
+	Syslog   *SyslogConfig `yaml:"syslog"`
 }
 
 // AlertsConfig holds all alerting configuration.
@@ -423,6 +459,30 @@ func applyDefaults(cfg *Config) {
 		if cfg.Alerts.Routes[i].Webhook.Timeout == 0 {
 			cfg.Alerts.Routes[i].Webhook.Timeout = 10
 		}
+		if cfg.Alerts.Routes[i].IRC != nil {
+			irc := cfg.Alerts.Routes[i].IRC
+			if irc.Timeout == 0 {
+				irc.Timeout = 10
+			}
+			if irc.Username == "" {
+				irc.Username = irc.Nick
+			}
+			if irc.RealName == "" {
+				irc.RealName = "WatchSSH"
+			}
+		}
+		if cfg.Alerts.Routes[i].Syslog != nil {
+			syslog := cfg.Alerts.Routes[i].Syslog
+			if syslog.Timeout == 0 {
+				syslog.Timeout = 10
+			}
+			if syslog.Network == "" {
+				syslog.Network = "udp"
+			}
+			if syslog.AppName == "" {
+				syslog.AppName = "watchssh"
+			}
+		}
 	}
 	if cfg.Alerts.Email != nil {
 		if cfg.Alerts.Email.SMTPPort == 0 {
@@ -457,6 +517,11 @@ func applyDefaults(cfg *Config) {
 		for j := range srv.Checks.Ports {
 			if srv.Checks.Ports[j].Timeout == 0 {
 				srv.Checks.Ports[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Banner {
+			if srv.Checks.Banner[j].Timeout == 0 {
+				srv.Checks.Banner[j].Timeout = 5
 			}
 		}
 		for j := range srv.Checks.HTTP {
@@ -580,11 +645,33 @@ func validateAlertRoutes(routes []AlertRoute) error {
 			return fmt.Errorf("alerts.routes[%d].name %q is duplicated", i, name)
 		}
 		names[name] = struct{}{}
-		if (strings.TrimSpace(route.Webhook.URL) == "") == (strings.TrimSpace(route.Webhook.URLEnv) == "") {
-			return fmt.Errorf("alerts.routes[%d].webhook requires exactly one of url or url_env", i)
+		targets := 0
+		if strings.TrimSpace(route.Webhook.URL) != "" || strings.TrimSpace(route.Webhook.URLEnv) != "" {
+			targets++
+			if (strings.TrimSpace(route.Webhook.URL) == "") == (strings.TrimSpace(route.Webhook.URLEnv) == "") {
+				return fmt.Errorf("alerts.routes[%d].webhook requires exactly one of url or url_env", i)
+			}
 		}
-		if route.Webhook.Timeout < 0 {
-			return fmt.Errorf("alerts.routes[%d].webhook.timeout must be >= 0", i)
+		if route.IRC != nil {
+			targets++
+			if strings.TrimSpace(route.IRC.Address) == "" || strings.TrimSpace(route.IRC.Nick) == "" || strings.TrimSpace(route.IRC.Channel) == "" {
+				return fmt.Errorf("alerts.routes[%d].irc requires address, nick, and channel", i)
+			}
+		}
+		if route.Syslog != nil {
+			targets++
+			if strings.TrimSpace(route.Syslog.Address) == "" {
+				return fmt.Errorf("alerts.routes[%d].syslog.address is required", i)
+			}
+			if route.Syslog.Network != "" && route.Syslog.Network != "udp" && route.Syslog.Network != "tcp" {
+				return fmt.Errorf("alerts.routes[%d].syslog.network must be udp or tcp", i)
+			}
+		}
+		if targets != 1 {
+			return fmt.Errorf("alerts.routes[%d] must configure exactly one of webhook, irc, or syslog", i)
+		}
+		if route.Webhook.Timeout < 0 || (route.IRC != nil && route.IRC.Timeout < 0) || (route.Syslog != nil && route.Syslog.Timeout < 0) {
+			return fmt.Errorf("alerts.routes[%d] target timeout must be >= 0", i)
 		}
 		for header, env := range route.Webhook.HeaderEnv {
 			if strings.TrimSpace(header) == "" || strings.TrimSpace(env) == "" {

@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -128,7 +129,7 @@ func SendAlertRoutes(routes []config.AlertRoute, firings []Firing) error {
 		if len(matched) == 0 {
 			continue
 		}
-		if err := sendWebhook(route, matched); err != nil {
+		if err := sendAlertRoute(route, matched); err != nil {
 			errs = append(errs, fmt.Errorf("route %q: %w", route.Name, err))
 		}
 		if !route.Continue {
@@ -138,6 +139,178 @@ func SendAlertRoutes(routes []config.AlertRoute, firings []Firing) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func sendAlertRoute(route config.AlertRoute, firings []Firing) error {
+	switch {
+	case route.IRC != nil:
+		return sendIRCAlert(*route.IRC, firings)
+	case route.Syslog != nil:
+		return sendSyslogAlert(*route.Syslog, firings)
+	default:
+		return sendWebhook(route, firings)
+	}
+}
+
+func sendIRCAlert(cfg config.IRCConfig, firings []Firing) error {
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	dialer := net.Dialer{Timeout: time.Duration(timeout) * time.Second}
+	var (
+		conn net.Conn
+		err  error
+	)
+	if cfg.TLS {
+		host, _, splitErr := net.SplitHostPort(cfg.Address)
+		if splitErr != nil {
+			return fmt.Errorf("IRC TLS address must include host and port: %w", splitErr)
+		}
+		conn, err = tls.DialWithDialer(&dialer, "tcp", cfg.Address, &tls.Config{ServerName: host})
+	} else {
+		conn, err = dialer.Dial("tcp", cfg.Address)
+	}
+	if err != nil {
+		return fmt.Errorf("connecting to IRC server: %w", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second)); err != nil {
+		return fmt.Errorf("setting IRC deadline: %w", err)
+	}
+
+	writer := bufio.NewWriter(conn)
+	if cfg.PasswordEnv != "" {
+		password, ok := os.LookupEnv(cfg.PasswordEnv)
+		if !ok || password == "" {
+			return fmt.Errorf("IRC password environment variable %q is not set", cfg.PasswordEnv)
+		}
+		if err := writeIRCLine(writer, "PASS "+password); err != nil {
+			return err
+		}
+	}
+	if err := writeIRCLine(writer, "NICK "+cfg.Nick); err != nil {
+		return err
+	}
+	if err := writeIRCLine(writer, "USER "+cfg.Username+" 0 * :"+cfg.RealName); err != nil {
+		return err
+	}
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("sending IRC registration: %w", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	for {
+		line, readErr := reader.ReadString('\n')
+		if readErr != nil {
+			return fmt.Errorf("waiting for IRC welcome: %w", readErr)
+		}
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "PING ") {
+			if err := writeIRCLine(writer, "PONG "+strings.TrimPrefix(line, "PING ")); err != nil {
+				return err
+			}
+			if err := writer.Flush(); err != nil {
+				return fmt.Errorf("responding to IRC ping: %w", err)
+			}
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[1] == "001" {
+			break
+		}
+		if len(fields) >= 2 && (fields[1] == "433" || fields[1] == "ERROR") {
+			return fmt.Errorf("IRC registration rejected: %s", line)
+		}
+	}
+
+	if err := writeIRCLine(writer, "JOIN "+cfg.Channel); err != nil {
+		return err
+	}
+	for _, firing := range firings {
+		if err := writeIRCLine(writer, "PRIVMSG "+cfg.Channel+" :"+ircMessage(firing.Message)); err != nil {
+			return err
+		}
+	}
+	if err := writeIRCLine(writer, "QUIT :WatchSSH alert delivery"); err != nil {
+		return err
+	}
+	if err := writer.Flush(); err != nil {
+		return fmt.Errorf("sending IRC alert: %w", err)
+	}
+	return nil
+}
+
+func writeIRCLine(writer *bufio.Writer, line string) error {
+	if strings.ContainsAny(line, "\r\n") {
+		return fmt.Errorf("IRC command contains a line break")
+	}
+	if _, err := writer.WriteString(line + "\r\n"); err != nil {
+		return fmt.Errorf("writing IRC command: %w", err)
+	}
+	return nil
+}
+
+func ircMessage(message string) string {
+	message = strings.NewReplacer("\r", " ", "\n", " ").Replace(message)
+	const maxBytes = 400 // leaves room for command, channel, and IRC framing.
+	if len(message) > maxBytes {
+		return message[:maxBytes-3] + "..."
+	}
+	return message
+}
+
+func sendSyslogAlert(cfg config.SyslogConfig, firings []Firing) error {
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	network := cfg.Network
+	if network == "" {
+		network = "udp"
+	}
+	conn, err := net.DialTimeout(network, cfg.Address, time.Duration(timeout)*time.Second)
+	if err != nil {
+		return fmt.Errorf("connecting to syslog receiver: %w", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second)); err != nil {
+		return fmt.Errorf("setting syslog deadline: %w", err)
+	}
+
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "-"
+	}
+	appName := syslogToken(cfg.AppName)
+	if appName == "" {
+		appName = "watchssh"
+	}
+	for _, firing := range firings {
+		firedAt := firing.FiredAt
+		if firedAt.IsZero() {
+			firedAt = time.Now()
+		}
+		record := fmt.Sprintf("<131>1 %s %s %s - WATCHSSH - %s\n",
+			firedAt.UTC().Format(time.RFC3339), syslogToken(host), appName, syslogMessage(firing.Message))
+		if _, err := io.WriteString(conn, record); err != nil {
+			return fmt.Errorf("sending syslog record: %w", err)
+		}
+	}
+	return nil
+}
+
+func syslogToken(value string) string {
+	return strings.Map(func(r rune) rune {
+		if r <= 32 || r == 127 {
+			return '-'
+		}
+		return r
+	}, value)
+}
+
+func syslogMessage(message string) string {
+	return strings.TrimSpace(strings.NewReplacer("\r", " ", "\n", " ").Replace(message))
 }
 
 func routeApplies(route config.AlertRoute, firing Firing) bool {
@@ -372,6 +545,10 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 		if srv.Connectivity.PingEnabled && !srv.Connectivity.PingOK {
 			return 1, true
 		}
+	case "ping_loss":
+		if srv.Connectivity.PingEnabled {
+			return srv.Connectivity.PingLoss, cmp(srv.Connectivity.PingLoss, rule.Operator, rule.Threshold)
+		}
 	case "port_closed":
 		for _, p := range srv.Connectivity.Ports {
 			if rule.Port != 0 && p.Port != rule.Port {
@@ -388,6 +565,18 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 			}
 			if cmp(p.LatencyMs, rule.Operator, rule.Threshold) {
 				return p.LatencyMs, true
+			}
+		}
+	case "banner_failed":
+		for _, b := range srv.Connectivity.Banner {
+			if !b.OK {
+				return 1, true
+			}
+		}
+	case "banner_latency":
+		for _, b := range srv.Connectivity.Banner {
+			if cmp(b.LatencyMs, rule.Operator, rule.Threshold) {
+				return b.LatencyMs, true
 			}
 		}
 	case "http_failed":
@@ -449,6 +638,12 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 			}
 			if cmp(*t.CertExpiresDays, rule.Operator, rule.Threshold) {
 				return *t.CertExpiresDays, true
+			}
+		}
+	case "tls_latency":
+		for _, t := range srv.Connectivity.TLS {
+			if cmp(t.LatencyMs, rule.Operator, rule.Threshold) {
+				return t.LatencyMs, true
 			}
 		}
 	case "ntp_failed":

@@ -350,7 +350,7 @@ const allTemplates = `
     <div class="m-row">
       <span class="m-label">Ping</span>
       <span>
-        {{if .PingOK}}<span class="dot dot-ok"></span>OK — {{printf "%.1f" .PingLatency}} ms
+        {{if .PingOK}}<span class="dot dot-ok"></span>OK — {{printf "%.1f" .PingLatency}} ms, {{printf "%.1f" .PingLoss}}% loss
         {{else}}<span class="dot dot-err"></span>FAILED{{end}}
       </span>
     </div>
@@ -359,6 +359,13 @@ const allTemplates = `
     <div class="m-row" style="flex-wrap:wrap">
       <span class="m-label">Port {{.Port}}</span>
       <span>{{if .Open}}<span class="dot dot-ok"></span>Open{{else}}<span class="dot dot-err"></span>Closed{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
+      {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
+    </div>
+    {{end}}
+    {{range .Banner}}
+    <div class="m-row" style="flex-wrap:wrap">
+      <span class="m-label">Banner {{.Host}}:{{.Port}}</span>
+      <span>{{if .OK}}<span class="dot dot-ok"></span>{{.Banner}}{{else}}<span class="dot dot-err"></span>FAILED{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
       {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
     </div>
     {{end}}
@@ -394,7 +401,7 @@ const allTemplates = `
       {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
     </div>
     {{end}}
-    {{if and (not .PingEnabled) (not .Ports) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS) (not .NTP)}}
+    {{if and (not .PingEnabled) (not .Ports) (not .Banner) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS) (not .NTP)}}
     <p class="empty">No connectivity checks configured for this server.</p>
     {{end}}
     {{end}}
@@ -699,6 +706,12 @@ const allTemplates = `
         </div>
         <div><label>Port Timeout</label><input type="number" name="port_timeout" value="5" min="1"></div>
       </div>
+      <div class="form-row w3">
+        <div><label>Banner Hosts</label><input type="text" name="banner_hosts" placeholder="ssh.example.com, smtp.example.com"></div>
+        <div><label>Banner Port</label><input type="number" name="banner_port" value="22" min="1" max="65535"></div>
+        <div><label>Expected Prefix</label><input type="text" name="banner_expected_prefix" placeholder="SSH-, 220, +PONG"></div>
+      </div>
+      <div class="form-row"><div><label>Banner Timeout</label><input type="number" name="banner_timeout" value="5" min="1"></div><div></div></div>
       <div class="form-row">
         <div>
           <label>HTTP URLs</label>
@@ -915,8 +928,11 @@ const allTemplates = `
           <optgroup label="Connectivity">
           <option value="ping_failed">ping_failed</option>
           <option value="ping_latency">ping_latency (ms)</option>
+          <option value="ping_loss">ping_loss (%)</option>
           <option value="port_closed">port_closed</option>
           <option value="port_latency">port_latency (ms)</option>
+          <option value="banner_failed">banner_failed</option>
+          <option value="banner_latency">banner_latency (ms)</option>
           <option value="http_failed">http_failed</option>
           <option value="http_latency">http_latency (ms)</option>
           <option value="cert_expires_days">cert_expires_days (days)</option>
@@ -925,6 +941,7 @@ const allTemplates = `
           <option value="traceroute_failed">traceroute_failed</option>
           <option value="traceroute_hops">traceroute_hops</option>
           <option value="tls_failed">tls_failed</option>
+          <option value="tls_latency">tls_latency (ms)</option>
           <option value="tls_cert_expires_days">tls_cert_expires_days (days)</option>
           <option value="ntp_failed">ntp_failed</option>
           <option value="ntp_latency">ntp_latency (ms)</option>

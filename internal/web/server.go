@@ -449,6 +449,15 @@ func checksFromServerForm(r *http.Request) config.Checks {
 	for _, port := range parsePorts(r.FormValue("ports")) {
 		checks.Ports = append(checks.Ports, config.PortCheck{Port: port, Timeout: formInt(r, "port_timeout", 5)})
 	}
+	for _, bannerHost := range splitList(r.FormValue("banner_hosts")) {
+		checks.Banner = append(checks.Banner, config.BannerCheck{
+			Name:           bannerHost,
+			Host:           bannerHost,
+			Port:           formInt(r, "banner_port", 22),
+			ExpectedPrefix: strings.TrimSpace(r.FormValue("banner_expected_prefix")),
+			Timeout:        formInt(r, "banner_timeout", 5),
+		})
+	}
 	for _, rawURL := range splitList(r.FormValue("http_urls")) {
 		checks.HTTP = append(checks.HTTP, config.HTTPCheck{URL: rawURL, Method: httpMethod, ExpectedStatus: httpStatus, ExpectedBody: httpExpectedBody, Timeout: httpTimeout})
 	}
@@ -535,6 +544,9 @@ func serverCheckSummary(srv config.Server) string {
 	}
 	if len(srv.Checks.Ports) > 0 {
 		parts = append(parts, fmt.Sprintf("%d ports", len(srv.Checks.Ports)))
+	}
+	if len(srv.Checks.Banner) > 0 {
+		parts = append(parts, fmt.Sprintf("%d banners", len(srv.Checks.Banner)))
 	}
 	if len(srv.Checks.HTTP) > 0 {
 		parts = append(parts, fmt.Sprintf("%d http", len(srv.Checks.HTTP)))
@@ -1084,6 +1096,16 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_http_probe_up gauge\n")
 	b.WriteString("# HELP watchssh_http_probe_latency_ms HTTP probe latency in milliseconds.\n")
 	b.WriteString("# TYPE watchssh_http_probe_latency_ms gauge\n")
+	b.WriteString("# HELP watchssh_ping_probe_up Whether an ICMP ping probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_ping_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_ping_probe_latency_ms ICMP ping probe latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_ping_probe_latency_ms gauge\n")
+	b.WriteString("# HELP watchssh_ping_probe_loss_percent ICMP ping packet loss percentage.\n")
+	b.WriteString("# TYPE watchssh_ping_probe_loss_percent gauge\n")
+	b.WriteString("# HELP watchssh_banner_probe_up Whether a TCP banner probe succeeded.\n")
+	b.WriteString("# TYPE watchssh_banner_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_banner_probe_latency_ms TCP banner probe latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_banner_probe_latency_ms gauge\n")
 	b.WriteString("# HELP watchssh_dns_probe_latency_ms DNS probe latency in milliseconds.\n")
 	b.WriteString("# TYPE watchssh_dns_probe_latency_ms gauge\n")
 	b.WriteString("# HELP watchssh_tls_probe_up Whether a TLS probe succeeded.\n")
@@ -1127,10 +1149,21 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			diskLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "mount": d.MountPoint, "device": d.Device})
 			fmt.Fprintf(&b, "watchssh_disk_usage_percent%s %.6f\n", diskLabels, d.UsagePercent)
 		}
+		if m.Connectivity.PingEnabled {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host})
+			fmt.Fprintf(&b, "watchssh_ping_probe_up%s %d\n", probeLabels, boolGauge(m.Connectivity.PingOK))
+			fmt.Fprintf(&b, "watchssh_ping_probe_latency_ms%s %.6f\n", probeLabels, m.Connectivity.PingLatency)
+			fmt.Fprintf(&b, "watchssh_ping_probe_loss_percent%s %.6f\n", probeLabels, m.Connectivity.PingLoss)
+		}
 		for _, p := range m.Connectivity.Ports {
 			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "port": strconv.Itoa(p.Port)})
 			fmt.Fprintf(&b, "watchssh_tcp_probe_up%s %d\n", probeLabels, boolGauge(p.Open))
 			fmt.Fprintf(&b, "watchssh_tcp_probe_latency_ms%s %.6f\n", probeLabels, p.LatencyMs)
+		}
+		for _, banner := range m.Connectivity.Banner {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": banner.Name, "target": banner.Host, "port": strconv.Itoa(banner.Port)})
+			fmt.Fprintf(&b, "watchssh_banner_probe_up%s %d\n", probeLabels, boolGauge(banner.OK))
+			fmt.Fprintf(&b, "watchssh_banner_probe_latency_ms%s %.6f\n", probeLabels, banner.LatencyMs)
 		}
 		for _, h := range m.Connectivity.HTTP {
 			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "target": h.URL, "method": h.Method})
@@ -1356,6 +1389,11 @@ func serverStatus(m monitor.ServerMetrics) string {
 	}
 	for _, p := range m.Connectivity.Ports {
 		if !p.Open {
+			return "warn"
+		}
+	}
+	for _, banner := range m.Connectivity.Banner {
+		if !banner.OK {
 			return "warn"
 		}
 	}

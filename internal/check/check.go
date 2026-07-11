@@ -21,9 +21,10 @@ import (
 
 // PingResult holds the outcome of a ping check.
 type PingResult struct {
-	OK        bool
-	LatencyMs float64
-	Err       error
+	OK         bool
+	LatencyMs  float64
+	PacketLoss float64
+	Err        error
 }
 
 // Ping sends count ICMP echo requests to host and returns the average round-trip
@@ -41,17 +42,19 @@ func Ping(host string, count, timeoutSec int) PingResult {
 		host,
 	}
 	out, err := exec.CommandContext(ctx, "ping", args...).CombinedOutput()
+	packetLoss := parsePingLoss(string(out))
 	if err != nil {
-		return PingResult{OK: false, Err: fmt.Errorf("ping %s: %w", host, err)}
+		return PingResult{OK: false, LatencyMs: parsePingAvg(string(out)), PacketLoss: packetLoss, Err: fmt.Errorf("ping %s: %w", host, err)}
 	}
-	return PingResult{OK: true, LatencyMs: parsePingAvg(string(out))}
+	return PingResult{OK: true, LatencyMs: parsePingAvg(string(out)), PacketLoss: packetLoss}
 }
 
 // parsePingAvg extracts the average round-trip time from ping output.
 // Supports Linux (rtt min/avg/max/mdev) and macOS (round-trip min/avg/max/stddev).
 var (
-	linuxPingRE = regexp.MustCompile(`rtt min/avg/max/mdev\s*=\s*[\d.]+/([\d.]+)/`)
-	bsdPingRE   = regexp.MustCompile(`round-trip min/avg/max/(?:std-?dev|stddev)\s*=\s*[\d.]+/([\d.]+)/`)
+	linuxPingRE  = regexp.MustCompile(`rtt min/avg/max/mdev\s*=\s*[\d.]+/([\d.]+)/`)
+	bsdPingRE    = regexp.MustCompile(`round-trip min/avg/max/(?:std-?dev|stddev)\s*=\s*[\d.]+/([\d.]+)/`)
+	packetLossRE = regexp.MustCompile(`([\d.]+)%\s*packet loss`)
 )
 
 func parsePingAvg(output string) float64 {
@@ -77,6 +80,15 @@ func parsePingAvg(output string) float64 {
 	return sum / float64(len(matches))
 }
 
+func parsePingLoss(output string) float64 {
+	matches := packetLossRE.FindStringSubmatch(output)
+	if len(matches) < 2 {
+		return 0
+	}
+	loss, _ := strconv.ParseFloat(matches[1], 64)
+	return loss
+}
+
 // PortResult holds the outcome of a TCP port check.
 type PortResult struct {
 	Port      int
@@ -96,6 +108,49 @@ func CheckPort(host string, port, timeoutSec int) PortResult {
 	}
 	_ = conn.Close()
 	return PortResult{Port: port, Open: true, LatencyMs: latencyMs}
+}
+
+// BannerResult holds the outcome of a TCP greeting/banner check.
+type BannerResult struct {
+	Name      string
+	Host      string
+	Port      int
+	Banner    string
+	OK        bool
+	LatencyMs float64
+	Err       error
+}
+
+// CheckBanner connects to a TCP service and reads its initial greeting. It is
+// suitable only for protocols that speak first, such as SSH, SMTP, FTP, or
+// Redis. ExpectedPrefix is optional; when set, the banner must start with it.
+func CheckBanner(name, host string, port int, expectedPrefix string, timeoutSec int) BannerResult {
+	if timeoutSec <= 0 {
+		timeoutSec = 5
+	}
+	result := BannerResult{Name: name, Host: host, Port: port}
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), time.Duration(timeoutSec)*time.Second)
+	if err != nil {
+		result.LatencyMs = float64(time.Since(start).Milliseconds())
+		result.Err = err
+		return result
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
+	buf := make([]byte, 512)
+	n, err := conn.Read(buf)
+	result.LatencyMs = float64(time.Since(start).Milliseconds())
+	if err != nil {
+		result.Err = err
+		return result
+	}
+	result.Banner = strings.TrimSpace(string(buf[:n]))
+	result.OK = expectedPrefix == "" || strings.HasPrefix(result.Banner, expectedPrefix)
+	if !result.OK {
+		result.Err = fmt.Errorf("banner does not start with %q", expectedPrefix)
+	}
+	return result
 }
 
 // HTTPResult holds the outcome of an HTTP health check.
@@ -434,6 +489,9 @@ func CheckTLS(name, host string, port int, serverName string, timeoutSec int) TL
 
 // ParsePingAvg is exported for testing.
 var ParsePingAvg = parsePingAvg
+
+// ParsePingLoss is exported for testing.
+var ParsePingLoss = parsePingLoss
 
 // ParsePingAvgFromLines is a convenience wrapper for test input.
 func ParsePingAvgFromLines(lines ...string) float64 {
