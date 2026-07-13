@@ -123,7 +123,9 @@ func TestDashboardRendersHealthSummary(t *testing.T) {
 		"Operations Overview",
 		`data-health-filter="warn"`,
 		`data-server-status="error"`,
+		`aria-pressed="true"`,
 		"Needs attention",
+		"No targets match this status filter.",
 		"waiting for their first result",
 	} {
 		if !strings.Contains(body, want) {

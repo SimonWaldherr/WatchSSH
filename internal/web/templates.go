@@ -74,8 +74,8 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 .config-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin:1rem 0}.summary-item{background:#f8fafb;border:1px solid #e1e7eb;border-radius:5px;padding:.6rem .7rem}.summary-item span{display:block;color:#71808e;font-size:.72rem}.summary-item strong{display:block;margin-top:.08rem;font-size:.88rem;color:#27313d;word-break:break-word}
 details.form-block{padding-bottom:.1rem}.form-block summary{cursor:pointer;color:#0066cc;font-weight:600;font-size:.84rem;user-select:none}.form-block[open] summary{margin-bottom:.9rem}
 body[data-ui-mode="beginner"] .mode-advanced,body[data-ui-mode="beginner"] .mode-expert,body[data-ui-mode="advanced"] .mode-expert{display:none!important}
-.health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0 1.25rem}.health-filter{appearance:none;width:100%;text-align:left;border:1px solid #dce3e8;border-radius:6px;background:#fff;padding:.65rem .75rem;cursor:pointer;color:#354151}.health-filter:hover,.health-filter.active{border-color:#1b8a6b;box-shadow:0 0 0 2px rgba(27,138,107,.12)}.health-filter span{display:block;font-size:.74rem;color:#6b7785}.health-filter strong{display:block;margin-top:.05rem;font-size:1.2rem;font-variant-numeric:tabular-nums}.health-filter.ok strong{color:#22863a}.health-filter.warn strong{color:#9b6700}.health-filter.error strong{color:#cb2431}.health-filter.unknown strong{color:#66717e}.server-card[hidden]{display:none}
-@media(max-width:760px){header{height:auto;align-items:flex-start;flex-direction:column;padding:.75rem 1rem;gap:.5rem}header nav{flex-wrap:wrap}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
+.health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0 1.25rem}.health-filter{appearance:none;width:100%;text-align:left;border:1px solid #dce3e8;border-radius:6px;background:#fff;padding:.65rem .75rem;cursor:pointer;color:#354151}.health-filter:hover,.health-filter.active{border-color:#1b8a6b;box-shadow:0 0 0 2px rgba(27,138,107,.12)}.health-filter span{display:block;font-size:.74rem;color:#6b7785}.health-filter strong{display:block;margin-top:.05rem;font-size:1.2rem;font-variant-numeric:tabular-nums}.health-filter.ok strong{color:#22863a}.health-filter.warn strong{color:#9b6700}.health-filter.error strong{color:#cb2431}.health-filter.unknown strong{color:#66717e}.server-card[hidden]{display:none}.filter-empty{display:none;padding:1.25rem 0;text-align:center;color:#66717e}.filter-empty.visible{display:block}
+@media(max-width:760px){header{height:auto;display:grid;grid-template-columns:1fr auto;align-items:center;padding:.65rem 1rem;gap:.5rem}header h1{grid-column:1}.mode-picker{grid-column:2;grid-row:1}header nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:.1rem}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
 @media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary,.health-summary{grid-template-columns:1fr 1fr}}
 `
 
@@ -127,14 +127,22 @@ const allTemplates = `
   });
   var healthFilters=document.querySelectorAll('[data-health-filter]');
   var serverCards=document.querySelectorAll('[data-server-status]');
+  var emptyFilter=document.getElementById('server-filter-empty');
   healthFilters.forEach(function(filter){
     filter.addEventListener('click',function(){
       var wanted=filter.getAttribute('data-health-filter');
-      healthFilters.forEach(function(item){ item.classList.remove('active'); });
+      healthFilters.forEach(function(item){
+        item.classList.remove('active');
+        item.setAttribute('aria-pressed','false');
+      });
       filter.classList.add('active');
+      filter.setAttribute('aria-pressed','true');
+      var visible=0;
       serverCards.forEach(function(card){
         card.hidden=wanted !== 'all' && card.getAttribute('data-server-status') !== wanted;
+        if(!card.hidden) visible++;
       });
+      if(emptyFilter) emptyFilter.classList.toggle('visible',visible===0);
     });
   });
   // Auto-refresh countdown.
@@ -155,10 +163,10 @@ const allTemplates = `
 </div>
 {{if .Flash}}<div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>{{end}}
 <div class="health-summary" aria-label="Server health summary">
-  <button type="button" class="health-filter active" data-health-filter="all"><span>All targets</span><strong>{{len .Servers}}</strong></button>
-  <button type="button" class="health-filter ok" data-health-filter="ok"><span>Healthy</span><strong>{{.OK}}</strong></button>
-  <button type="button" class="health-filter warn" data-health-filter="warn"><span>Needs attention</span><strong>{{.Warnings}}</strong></button>
-  <button type="button" class="health-filter error" data-health-filter="error"><span>Unavailable</span><strong>{{.Errors}}</strong></button>
+  <button type="button" class="health-filter active" data-health-filter="all" aria-pressed="true"><span>All targets</span><strong>{{len .Servers}}</strong></button>
+  <button type="button" class="health-filter ok" data-health-filter="ok" aria-pressed="false"><span>Healthy</span><strong>{{.OK}}</strong></button>
+  <button type="button" class="health-filter warn" data-health-filter="warn" aria-pressed="false"><span>Needs attention</span><strong>{{.Warnings}}</strong></button>
+  <button type="button" class="health-filter error" data-health-filter="error" aria-pressed="false"><span>Unavailable</span><strong>{{.Errors}}</strong></button>
 </div>
 {{if .Unknown}}<p class="restart-note">{{.Unknown}} target{{if ne .Unknown 1}}s{{end}} waiting for their first result.</p>{{end}}
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
@@ -225,6 +233,7 @@ const allTemplates = `
   <p class="empty">No servers configured yet. <a href="/servers">Add one.</a></p>
 {{end}}
 </div>
+<p id="server-filter-empty" class="filter-empty" role="status">No targets match this status filter.</p>
 
 {{if .Firings}}
 <h2>Recent Alerts</h2>
