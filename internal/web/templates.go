@@ -3,15 +3,16 @@ package web
 // css is the shared stylesheet served at /static/style.css.
 const css = `
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f0f2f5;color:#333;font-size:14px}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f6f8;color:#27313d;font-size:14px;line-height:1.45}
 a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}
-header{background:#1c2b4a;color:#fff;padding:0 1.5rem;display:flex;align-items:center;height:52px;gap:2rem}
+header{background:#18283b;color:#fff;padding:0 1.5rem;display:flex;align-items:center;height:56px;gap:2rem;border-bottom:3px solid #1b8a6b}
 header h1{font-size:1.1rem;font-weight:700;margin:0;white-space:nowrap}
-header nav{display:flex;gap:.25rem}
+header nav{display:flex;gap:.25rem;flex:1}
 header nav a{color:#a8bdd9;padding:.35rem .75rem;border-radius:4px;font-size:.85rem;white-space:nowrap}
 header nav a:hover,header nav a.active{background:#2d4a7a;color:#fff;text-decoration:none}
+.mode-picker{display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:#b7c8d9;white-space:nowrap}.mode-picker select{width:auto;background:#243a54;border-color:#49617b;color:#fff;padding:.25rem .45rem;font-size:.78rem}
 main{padding:1.5rem;max-width:1400px;margin:0 auto}
-h2{font-size:1.05rem;margin:0 0 1rem;color:#444}
+h2{font-size:1.15rem;margin:0 0 .25rem;color:#27313d}
 h3{font-size:.95rem;margin:0 0 .75rem;color:#555}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:1rem;margin-bottom:1.5rem}
 .card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);overflow:hidden}
@@ -54,6 +55,7 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 .notice{border-radius:5px;padding:.55rem 1rem;font-size:.84rem;margin-bottom:1rem}
 .notice-ok{background:#dff0d8;border:1px solid #a3d6a3}
 .notice-err{background:#f8d7da;border:1px solid #f5c6cb}
+.notice-info{background:#e7f1fb;border:1px solid #b9d8f5;color:#254e77}
 .section{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);padding:1rem;margin-bottom:1rem}
 .section h3{font-size:.88rem;color:#555;margin:0 0 .65rem;padding-bottom:.45rem;border-bottom:1px solid #eee}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
@@ -64,7 +66,16 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 .pill{display:inline-block;background:#eef2f7;color:#445;padding:.08rem .38rem;border-radius:3px;font-size:.72rem;margin:.05rem .15rem .05rem 0}
 .empty{color:#888;font-size:.87rem;padding:1rem 0}
 .table-scroll{overflow-x:auto}
+.page-intro{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1.1rem}.page-intro p{margin:0;color:#66717e;font-size:.86rem;max-width:58rem}
+.setup-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin:0 0 1rem}.setup-step{border:1px solid #dbe2e8;border-radius:5px;padding:.55rem .65rem;background:#fafcfd;font-size:.78rem;color:#637080}.setup-step strong{display:block;color:#334155;font-size:.8rem}.setup-step.active{border-color:#1b8a6b;background:#edf9f5}.setup-step.active strong{color:#12674f}
+.profile-note{margin:.5rem 0 0;padding:.55rem .65rem;border-left:3px solid #1b8a6b;background:#f1faf7;color:#3c5d54;font-size:.8rem}.profile-note code{font-size:.78rem}
+.form-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:.8rem}.form-section-title h3{margin:0}.form-section-title span{color:#788492;font-size:.78rem}
+.restart-note{font-size:.8rem;color:#66717e;margin:.2rem 0 0}.restart-note strong{color:#9b6700}
+.config-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin:1rem 0}.summary-item{background:#f8fafb;border:1px solid #e1e7eb;border-radius:5px;padding:.6rem .7rem}.summary-item span{display:block;color:#71808e;font-size:.72rem}.summary-item strong{display:block;margin-top:.08rem;font-size:.88rem;color:#27313d;word-break:break-word}
+details.form-block{padding-bottom:.1rem}.form-block summary{cursor:pointer;color:#0066cc;font-weight:600;font-size:.84rem;user-select:none}.form-block[open] summary{margin-bottom:.9rem}
+body[data-ui-mode="beginner"] .mode-advanced,body[data-ui-mode="beginner"] .mode-expert,body[data-ui-mode="advanced"] .mode-expert{display:none!important}
 @media(max-width:760px){header{height:auto;align-items:flex-start;flex-direction:column;padding:.75rem 1rem;gap:.5rem}header nav{flex-wrap:wrap}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
+@media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary{grid-template-columns:1fr 1fr}}
 `
 
 // allTemplates is parsed once at startup into the global template set.
@@ -78,9 +89,9 @@ const allTemplates = `
 <title>{{.Title}} — WatchSSH</title>
 <link rel="stylesheet" href="/static/style.css">
 {{if .Refresh}}<meta http-equiv="refresh" content="30">{{end}}
-</head><body>
+</head><body data-ui-mode="beginner">
 <header>
-  <h1>🖥 WatchSSH</h1>
+  <h1>WatchSSH</h1>
   <nav>
     <a href="/" {{if eq .Page "dashboard"}}class="active"{{end}}>Dashboard</a>
     <a href="/servers" {{if eq .Page "servers"}}class="active"{{end}}>Servers</a>
@@ -88,14 +99,32 @@ const allTemplates = `
     <a href="/history" {{if eq .Page "history"}}class="active"{{end}}>History</a>
     <a href="/config" {{if eq .Page "config"}}class="active"{{end}}>Configuration</a>
   </nav>
+  <label class="mode-picker">Mode
+    <select id="ui-mode" aria-label="Configuration complexity">
+      <option value="beginner">Beginner</option>
+      <option value="advanced">Advanced</option>
+      <option value="expert">Expert</option>
+    </select>
+  </label>
 </header>
 <main>
 {{end}}
 
 {{define "ftr"}}</main>
 <script>
-// Auto-refresh countdown
 (function(){
+  var modeSelect=document.getElementById('ui-mode');
+  function applyMode(mode){
+    if(['beginner','advanced','expert'].indexOf(mode)===-1) mode='beginner';
+    document.body.setAttribute('data-ui-mode',mode);
+    if(modeSelect) modeSelect.value=mode;
+  }
+  applyMode(localStorage.getItem('watchssh-ui-mode') || 'beginner');
+  if(modeSelect) modeSelect.addEventListener('change',function(){
+    localStorage.setItem('watchssh-ui-mode',modeSelect.value);
+    applyMode(modeSelect.value);
+  });
+  // Auto-refresh countdown.
   if(!document.querySelector('meta[http-equiv=refresh]')) return;
   var sec=30;
   var el=document.getElementById('refresh-count');
@@ -179,6 +208,8 @@ const allTemplates = `
 <div class="firing-item">
   <div class="msg">{{.Message}}</div>
   <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}}</div>
+  {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
+  {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
 </div>
 {{end}}
 {{end}}
@@ -597,7 +628,11 @@ const allTemplates = `
 
 {{define "servers-manage"}}
 {{template "hdr" .}}
-<h2>Server Management</h2>
+<div class="page-intro">
+  <div><h2>Server Management</h2><p>Build an agentless monitoring target. WatchSSH connects over SSH only when host metrics or a remote custom check are needed.</p></div>
+  <a href="#add-server" class="btn btn-primary">Add server</a>
+</div>
+<div class="notice notice-info mode-advanced">Advanced mode exposes operational probe settings. Switch to Expert only when you need custom commands or protocol-level tuning.</div>
 {{if .Flash}}<div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>{{end}}
 
 <div class="section">
@@ -634,8 +669,13 @@ const allTemplates = `
   {{end}}
 </div>
 
-<div class="form-wrap">
-  <h3>Add Server</h3>
+<div class="form-wrap" id="add-server">
+  <div class="form-section-title"><h3>Add Server</h3><span>Changes are saved to the active configuration file.</span></div>
+  <div class="setup-steps">
+    <div class="setup-step active"><strong>1. Choose a profile</strong>Start with suitable checks and tags.</div>
+    <div class="setup-step"><strong>2. Connect securely</strong>Use a restricted SSH account where required.</div>
+    <div class="setup-step"><strong>3. Verify and save</strong>Test connectivity before enabling monitoring.</div>
+  </div>
   <form method="post" action="/servers/add">
     <div class="form-row">
       <div>
@@ -647,21 +687,28 @@ const allTemplates = `
           <option value="raspberry-pi">Raspberry Pi / SBC</option>
           <option value="local">Local machine</option>
         </select>
+        <div class="profile-note" id="profile-note">Custom starts with host metrics. Add only the probes this target needs.</div>
       </div>
       <div>
         <label>Tags</label>
         <input type="text" name="tags" placeholder="linux, production, edge">
       </div>
     </div>
+    <div class="form-block">
+      <h4>Connection</h4>
     <div class="form-row">
       <div><label>Name *</label><input type="text" name="name" placeholder="web-01" required></div>
       <div><label>Host / IP *</label><input type="text" name="host" placeholder="192.168.1.10"></div>
     </div>
-    <div class="form-row">
+    <div class="form-row mode-advanced">
       <div><label>SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div>
-      <div><label>Username</label><input type="text" name="username" placeholder="monitor"></div>
+      <div></div>
     </div>
     <div class="form-row">
+      <div><label>SSH Username</label><input type="text" name="username" placeholder="monitor"></div>
+      <div><label id="auth-credential-label">Private Key File</label><input type="text" id="auth-credential" name="auth_credential" placeholder="~/.ssh/id_ed25519"></div>
+    </div>
+    <div class="form-row mode-advanced">
       <div>
         <label>Auth Type</label>
         <select name="auth_type">
@@ -670,7 +717,6 @@ const allTemplates = `
           <option value="agent">SSH Agent</option>
         </select>
       </div>
-      <div><label>Key File / Password</label><input type="text" name="auth_credential" placeholder="~/.ssh/id_ed25519"></div>
     </div>
     <div class="form-row">
       <div>
@@ -686,7 +732,8 @@ const allTemplates = `
         </label>
       </div>
     </div>
-    <div class="form-row w3">
+    </div>
+    <div class="form-row w3 mode-advanced">
       <div><label>Ping Count</label><input type="number" name="ping_count" value="3" min="1" max="10"></div>
       <div><label>Ping Timeout</label><input type="number" name="ping_timeout" value="5" min="1"></div>
       <div>
@@ -698,7 +745,8 @@ const allTemplates = `
     </div>
 
     <div class="form-block">
-      <h4>Connectivity Checks</h4>
+      <h4>Service &amp; Connectivity Checks</h4>
+      <p class="restart-note">Use a URL for application health. TLS, DNS and ports can verify the path to the application independently.</p>
       <div class="form-row">
         <div>
           <label>TCP Ports</label>
@@ -706,12 +754,12 @@ const allTemplates = `
         </div>
         <div><label>Port Timeout</label><input type="number" name="port_timeout" value="5" min="1"></div>
       </div>
-      <div class="form-row w3">
+      <div class="form-row w3 mode-advanced">
         <div><label>Banner Hosts</label><input type="text" name="banner_hosts" placeholder="ssh.example.com, smtp.example.com"></div>
         <div><label>Banner Port</label><input type="number" name="banner_port" value="22" min="1" max="65535"></div>
         <div><label>Expected Prefix</label><input type="text" name="banner_expected_prefix" placeholder="SSH-, 220, +PONG"></div>
       </div>
-      <div class="form-row"><div><label>Banner Timeout</label><input type="number" name="banner_timeout" value="5" min="1"></div><div></div></div>
+      <div class="form-row mode-advanced"><div><label>Banner Timeout</label><input type="number" name="banner_timeout" value="5" min="1"></div><div></div></div>
       <div class="form-row">
         <div>
           <label>HTTP URLs</label>
@@ -722,12 +770,12 @@ const allTemplates = `
           <div><label>HTTP Timeout</label><input type="number" name="http_timeout" value="10" min="1"></div>
         </div>
       </div>
-      <div class="form-row w3">
+      <div class="form-row w3 mode-advanced">
         <div><label>HTTP Method</label><select name="http_method"><option value="GET">GET</option><option value="HEAD">HEAD</option><option value="OPTIONS">OPTIONS</option></select></div>
         <div class="form-grow"><label>Expected Body</label><input type="text" name="http_expected_body" placeholder="optional response substring"></div>
       </div>
-      <details class="probe-details">
-        <summary>Additional network probes</summary>
+      <details class="probe-details mode-expert">
+        <summary>Advanced network probes: DNS, TLS, traceroute, NTP and banners</summary>
         <div class="form-row w3">
           <div><label>DNS Hosts</label><input type="text" name="dns_hosts" placeholder="example.com"></div>
           <div><label>DNS Type</label><input type="text" name="dns_type" value="A"></div>
@@ -757,14 +805,15 @@ const allTemplates = `
       </details>
     </div>
 
-    <div class="form-block">
-      <h4>Custom Check</h4>
+    <details class="form-block mode-expert">
+      <summary>Custom remote check</summary>
+      <p class="restart-note">Commands run through SSH on this target. Prefer a dedicated read-only monitoring account and a narrowly scoped command.</p>
       <div class="form-row w3">
         <div><label>Name</label><input type="text" name="custom_name" placeholder="service-running"></div>
         <div><label>Command</label><input type="text" name="custom_command" placeholder="pgrep -x nginx && echo OK"></div>
         <div><label>Expected Output</label><input type="text" name="custom_expected_output" placeholder="OK"></div>
       </div>
-    </div>
+    </details>
     <div class="form-actions">
       <button type="button" class="btn btn-secondary" id="btn-test-conn">Test Connection</button>
       <button type="submit" class="btn btn-primary">Add Server</button>
@@ -777,6 +826,17 @@ const allTemplates = `
   var btn = document.getElementById('btn-test-conn');
   var result = document.getElementById('test-conn-result');
   var profile = document.getElementById('server-profile');
+  var profileNote = document.getElementById('profile-note');
+  var authType = document.querySelector('[name=auth_type]');
+  var credentialLabel = document.getElementById('auth-credential-label');
+  var credential = document.getElementById('auth-credential');
+  var profileNotes = {
+    '': 'Custom starts with host metrics. Add only the probes this target needs.',
+    web: 'Adds ports 80/443 plus HTTP health, DNS and TLS checks for the selected host.',
+    harp: 'Adds HARP health, readiness and metrics endpoints plus DNS, TLS and ports 80/443.',
+    'raspberry-pi': 'Adds Raspberry Pi/SBC tags and a ping check. Enable Docker metrics when applicable.',
+    local: 'Runs host checks on the WatchSSH machine. No SSH credential is stored or used.'
+  };
   function setIfEmpty(form, name, value){
     var el = form.querySelector('[name='+name+']');
     if(el && !el.value.trim()) el.value = value;
@@ -791,6 +851,7 @@ const allTemplates = `
   if(profile){
     profile.addEventListener('change', function(){
       var form = profile.closest('form');
+      if(profileNote) profileNote.textContent = profileNotes[profile.value] || profileNotes[''];
       var host = form.querySelector('[name=host]').value.trim() || 'example.com';
       var local = form.querySelector('[name=local]');
       if(profile.value === 'local'){
@@ -825,6 +886,22 @@ const allTemplates = `
       }
     });
   }
+  function updateCredentialHint(){
+    if(!authType || !credentialLabel || !credential) return;
+    if(authType.value === 'password'){
+      credentialLabel.textContent = 'Password';
+      credential.placeholder = 'password or environment reference';
+      return;
+    }
+    if(authType.value === 'agent'){
+      credentialLabel.textContent = 'Credential';
+      credential.placeholder = 'not required for SSH agent';
+      return;
+    }
+    credentialLabel.textContent = 'Private Key File';
+    credential.placeholder = '~/.ssh/id_ed25519';
+  }
+  if(authType){ authType.addEventListener('change', updateCredentialHint); updateCredentialHint(); }
   if(!btn) return;
   btn.addEventListener('click', function(){
     var form = btn.closest('form');
@@ -866,6 +943,8 @@ const allTemplates = `
   <div class="firing-item">
     <div class="msg">{{.Message}}</div>
     <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}} — server: {{.Server}}</div>
+    {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
+    {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
   </div>
   {{end}}
   {{else}}
@@ -873,11 +952,46 @@ const allTemplates = `
   {{end}}
 </div>
 
+{{with .Watchdog}}
+<div class="section">
+  <h3>AI Watchdog</h3>
+  <table><tbody>
+    <tr><td class="m-label">State</td><td>{{if .Enabled}}<span class="dot dot-ok"></span>Enabled{{else}}<span class="dot dot-warn"></span>Disabled{{end}}</td></tr>
+    <tr><td class="m-label">Model</td><td><code>{{.Model}}</code></td></tr>
+    <tr><td class="m-label">Cooldown</td><td>{{.Cooldown}}s per source server</td></tr>
+    <tr><td class="m-label">Approved Actions</td><td>{{if .AllowedRemediations}}{{range .AllowedRemediations}}<code>{{.}}</code> {{end}}{{else}}<em>advisory only</em>{{end}}</td></tr>
+    <tr><td class="m-label">Identifiers</td><td>{{if .IncludeIdentifiers}}included{{else}}redacted{{end}}</td></tr>
+  </tbody></table>
+</div>
+{{end}}
+
+{{if .Remediations}}
+<div class="section">
+  <h3>Automatic Remediations ({{len .Remediations}})</h3>
+  <table>
+    <thead><tr><th>Name</th><th>State</th><th>Mode</th><th>Matches</th><th>Targets</th><th>Cooldown</th><th>Attempt Limit</th></tr></thead>
+    <tbody>
+    {{range .Remediations}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td>{{if .Enabled}}<span class="dot dot-ok"></span>Enabled{{else}}<span class="dot dot-warn"></span>Disabled{{end}}</td>
+      <td><code>{{if .Mode}}{{.Mode}}{{else}}alert{{end}}</code></td>
+      <td>{{if .Rules}}{{range .Rules}}{{.}} {{end}}{{else if .Metrics}}{{range .Metrics}}{{.}} {{end}}{{else}}<em>all alerts</em>{{end}}</td>
+      <td>{{if .Targets}}{{range .Targets}}{{.}} {{end}}{{else}}<em>alert source</em>{{end}}</td>
+      <td>{{.Cooldown}}s</td>
+      <td>{{.MaxAttempts}} / {{.Window}}s</td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+
 <div class="section">
   <h3>Alert Rules ({{len .Rules}})</h3>
   {{if .Rules}}
   <table>
-    <thead><tr><th>Name</th><th>Metric</th><th>Condition</th><th>Threshold</th><th>Servers</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Metric</th><th>Condition</th><th>Threshold</th><th>Scope</th><th>Servers</th><th></th></tr></thead>
     <tbody>
     {{range .Rules}}
     <tr>
@@ -885,6 +999,7 @@ const allTemplates = `
       <td><code>{{.Metric}}</code></td>
       <td>{{.Operator}}</td>
       <td>{{.Threshold}}</td>
+      <td>{{if .URL}}<code>{{.URL}}</code>{{else if .MountPoint}}<code>{{.MountPoint}}</code>{{else if .Port}}port {{.Port}}{{else}}<em>any</em>{{end}}</td>
       <td>{{if .Servers}}{{range .Servers}}{{.}} {{end}}{{else}}<em>all</em>{{end}}</td>
       <td>
         <form method="post" action="/alerts/remove" style="display:inline">
@@ -984,6 +1099,7 @@ const allTemplates = `
         {{end}}
       </div>
       <div><label>Port (port_closed only)</label><input type="number" name="port" placeholder="80" min="1" max="65535"></div>
+      <div><label>HTTP URL (HTTP only)</label><input type="url" name="url" placeholder="https://example.com/health"></div>
     </div>
     <div class="form-actions">
       <button type="submit" class="btn btn-primary">Add Rule</button>
@@ -1008,14 +1124,25 @@ const allTemplates = `
 
 {{define "config-page"}}
 {{template "hdr" .}}
-<h2>Configuration</h2>
+<div class="page-intro">
+  <div><h2>Configuration</h2><p>Set operational defaults for the central WatchSSH service. Server-specific checks, credentials and targets remain on the Servers page.</p></div>
+</div>
 {{if .Flash}}
 <div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>
 {{end}}
 <form method="post" action="/config">
 
+  <div class="config-summary" aria-label="Current configuration summary">
+    <div class="summary-item"><span>Polling</span><strong>Every {{.Config.Interval}} seconds</strong></div>
+    <div class="summary-item"><span>Workers</span><strong>{{if .Config.Workers}}{{.Config.Workers}} concurrent{{else}}Automatic{{end}}</strong></div>
+    <div class="summary-item"><span>History</span><strong>{{if eq .Config.Storage.Type "tinysql"}}tinySQL{{else}}Not stored{{end}}</strong></div>
+    <div class="summary-item"><span>Dashboard</span><strong>{{if .Config.Web.Enabled}}{{.Config.Web.Listen}}{{else}}Disabled{{end}}</strong></div>
+  </div>
+
+  <div class="notice notice-info">Use strict host-key checking and restricted SSH accounts for all remote systems. Credentials and alert routing remain intentionally outside this global settings form.</div>
+
   <div class="form-wrap" style="margin-top:0">
-    <h3>Polling &amp; Timing</h3>
+    <div class="form-section-title"><h3>Polling &amp; Timing</h3><span>Applies to all configured targets.</span></div>
     <div class="form-row w3">
       <div>
         <label>Poll Interval (seconds)</label>
@@ -1025,15 +1152,15 @@ const allTemplates = `
         <label>SSH Timeout (seconds)</label>
         <input type="number" name="timeout" value="{{.Config.Timeout}}" min="1" required>
       </div>
-      <div>
+      <div class="mode-advanced">
         <label>Max Concurrent Workers <small style="color:#888">(0 = unlimited)</small></label>
         <input type="number" name="workers" value="{{.Config.Workers}}" min="0">
       </div>
     </div>
   </div>
 
-  <div class="form-wrap">
-    <h3>Output</h3>
+  <div class="form-wrap mode-advanced">
+    <div class="form-section-title"><h3>Output</h3><span>For local logs or an external collector.</span></div>
     <div class="form-row">
       <div>
         <label>Output Type</label>
@@ -1049,9 +1176,9 @@ const allTemplates = `
     </div>
   </div>
 
-  <div class="form-wrap">
-    <h3>History Storage</h3>
-    <p style="font-size:.82rem;color:#888;margin:0 0 .75rem">Storage changes require a restart to take effect.</p>
+  <div class="form-wrap mode-advanced">
+    <div class="form-section-title"><h3>History Storage</h3><span>Persist metrics and alert evidence locally.</span></div>
+    <p class="restart-note"><strong>Restart required:</strong> storage changes take effect after WatchSSH restarts.</p>
     <div class="form-row w3">
       <div>
         <label>Storage Type</label>
@@ -1079,8 +1206,8 @@ const allTemplates = `
   </div>
 
   <div class="form-wrap">
-    <h3>Web Dashboard</h3>
-    <p style="font-size:.82rem;color:#888;margin:0 0 .75rem">Changes to the listen address require a restart to take effect. For shared access, configure <code>web.auth</code> with a bcrypt password hash in YAML or place the dashboard behind an authenticated TLS reverse proxy.</p>
+    <div class="form-section-title"><h3>Web Dashboard</h3><span>Local operator interface and API endpoints.</span></div>
+    <p class="restart-note"><strong>Restart required:</strong> a listen-address change takes effect after WatchSSH restarts. For shared access, configure <code>web.auth</code> with a bcrypt password hash in YAML or place the dashboard behind an authenticated TLS reverse proxy.</p>
     <div class="form-row">
       <div>
         <label>Enable Web Dashboard</label>
@@ -1089,7 +1216,7 @@ const allTemplates = `
           <option value="0" {{if not .Config.Web.Enabled}}selected{{end}}>Disabled</option>
         </select>
       </div>
-      <div>
+      <div class="mode-advanced">
         <label>Listen Address</label>
         <input type="text" name="web_listen" value="{{.Config.Web.Listen}}" placeholder=":8080">
       </div>
@@ -1097,9 +1224,9 @@ const allTemplates = `
   </div>
 
   <div class="form-wrap">
-    <h3>SSH Security</h3>
+    <div class="form-section-title"><h3>SSH Security</h3><span>Global trust policy for remote connections.</span></div>
     <div class="form-row">
-      <div>
+      <div class="mode-expert">
         <label>Known Hosts File <small style="color:#888">(blank = ~/.ssh/known_hosts)</small></label>
         <input type="text" name="known_hosts_path" value="{{.Config.KnownHostsPath}}" placeholder="~/.ssh/known_hosts">
       </div>

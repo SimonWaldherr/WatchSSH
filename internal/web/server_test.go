@@ -75,6 +75,32 @@ func TestDashboardAuthentication(t *testing.T) {
 	}
 }
 
+func TestInterfaceModeControlIsRendered(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/servers", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`id="ui-mode"`,
+		`value="beginner"`,
+		`value="advanced"`,
+		`value="expert"`,
+		"watchssh-ui-mode",
+		"Custom remote check",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body missing %q", want)
+		}
+	}
+}
+
 func TestReadyzNotReadyWithoutMetrics(t *testing.T) {
 	state := NewState(&config.Config{
 		Servers: []config.Server{{Name: "web-01", Host: "192.0.2.10", Username: "monitor"}},
@@ -224,6 +250,63 @@ func TestAddServerWithProfileAndChecks(t *testing.T) {
 	for _, want := range []string{"edge", "harp", "reverse-proxy"} {
 		if !containsString(added.Tags, want) {
 			t.Fatalf("tags = %#v, missing %q", added.Tags, want)
+		}
+	}
+}
+
+func TestAddAlertWithHTTPURL(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	state := NewState(&config.Config{Servers: []config.Server{{Name: "web-01", Local: true}}}, cfgPath)
+	srv := NewServer(state, ":0")
+
+	form := url.Values{}
+	form.Set("name", "health-slow")
+	form.Set("metric", "http_latency")
+	form.Set("operator", ">")
+	form.Set("threshold", "2000")
+	form.Set("url", "https://example.test/health")
+	form.Add("servers", "web-01")
+	req := httptest.NewRequest(http.MethodPost, "/alerts/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	rules := state.Config().Alerts.Rules
+	if len(rules) != 1 || rules[0].URL != "https://example.test/health" {
+		t.Fatalf("rules = %#v", rules)
+	}
+}
+
+func TestAlertsPageShowsRemediations(t *testing.T) {
+	state := NewState(&config.Config{
+		Servers: []config.Server{{Name: "web-01", Local: true}},
+		Alerts: config.AlertsConfig{Remediations: []config.RemediationConfig{{
+			Name: "restart-web", Enabled: true, Rules: []string{"health-down"}, Command: "service web restart",
+			Cooldown: 300, MaxAttempts: 3, Window: 3600,
+		}}, Watchdog: &config.WatchdogConfig{
+			Enabled: true, Model: "local-model", Cooldown: 300, AllowedRemediations: []string{"restart-web"},
+		}},
+	}, "")
+	state.Update(nil, []monitor.Firing{{
+		Message:      "health check failed",
+		Remediations: []monitor.RemediationResult{{Name: "restart-web", Target: "web-01", Status: "succeeded"}},
+		Watchdog:     &monitor.WatchdogResult{Model: "local-model", Status: "analyzed", Severity: "critical", Summary: "Restart selected"},
+	}})
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/alerts", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"AI Watchdog", "local-model", "Automatic Remediations", "restart-web", "Watchdog local-model: analyzed (critical) - Restart selected", "Remediation restart-web on web-01: succeeded"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body missing %q", want)
 		}
 	}
 }

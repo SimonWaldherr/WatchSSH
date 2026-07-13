@@ -264,6 +264,8 @@ type AlertRule struct {
 	MountPoint string `yaml:"mount_point"`
 	// Port filters port_closed to a specific port number (0 = any port).
 	Port int `yaml:"port"`
+	// URL filters HTTP probe metrics to one configured check URL (empty = any URL).
+	URL string `yaml:"url"`
 	// Servers limits the rule to named servers (empty = all servers).
 	Servers []string `yaml:"servers"`
 }
@@ -320,10 +322,12 @@ type AlertRoute struct {
 
 // AlertsConfig holds all alerting configuration.
 type AlertsConfig struct {
-	Rules  []AlertRule        `yaml:"rules"`
-	Routes []AlertRoute       `yaml:"routes"`
-	Email  *EmailConfig       `yaml:"email"`
-	Action *AlertActionConfig `yaml:"action"`
+	Rules        []AlertRule         `yaml:"rules"`
+	Routes       []AlertRoute        `yaml:"routes"`
+	Remediations []RemediationConfig `yaml:"remediations"`
+	Watchdog     *WatchdogConfig     `yaml:"watchdog"`
+	Email        *EmailConfig        `yaml:"email"`
+	Action       *AlertActionConfig  `yaml:"action"`
 	// Cooldown is the minimum number of seconds between repeated alerts for
 	// the same rule on the same server. Default: 3600.
 	Cooldown int `yaml:"cooldown"`
@@ -337,6 +341,55 @@ type AlertActionConfig struct {
 	AllowedExecutables []string `yaml:"allowed_executables"`
 	// Timeout is the maximum runtime in seconds (default 10).
 	Timeout int `yaml:"timeout"`
+}
+
+// RemediationConfig runs one explicitly enabled command on a configured
+// target after a matching alert fires. Targets default to the server that
+// raised the alert. Commands run through the target's existing SSH connection
+// settings, or locally for a server configured with local: true.
+//
+// Cooldown and MaxAttempts/Window limit automatic changes during a persistent
+// incident. The defaults are five minutes and three attempts per hour.
+type RemediationConfig struct {
+	Name    string `yaml:"name"`
+	Enabled bool   `yaml:"enabled"`
+	// Mode is alert (default) for deterministic rule matches, or watchdog for
+	// actions that the configured AI watchdog may select by name.
+	Mode        string   `yaml:"mode"`
+	Description string   `yaml:"description"`
+	Rules       []string `yaml:"rules"`
+	Metrics     []string `yaml:"metrics"`
+	Servers     []string `yaml:"servers"`
+	Targets     []string `yaml:"targets"`
+	Command     string   `yaml:"command"`
+	Timeout     int      `yaml:"timeout"`      // seconds, default 30
+	Cooldown    int      `yaml:"cooldown"`     // seconds, default 300
+	MaxAttempts int      `yaml:"max_attempts"` // default 3
+	Window      int      `yaml:"window"`       // seconds, default 3600
+}
+
+// WatchdogConfig sends a reduced, probe-focused alert snapshot to an
+// OpenAI-compatible Chat Completions API. The model can only select names from
+// AllowedRemediations; it cannot supply or alter shell commands.
+//
+// BaseURL may be an API base URL (for example http://127.0.0.1:1234/v1) or a
+// complete /chat/completions URL. APIKeyEnv is optional for local servers such
+// as LM Studio. The watchdog is disabled unless Enabled is explicitly true.
+type WatchdogConfig struct {
+	Enabled             bool     `yaml:"enabled"`
+	BaseURL             string   `yaml:"base_url"`
+	BaseURLEnv          string   `yaml:"base_url_env"`
+	APIKeyEnv           string   `yaml:"api_key_env"`
+	Model               string   `yaml:"model"`
+	Timeout             int      `yaml:"timeout"`         // seconds, default 20
+	Cooldown            int      `yaml:"cooldown"`        // seconds, default 300 per source server
+	MaxInputBytes       int      `yaml:"max_input_bytes"` // default 65536
+	MaxTokens           int      `yaml:"max_tokens"`      // default 300
+	Temperature         float64  `yaml:"temperature"`     // default 0 (deterministic)
+	ResponseFormat      string   `yaml:"response_format"` // json_schema (default) or json_object
+	IncludeIdentifiers  bool     `yaml:"include_identifiers"`
+	AllowedRemediations []string `yaml:"allowed_remediations"`
+	SystemPrompt        string   `yaml:"system_prompt"`
 }
 
 // Config is the root configuration structure.
@@ -451,6 +504,42 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Alerts.Action != nil && cfg.Alerts.Action.Timeout <= 0 {
 		cfg.Alerts.Action.Timeout = 10
+	}
+	for i := range cfg.Alerts.Remediations {
+		remediation := &cfg.Alerts.Remediations[i]
+		if remediation.Mode == "" {
+			remediation.Mode = "alert"
+		}
+		if remediation.Timeout == 0 {
+			remediation.Timeout = 30
+		}
+		if remediation.Cooldown == 0 {
+			remediation.Cooldown = 300
+		}
+		if remediation.MaxAttempts == 0 {
+			remediation.MaxAttempts = 3
+		}
+		if remediation.Window == 0 {
+			remediation.Window = 3600
+		}
+	}
+	if cfg.Alerts.Watchdog != nil {
+		watchdog := cfg.Alerts.Watchdog
+		if watchdog.Timeout == 0 {
+			watchdog.Timeout = 20
+		}
+		if watchdog.Cooldown == 0 {
+			watchdog.Cooldown = 300
+		}
+		if watchdog.MaxInputBytes == 0 {
+			watchdog.MaxInputBytes = 65536
+		}
+		if watchdog.MaxTokens == 0 {
+			watchdog.MaxTokens = 300
+		}
+		if watchdog.ResponseFormat == "" {
+			watchdog.ResponseFormat = "json_schema"
+		}
 	}
 	for i := range cfg.Alerts.Routes {
 		if cfg.Alerts.Routes[i].Webhook.Method == "" {
@@ -628,8 +717,92 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("alerts.action.command executable %q is not in alerts.action.allowed_executables", parts[0])
 		}
 	}
+	if err := validateRemediations(cfg.Alerts.Remediations, cfg.Servers); err != nil {
+		return err
+	}
+	if err := validateWatchdog(cfg.Alerts.Watchdog, cfg.Alerts.Remediations); err != nil {
+		return err
+	}
 	if err := validateAlertRoutes(cfg.Alerts.Routes); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateRemediations(remediations []RemediationConfig, servers []Server) error {
+	serverNames := make(map[string]struct{}, len(servers))
+	for _, server := range servers {
+		serverNames[server.Name] = struct{}{}
+	}
+	names := make(map[string]struct{}, len(remediations))
+	for i, remediation := range remediations {
+		name := strings.TrimSpace(remediation.Name)
+		if name == "" {
+			return fmt.Errorf("alerts.remediations[%d].name is required", i)
+		}
+		if _, exists := names[name]; exists {
+			return fmt.Errorf("alerts.remediations[%d].name %q is duplicated", i, name)
+		}
+		names[name] = struct{}{}
+		if strings.TrimSpace(remediation.Command) == "" {
+			return fmt.Errorf("alerts.remediations[%d].command is required", i)
+		}
+		if remediation.Mode != "alert" && remediation.Mode != "watchdog" {
+			return fmt.Errorf("alerts.remediations[%d].mode must be alert or watchdog", i)
+		}
+		if remediation.Timeout <= 0 || remediation.Cooldown <= 0 || remediation.MaxAttempts <= 0 || remediation.Window <= 0 {
+			return fmt.Errorf("alerts.remediations[%d] timeout, cooldown, max_attempts, and window must be greater than zero", i)
+		}
+		for _, target := range remediation.Targets {
+			if _, exists := serverNames[target]; !exists {
+				return fmt.Errorf("alerts.remediations[%d].targets contains unknown server %q", i, target)
+			}
+		}
+		for _, source := range remediation.Servers {
+			if _, exists := serverNames[source]; !exists {
+				return fmt.Errorf("alerts.remediations[%d].servers contains unknown server %q", i, source)
+			}
+		}
+	}
+	return nil
+}
+
+func validateWatchdog(watchdog *WatchdogConfig, remediations []RemediationConfig) error {
+	if watchdog == nil || !watchdog.Enabled {
+		return nil
+	}
+	if (strings.TrimSpace(watchdog.BaseURL) == "") == (strings.TrimSpace(watchdog.BaseURLEnv) == "") {
+		return fmt.Errorf("alerts.watchdog requires exactly one of base_url or base_url_env when enabled")
+	}
+	if strings.TrimSpace(watchdog.Model) == "" {
+		return fmt.Errorf("alerts.watchdog.model is required when enabled")
+	}
+	if watchdog.Timeout <= 0 || watchdog.Cooldown <= 0 || watchdog.MaxInputBytes < 1024 || watchdog.MaxTokens <= 0 {
+		return fmt.Errorf("alerts.watchdog timeout, cooldown, max_tokens, and max_input_bytes (>= 1024) must be positive")
+	}
+	if watchdog.Temperature < 0 || watchdog.Temperature > 2 {
+		return fmt.Errorf("alerts.watchdog.temperature must be between 0 and 2")
+	}
+	if watchdog.ResponseFormat != "json_schema" && watchdog.ResponseFormat != "json_object" {
+		return fmt.Errorf("alerts.watchdog.response_format must be json_schema or json_object")
+	}
+	available := make(map[string]RemediationConfig, len(remediations))
+	for _, remediation := range remediations {
+		available[remediation.Name] = remediation
+	}
+	seen := make(map[string]struct{}, len(watchdog.AllowedRemediations))
+	for _, name := range watchdog.AllowedRemediations {
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("alerts.watchdog.allowed_remediations contains duplicate %q", name)
+		}
+		seen[name] = struct{}{}
+		remediation, exists := available[name]
+		if !exists {
+			return fmt.Errorf("alerts.watchdog.allowed_remediations contains unknown remediation %q", name)
+		}
+		if !remediation.Enabled || remediation.Mode != "watchdog" {
+			return fmt.Errorf("alerts.watchdog remediation %q must be enabled with mode: watchdog", name)
+		}
 	}
 	return nil
 }

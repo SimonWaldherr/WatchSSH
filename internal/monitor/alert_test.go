@@ -168,6 +168,24 @@ func TestAlertManager_ConnectivityLatencyAndLoss(t *testing.T) {
 	}
 }
 
+func TestAlertManager_HTTPURLFilter(t *testing.T) {
+	metrics := []ServerMetrics{{
+		ServerName: "web-01",
+		Connectivity: ConnectivityStats{HTTP: []HTTPResult{
+			{URL: "https://example.test/ready", OK: false, StatusCode: 503},
+			{URL: "https://example.test/health", OK: true, StatusCode: 200, LatencyMs: 2500},
+		}},
+	}}
+	cfg := &config.Config{Alerts: config.AlertsConfig{Cooldown: 0, Rules: []config.AlertRule{
+		{Name: "health-slow", Metric: "http_latency", Operator: ">", Threshold: 2000, URL: "https://example.test/health"},
+		{Name: "health-down", Metric: "http_failed", Operator: "==", Threshold: 1, URL: "https://example.test/health"},
+	}}}
+	firings := NewAlertManager().Evaluate(metrics, cfg)
+	if len(firings) != 1 || firings[0].RuleName != "health-slow" || !strings.Contains(firings[0].Message, "https://example.test/health") {
+		t.Fatalf("URL-filtered firings = %#v", firings)
+	}
+}
+
 func TestAlertManager_DiskUsage(t *testing.T) {
 	am := NewAlertManager()
 	cfg := &config.Config{
@@ -559,5 +577,103 @@ func TestSendAlertRoutesSyslog(t *testing.T) {
 	got := string(buffer[:n])
 	if !strings.HasPrefix(got, "<131>1 2026-07-11T12:00:00Z ") || !strings.Contains(got, " watchssh-test - WATCHSSH - CPU high on app-01") {
 		t.Fatalf("syslog record = %q", got)
+	}
+}
+
+func TestRunRemediationsLocalAndCooldown(t *testing.T) {
+	cfg := &config.Config{
+		Servers: []config.Server{{Name: "web-01", Local: true}},
+		Alerts: config.AlertsConfig{Remediations: []config.RemediationConfig{{
+			Name: "restart-web", Enabled: true, Rules: []string{"WebUnavailable"},
+			Command: "printf restarted", Timeout: 1, Cooldown: 60, MaxAttempts: 3, Window: 3600,
+		}}},
+	}
+	monitor := &Monitor{remediationMgr: NewRemediationManager()}
+	firings := []Firing{{RuleName: "WebUnavailable", Metric: "http_failed", Server: "web-01"}}
+	monitor.runRemediations(cfg, firings)
+	if len(firings[0].Remediations) != 1 {
+		t.Fatalf("remediation results = %#v", firings[0].Remediations)
+	}
+	first := firings[0].Remediations[0]
+	if first.Status != "succeeded" || first.Output != "restarted" {
+		t.Fatalf("first remediation = %#v", first)
+	}
+
+	secondFirings := []Firing{{RuleName: "WebUnavailable", Metric: "http_failed", Server: "web-01"}}
+	monitor.runRemediations(cfg, secondFirings)
+	if got := secondFirings[0].Remediations; len(got) != 1 || got[0].Status != "skipped_cooldown" {
+		t.Fatalf("second remediation results = %#v", got)
+	}
+}
+
+func TestRemediationManagerRateLimit(t *testing.T) {
+	manager := NewRemediationManager()
+	remediation := config.RemediationConfig{Name: "restart-web", Cooldown: 1, MaxAttempts: 2, Window: 60}
+	now := time.Now()
+	if allowed, status := manager.allow(remediation, "web-01", now); !allowed || status != "" {
+		t.Fatalf("first attempt = allowed:%v status:%q", allowed, status)
+	}
+	if allowed, status := manager.allow(remediation, "web-01", now.Add(2*time.Second)); !allowed || status != "" {
+		t.Fatalf("second attempt = allowed:%v status:%q", allowed, status)
+	}
+	if allowed, status := manager.allow(remediation, "web-01", now.Add(4*time.Second)); allowed || status != "skipped_rate_limit" {
+		t.Fatalf("third attempt = allowed:%v status:%q", allowed, status)
+	}
+}
+
+func TestRunWatchdogSelectsOnlyAllowlistedRemediations(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var request chatCompletionRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.Model != "local-model" || request.ResponseFormat == nil {
+			t.Fatalf("watchdog request = %#v", request)
+		}
+		if strings.Contains(request.Messages[1].Content, "sensitive-web-01") {
+			t.Fatal("watchdog telemetry sent a server identifier without opt-in")
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"summary\":\"HTTP health check failed\",\"severity\":\"critical\",\"remediations\":[\"restart-web\",\"not-allowed\"]}"}}]}`))
+	}))
+	defer api.Close()
+
+	cfg := &config.Config{
+		Servers: []config.Server{{Name: "sensitive-web-01", Local: true}},
+		Alerts: config.AlertsConfig{
+			Remediations: []config.RemediationConfig{{
+				Name: "restart-web", Description: "Restart the web service", Enabled: true, Mode: "watchdog",
+				Command: "printf restarted", Timeout: 1, Cooldown: 60, MaxAttempts: 3, Window: 3600,
+			}},
+			Watchdog: &config.WatchdogConfig{
+				Enabled: true, BaseURL: api.URL, Model: "local-model", Timeout: 1, Cooldown: 60,
+				MaxInputBytes: 4096, MaxTokens: 100, ResponseFormat: "json_object", AllowedRemediations: []string{"restart-web"},
+			},
+		},
+	}
+	monitor := &Monitor{remediationMgr: NewRemediationManager(), watchdogMgr: NewWatchdogManager()}
+	metrics := []ServerMetrics{{
+		ServerName: "sensitive-web-01", Timestamp: time.Now(),
+		Connectivity: ConnectivityStats{HTTP: []HTTPResult{{URL: "https://private.example.test/health", OK: false, StatusCode: 503}}},
+	}}
+	firings := []Firing{{RuleName: "health-down", Metric: "http_failed", Server: "sensitive-web-01", Value: 503}}
+	monitor.runWatchdog(cfg, metrics, firings)
+
+	result := firings[0].Watchdog
+	if result == nil || result.Status != "analyzed" || result.Severity != "critical" || result.Summary != "HTTP health check failed" {
+		t.Fatalf("watchdog result = %#v", result)
+	}
+	if len(result.Remediations) != 1 || result.Remediations[0].Status != "succeeded" || result.Remediations[0].Output != "restarted" {
+		t.Fatalf("watchdog remediations = %#v", result.Remediations)
+	}
+	if len(result.RejectedRemediations) != 1 || result.RejectedRemediations[0] != "not-allowed" {
+		t.Fatalf("rejected remediations = %#v", result.RejectedRemediations)
+	}
+
+	monitor.runRemediations(cfg, firings)
+	if len(firings[0].Remediations) != 0 {
+		t.Fatalf("watchdog-only remediation ran through deterministic alert path: %#v", firings[0].Remediations)
 	}
 }

@@ -298,4 +298,35 @@ type Firing struct {
 	Value    float64   `json:"value"`
 	Message  string    `json:"message"`
 	FiredAt  time.Time `json:"fired_at"`
+	// Remediations records automatic actions attempted for this firing.
+	Remediations []RemediationResult `json:"remediations,omitempty"`
+	// Watchdog contains the optional AI watchdog analysis for this firing.
+	Watchdog *WatchdogResult `json:"watchdog,omitempty"`
+}
+
+// RemediationResult records one automatic command attempt after an alert.
+// Output is capped before it is persisted or exposed through the API.
+type RemediationResult struct {
+	Name       string    `json:"name"`
+	Target     string    `json:"target"`
+	StartedAt  time.Time `json:"started_at"`
+	DurationMs float64   `json:"duration_ms"`
+	Status     string    `json:"status"` // succeeded, failed, skipped_cooldown, skipped_rate_limit
+	Output     string    `json:"output,omitempty"`
+	Error      string    `json:"error,omitempty"`
+}
+
+// WatchdogResult records a bounded OpenAI-compatible watchdog analysis. Model
+// suggestions can only select configured remediation names, never commands.
+type WatchdogResult struct {
+	Model                 string              `json:"model"`
+	StartedAt             time.Time           `json:"started_at"`
+	DurationMs            float64             `json:"duration_ms"`
+	Status                string              `json:"status"` // analyzed, failed, skipped_cooldown
+	Severity              string              `json:"severity,omitempty"`
+	Summary               string              `json:"summary,omitempty"`
+	RequestedRemediations []string            `json:"requested_remediations,omitempty"`
+	RejectedRemediations  []string            `json:"rejected_remediations,omitempty"`
+	Remediations          []RemediationResult `json:"remediations,omitempty"`
+	Error                 string              `json:"error,omitempty"`
 }

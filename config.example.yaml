@@ -390,6 +390,14 @@ alerts:
       metric: http_failed
       operator: "=="
       threshold: 1
+      url: https://web-01.example.com/health
+
+    # Health endpoint is available but slower than two seconds.
+    - name: HealthCheckSlow
+      metric: http_latency
+      operator: ">"
+      threshold: 2000 # milliseconds
+      url: https://web-01.example.com/health
 
     # TLS certificate expiring soon (days remaining)
     - name: CertExpiringSoon
@@ -511,6 +519,70 @@ alerts:
   #       address: syslog.example.internal:514
   #       network: tcp   # udp (default) or tcp
   #       app_name: watchssh
+
+  # Explicit SSH remediation (optional). This runs only after a matching
+  # alert firing and only while enabled: true is set. With the defaults, a
+  # target is restarted at most once per 5 minutes and three times per hour.
+  # The target defaults to the server that triggered the alert; list targets
+  # when the health endpoint and service host are different.
+  # remediations:
+  #   - name: restart-nginx-after-health-failure
+  #     enabled: true
+  #     rules: [HealthCheckFailed]
+  #     targets: [web-01]
+  #     command: "/etc/init.d/nginx restart"
+  #     timeout: 30
+  #     cooldown: 300
+  #     max_attempts: 3
+  #     window: 3600
+  #
+  #   # A systemd equivalent. Commands run using the target's normal SSH auth.
+  #   # Grant only this command through sudoers when the monitoring account is
+  #   # not permitted to restart services directly.
+  #   - name: restart-harp-after-health-failure
+  #     enabled: false
+  #     rules: [HARPHealthDown]
+  #     targets: [harp-proxy]
+  #     command: "sudo -n systemctl restart harp"
+
+  # Optional AI watchdog. It is called only for new alert firings and sends a
+  # reduced probe snapshot to an OpenAI-compatible Chat Completions endpoint.
+  # Without approved actions it is advisory only. The model can request only
+  # listed remediation names, never arbitrary SSH commands.
+  # watchdog:
+  #   enabled: false
+  #   # LM Studio default OpenAI-compatible server:
+  #   base_url: http://127.0.0.1:1234/v1
+  #   # Or obtain the URL from the runtime environment (not both):
+  #   # base_url_env: WATCHSSH_WATCHDOG_BASE_URL
+  #   # OpenAI-compatible cloud endpoint alternative:
+  #   # base_url: https://api.openai.com/v1
+  #   # api_key_env: OPENAI_API_KEY
+  #   model: local-model-name
+  #   timeout: 20
+  #   cooldown: 300
+  #   max_input_bytes: 65536
+  #   max_tokens: 300
+  #   response_format: json_schema  # or json_object for older compatible APIs
+  #   # Keep server and endpoint names redacted by default.
+  #   include_identifiers: false
+  #   allowed_remediations:
+  #     - restart-nginx-watchdog
+  #   system_prompt: "Prefer no action unless a health check is clearly failing."
+  #
+  # The action remains independently enabled and targets a fixed host. Add it
+  # to the remediations list above with mode: watchdog so it cannot also run
+  # through deterministic alert matching.
+  #   - name: restart-nginx-watchdog
+  #     description: Restart the Nginx service after a confirmed health failure.
+  #     enabled: true
+  #     mode: watchdog
+  #     targets: [web-01]
+  #     command: "/etc/init.d/nginx restart"
+  #     timeout: 30
+  #     cooldown: 300
+  #     max_attempts: 3
+  #     window: 3600
 
   # SMTP email notifications (optional)
   # email:

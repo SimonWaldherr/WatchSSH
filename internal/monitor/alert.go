@@ -581,12 +581,18 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 		}
 	case "http_failed":
 		for _, h := range srv.Connectivity.HTTP {
+			if rule.URL != "" && h.URL != rule.URL {
+				continue
+			}
 			if !h.OK {
 				return float64(h.StatusCode), true
 			}
 		}
 	case "http_latency":
 		for _, h := range srv.Connectivity.HTTP {
+			if rule.URL != "" && h.URL != rule.URL {
+				continue
+			}
 			if cmp(h.LatencyMs, rule.Operator, rule.Threshold) {
 				return h.LatencyMs, true
 			}
@@ -739,8 +745,12 @@ func ruleAppliesToServer(rule config.AlertRule, name string) bool {
 }
 
 func formatAlertMessage(rule config.AlertRule, server string, value float64) string {
-	return fmt.Sprintf("[%s] Server %q — %s: %.2f %s %.2f",
-		rule.Name, server, rule.Metric, value, rule.Operator, rule.Threshold)
+	scope := ""
+	if rule.URL != "" {
+		scope = fmt.Sprintf(" (%s)", rule.URL)
+	}
+	return fmt.Sprintf("[%s] Server %q — %s%s: %.2f %s %.2f",
+		rule.Name, server, rule.Metric, scope, value, rule.Operator, rule.Threshold)
 }
 
 // ── SMTP email sending ────────────────────────────────────────────────────────

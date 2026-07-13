@@ -352,3 +352,90 @@ alerts:
 		t.Fatal("expected alert route with multiple targets to be rejected")
 	}
 }
+
+func TestLoad_RemediationDefaults(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: web-01
+    local: true
+alerts:
+  remediations:
+    - name: restart-web
+      enabled: true
+      rules: [WebUnavailable]
+      command: /etc/init.d/nginx restart
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	remediation := cfg.Alerts.Remediations[0]
+	if remediation.Timeout != 30 || remediation.Cooldown != 300 || remediation.MaxAttempts != 3 || remediation.Window != 3600 {
+		t.Fatalf("remediation defaults = %#v", remediation)
+	}
+}
+
+func TestLoad_RemediationRejectsUnknownTarget(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: web-01
+    local: true
+alerts:
+  remediations:
+    - name: restart-web
+      enabled: true
+      targets: [missing]
+      command: /etc/init.d/nginx restart
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected remediation target to be validated")
+	}
+}
+
+func TestLoad_WatchdogDefaults(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: web-01
+    local: true
+alerts:
+  remediations:
+    - name: restart-web
+      enabled: true
+      mode: watchdog
+      command: /etc/init.d/nginx restart
+  watchdog:
+    enabled: true
+    base_url: http://127.0.0.1:1234/v1
+    model: local-model
+    allowed_remediations: [restart-web]
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	watchdog := cfg.Alerts.Watchdog
+	if watchdog == nil || watchdog.Timeout != 20 || watchdog.Cooldown != 300 || watchdog.MaxInputBytes != 65536 || watchdog.MaxTokens != 300 || watchdog.ResponseFormat != "json_schema" {
+		t.Fatalf("watchdog defaults = %#v", watchdog)
+	}
+}
+
+func TestLoad_WatchdogRejectsAlertModeRemediation(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: web-01
+    local: true
+alerts:
+  remediations:
+    - name: restart-web
+      enabled: true
+      command: /etc/init.d/nginx restart
+  watchdog:
+    enabled: true
+    base_url: http://127.0.0.1:1234/v1
+    model: local-model
+    allowed_remediations: [restart-web]
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected watchdog to require remediation mode: watchdog")
+	}
+}

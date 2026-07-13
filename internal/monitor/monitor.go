@@ -22,14 +22,16 @@ type NotifyFunc func(metrics []ServerMetrics, firings []Firing)
 
 // Monitor periodically collects metrics from all configured servers.
 type Monitor struct {
-	cfg      *config.Config
-	cfgMu    sync.RWMutex // protects cfg (web UI may modify it concurrently)
-	output   OutputWriter
-	alertMgr *AlertManager
-	store    history.Store
-	notify   NotifyFunc
-	done     chan struct{}
-	wg       sync.WaitGroup
+	cfg            *config.Config
+	cfgMu          sync.RWMutex // protects cfg (web UI may modify it concurrently)
+	output         OutputWriter
+	alertMgr       *AlertManager
+	remediationMgr *RemediationManager
+	watchdogMgr    *WatchdogManager
+	store          history.Store
+	notify         NotifyFunc
+	done           chan struct{}
+	wg             sync.WaitGroup
 }
 
 // New returns a new Monitor. notify may be nil if no live state update is needed.
@@ -51,12 +53,14 @@ func NewWithStore(cfg *config.Config, notify NotifyFunc, store history.Store) *M
 		w = &ConsoleWriter{}
 	}
 	return &Monitor{
-		cfg:      cfg,
-		output:   w,
-		alertMgr: NewAlertManager(),
-		store:    store,
-		notify:   notify,
-		done:     make(chan struct{}),
+		cfg:            cfg,
+		output:         w,
+		alertMgr:       NewAlertManager(),
+		remediationMgr: NewRemediationManager(),
+		watchdogMgr:    NewWatchdogManager(),
+		store:          store,
+		notify:         notify,
+		done:           make(chan struct{}),
 	}
 }
 
@@ -154,6 +158,10 @@ func (m *Monitor) collect() {
 
 	// Alert evaluation
 	firings := m.alertMgr.Evaluate(results, cfg)
+	if len(firings) > 0 {
+		m.runWatchdog(cfg, results, firings)
+		m.runRemediations(cfg, firings)
+	}
 	if len(firings) > 0 && cfg.Alerts.Email != nil {
 		if err := SendAlertEmail(*cfg.Alerts.Email, firings); err != nil {
 			log.Printf("alert email: %v", err)

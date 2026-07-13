@@ -709,15 +709,17 @@ func (s *Server) handleRemoveServer(w http.ResponseWriter, r *http.Request) {
 // ── Alert management ──────────────────────────────────────────────────────────
 
 type alertsData struct {
-	Title       string
-	Page        string
-	Refresh     bool
-	Flash       string
-	FlashErr    bool
-	Firings     []monitor.Firing
-	Rules       []config.AlertRule
-	EmailCfg    *config.EmailConfig
-	ServerNames []string
+	Title        string
+	Page         string
+	Refresh      bool
+	Flash        string
+	FlashErr     bool
+	Firings      []monitor.Firing
+	Rules        []config.AlertRule
+	Remediations []config.RemediationConfig
+	Watchdog     *config.WatchdogConfig
+	EmailCfg     *config.EmailConfig
+	ServerNames  []string
 }
 
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
@@ -733,14 +735,16 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 	}
 	flash, flashErr := flashFromQuery(r)
 	s.render(w, "alerts-page", alertsData{
-		Title:       "Alerts",
-		Page:        "alerts",
-		Flash:       flash,
-		FlashErr:    flashErr,
-		Firings:     firings,
-		Rules:       cfg.Alerts.Rules,
-		EmailCfg:    cfg.Alerts.Email,
-		ServerNames: serverNames,
+		Title:        "Alerts",
+		Page:         "alerts",
+		Flash:        flash,
+		FlashErr:     flashErr,
+		Firings:      firings,
+		Rules:        cfg.Alerts.Rules,
+		Remediations: cfg.Alerts.Remediations,
+		Watchdog:     cfg.Alerts.Watchdog,
+		EmailCfg:     cfg.Alerts.Email,
+		ServerNames:  serverNames,
 	})
 }
 
@@ -788,6 +792,7 @@ func (s *Server) handleAddAlert(w http.ResponseWriter, r *http.Request) {
 		Threshold:  threshold,
 		MountPoint: r.FormValue("mount_point"),
 		Port:       port,
+		URL:        strings.TrimSpace(r.FormValue("url")),
 		Servers:    servers,
 	}
 	s.state.AddAlertRule(rule)

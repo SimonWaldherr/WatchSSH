@@ -730,6 +730,146 @@ Optional guarded alert actions are also supported via `alerts.action`:
 - executable must be listed in `allowed_executables`
 - command receives firings JSON on stdin
 
+### Automatic SSH Remediation
+
+An alert can run an explicitly enabled command on the SSH target that caused
+the alert, or on named target servers. This is intended for narrow, reversible
+operations such as restarting one service after an independent HTTP health
+probe fails. The command uses the target server's configured SSH credentials
+and strict host-key policy; `local: true` targets run it on the WatchSSH host.
+
+Every remediation is subject to a cooldown (default: 5 minutes) and an
+attempt budget (default: 3 attempts per hour) per remediation and target.
+Attempt outcomes are attached to the alert JSON, shown in the dashboard, and
+persisted with alert history when tinySQL storage is enabled. A remediation is
+only considered when its rule, metric, and optional source-server filters
+match. `enabled` must be explicitly `true`. The safety counters are in-memory
+and start fresh when WatchSSH restarts; do not use automatic remediation for
+irreversible operations. Commands should not print secrets because their
+output is retained with the alert, capped at 4 KiB.
+
+```yaml
+interval: 30
+alerts:
+  # Alert firings are the input to remediations. Keep this short enough for
+  # detection, then let the remediation-specific cooldown limit restarts.
+  cooldown: 60
+  rules:
+    - name: storefront-unhealthy
+      metric: http_failed
+      operator: "=="
+      threshold: 1
+      url: https://www.example.com/health
+      servers: [web-01]
+    - name: storefront-slow
+      metric: http_latency
+      operator: ">"
+      threshold: 2000 # milliseconds
+      url: https://www.example.com/health
+      servers: [web-01]
+  remediations:
+    - name: restart-storefront
+      enabled: true
+      rules: [storefront-unhealthy]
+      targets: [web-01]
+      command: "/etc/init.d/storefront restart"
+      timeout: 30
+      cooldown: 300
+      max_attempts: 3
+      window: 3600
+
+servers:
+  - name: web-01
+    host: web-01.example.internal
+    username: watchssh
+    checks:
+      http:
+        - url: https://www.example.com/health
+          expected_status: 200
+          timeout: 10
+```
+
+The `storefront-unhealthy` rule performs the restart for any response other
+than the expected HTTP 200 or a failed request. The `storefront-slow` rule is
+notification-only because it is not selected by the remediation. Use a
+dedicated least-privilege monitoring account and, when needed, a narrowly
+scoped `sudoers` rule such as `watchssh ALL=(root) NOPASSWD:
+/etc/init.d/storefront restart`; do not grant unrestricted sudo access.
+
+### AI Watchdog
+
+`alerts.watchdog` adds an optional decision layer for new alert firings. It
+sends a reduced, probe-focused snapshot to an OpenAI-compatible Chat
+Completions API, which makes it suitable for a local LM Studio server or a
+compatible hosted endpoint. The snapshot excludes process lists, logged-in
+users, credentials, custom command output, and TCP banners. Server and probe
+identifiers are pseudonymized unless `include_identifiers: true` is explicitly
+set.
+
+The model has no command or tool access. It returns a structured decision with
+a short summary, severity, and remediation *names*. A name is executed only
+when it appears in `allowed_remediations` and refers to an independently
+enabled remediation with `mode: watchdog`. The fixed command, targets,
+cooldown, and rate limit remain local WatchSSH configuration. Invalid API
+responses, unavailable models, or unknown action names fail closed and run no
+watchdog-selected command.
+
+```yaml
+alerts:
+  remediations:
+    - name: restart-storefront-watchdog
+      description: Restart the storefront service after a confirmed health failure.
+      enabled: true
+      mode: watchdog
+      targets: [web-01]
+      command: "/etc/init.d/storefront restart"
+      timeout: 30
+      cooldown: 300
+      max_attempts: 3
+      window: 3600
+
+  watchdog:
+    enabled: true
+    # LM Studio's OpenAI-compatible base URL. Use https://api.openai.com/v1
+    # plus api_key_env: OPENAI_API_KEY for the OpenAI API.
+    base_url: http://127.0.0.1:1234/v1
+    model: local-model-name
+    timeout: 20
+    cooldown: 300
+    max_input_bytes: 65536
+    max_tokens: 300
+    response_format: json_schema # json_object is available for older backends
+    include_identifiers: false
+    allowed_remediations: [restart-storefront-watchdog]
+    system_prompt: "Prefer no action unless the health probe is clearly failing."
+```
+
+Calls are limited per source server by `watchdog.cooldown`; the selected
+remediation then has its own cooldown and attempt budget. The decision and any
+resulting local action are retained with the firing and shown in the Alert UI.
+For LM Studio, start its local server and load a model before enabling the
+watchdog.
+
+Watchdog configuration reference:
+
+- `base_url` is an OpenAI-compatible API base URL; WatchSSH appends
+  `/chat/completions`. A complete `/chat/completions` URL is also accepted.
+  Use `base_url_env` instead when deployment configuration supplies the URL;
+  exactly one of these fields is required when the watchdog is enabled.
+- `api_key_env` is optional and is read only at request time. Set it for
+  hosted APIs; omit it for a local LM Studio instance without authentication.
+  The key is never written to WatchSSH configuration, history, alerts, or UI.
+- `response_format: json_schema` is the default and requires a backend that
+  supports structured JSON outputs. Use `json_object` only for older
+  compatible servers. A malformed response is recorded as a failed analysis
+  and cannot cause a remediation.
+- `max_input_bytes` caps the serialized probe snapshot before it leaves
+  WatchSSH. The watchdog does not follow HTTP redirects, and each request has
+  the configured `timeout`.
+- An empty `allowed_remediations` list makes the watchdog advisory-only.
+  Remediations without `mode: watchdog` retain the normal deterministic
+  alert-rule behavior and cannot be chosen by the model.
+
 ## Web Dashboard
 
 Enable the built-in web UI:
