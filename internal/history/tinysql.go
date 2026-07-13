@@ -3,6 +3,7 @@ package history
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,8 +45,11 @@ func OpenTinySQLWithConfig(storage config.StorageConfig) (*TinySQLStore, error) 
 	cfg.Autosave = true
 	cfg.BusyTimeout = 2 * time.Second
 	cfg.PingTimeout = 5 * time.Second
-	cfg.MaxOpenConns = 1
-	cfg.MaxIdleConns = 1
+	// tinySQL v0.19 persists secondary indexes and detects conflicting writers.
+	// Keep a small pool for concurrent dashboard reads while retrying only safe,
+	// whole history-batch writes below.
+	cfg.MaxOpenConns = 4
+	cfg.MaxIdleConns = 2
 
 	db, err := tsqldriver.OpenWithConfig(context.Background(), cfg)
 	if err != nil {
@@ -107,6 +111,16 @@ func (s *TinySQLStore) initSchema(ctx context.Context) error {
 			return fmt.Errorf("initializing tinySQL schema: %w", err)
 		}
 	}
+	indexes := []string{
+		`CREATE INDEX metric_samples_server_name_idx ON metric_samples(server_name)`,
+		`CREATE INDEX metric_samples_collected_at_idx ON metric_samples(collected_at)`,
+		`CREATE INDEX alert_firings_fired_at_idx ON alert_firings(fired_at)`,
+	}
+	for _, stmt := range indexes {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaError(err) {
+			return fmt.Errorf("initializing tinySQL indexes: %w", err)
+		}
+	}
 	if err := s.ensureMetricColumns(ctx); err != nil {
 		return err
 	}
@@ -132,16 +146,46 @@ func (s *TinySQLStore) ensureMetricColumns(ctx context.Context) error {
 		`ALTER TABLE metric_samples ADD COLUMN board_throttled_now BOOL`,
 	}
 	for _, stmt := range stmts {
-		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnError(err) {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !isDuplicateSchemaError(err) {
 			return fmt.Errorf("migrating tinySQL schema: %w", err)
 		}
 	}
 	return nil
 }
 
-func isDuplicateColumnError(err error) bool {
+func isDuplicateSchemaError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "already") || strings.Contains(msg, "duplicate") || strings.Contains(msg, "exists")
+}
+
+const tinySQLWriteAttempts = 3
+
+// retryTinySQLWrite retries a complete write batch after tinySQL rejects an
+// optimistic transaction conflict. The callback must be idempotent until its
+// transaction commits; history records use stable IDs for that reason.
+func retryTinySQLWrite(ctx context.Context, write func() error) error {
+	var err error
+	for attempt := 0; attempt < tinySQLWriteAttempts; attempt++ {
+		err = write()
+		if !errors.Is(err, tsqldriver.ErrTransactionConflict) {
+			return err
+		}
+		if attempt+1 == tinySQLWriteAttempts {
+			break
+		}
+
+		delay := time.Duration(attempt+1) * 25 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return err
 }
 
 // RecordMetrics persists metric samples.
@@ -149,22 +193,26 @@ func (s *TinySQLStore) RecordMetrics(ctx context.Context, records []MetricRecord
 	if len(records) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin metric history transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
 	const stmt = `INSERT INTO metric_samples
 		(id, collected_at, server_name, host, platform, has_error, cpu_usage, memory_usage, swap_usage, load1, disk_root_usage, ping_ok, ping_latency_ms, dns_ok, tls_cert_min_days, traceroute_hops, board_temperature_c, board_cpu_frequency_mhz, board_wifi_rssi_dbm, board_under_voltage_now, board_throttled_now, payload_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	for _, r := range records {
-		if _, err := tx.ExecContext(ctx, stmt, r.ID, r.CollectedAt, r.ServerName, r.Host, r.Platform, r.HasError, nullableFloat(r.CPUUsage), nullableFloat(r.MemoryUsage), nullableFloat(r.SwapUsage), nullableFloat(r.Load1), nullableFloat(r.DiskRootUsage), nullableBool(r.PingOK), nullableFloat(r.PingLatencyMS), nullableBool(r.DNSOK), nullableFloat(r.TLSCertMinDays), nullableFloat(r.TracerouteHops), nullableFloat(r.BoardTemperatureC), nullableFloat(r.BoardCPUFrequencyMHz), nullableFloat(r.BoardWiFiRSSIDbm), nullableBool(r.BoardUnderVoltageNow), nullableBool(r.BoardThrottledNow), r.PayloadJSON); err != nil {
-			return fmt.Errorf("insert metric history: %w", err)
+	if err := retryTinySQLWrite(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin metric history transaction: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit metric history: %w", err)
+		defer tx.Rollback() //nolint:errcheck
+		for _, r := range records {
+			if _, err := tx.ExecContext(ctx, stmt, r.ID, r.CollectedAt, r.ServerName, r.Host, r.Platform, r.HasError, nullableFloat(r.CPUUsage), nullableFloat(r.MemoryUsage), nullableFloat(r.SwapUsage), nullableFloat(r.Load1), nullableFloat(r.DiskRootUsage), nullableBool(r.PingOK), nullableFloat(r.PingLatencyMS), nullableBool(r.DNSOK), nullableFloat(r.TLSCertMinDays), nullableFloat(r.TracerouteHops), nullableFloat(r.BoardTemperatureC), nullableFloat(r.BoardCPUFrequencyMHz), nullableFloat(r.BoardWiFiRSSIDbm), nullableBool(r.BoardUnderVoltageNow), nullableBool(r.BoardThrottledNow), r.PayloadJSON); err != nil {
+				return fmt.Errorf("insert metric history: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit metric history: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	if err := s.applyRetention(ctx); err != nil {
 		return err
@@ -177,22 +225,26 @@ func (s *TinySQLStore) RecordFirings(ctx context.Context, records []FiringRecord
 	if len(records) == 0 {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin alert history transaction: %w", err)
-	}
-	defer tx.Rollback() //nolint:errcheck
-
 	const stmt = `INSERT INTO alert_firings
 		(id, fired_at, rule_name, metric, server, value, message, payload_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-	for _, r := range records {
-		if _, err := tx.ExecContext(ctx, stmt, r.ID, r.FiredAt, r.RuleName, r.Metric, r.Server, r.Value, r.Message, r.PayloadJSON); err != nil {
-			return fmt.Errorf("insert alert history: %w", err)
+	if err := retryTinySQLWrite(ctx, func() error {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("begin alert history transaction: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit alert history: %w", err)
+		defer tx.Rollback() //nolint:errcheck
+		for _, r := range records {
+			if _, err := tx.ExecContext(ctx, stmt, r.ID, r.FiredAt, r.RuleName, r.Metric, r.Server, r.Value, r.Message, r.PayloadJSON); err != nil {
+				return fmt.Errorf("insert alert history: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit alert history: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
 	}
 	if err := s.applyRetention(ctx); err != nil {
 		return err

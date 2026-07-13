@@ -3,11 +3,13 @@ package history
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	tsqldriver "github.com/SimonWaldherr/tinySQL/driver"
 )
 
 func TestTinySQLStoreRecordsHistory(t *testing.T) {
@@ -53,6 +55,7 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 
 	assertCount(t, store.db, "metric_samples", 1)
 	assertCount(t, store.db, "alert_firings", 1)
+	assertHistoryIndexes(t, store.db)
 
 	metrics, err := store.RecentMetrics(ctx, "localhost", 10)
 	if err != nil {
@@ -94,6 +97,36 @@ func TestTinySQLStoreRecordsHistory(t *testing.T) {
 	}
 }
 
+func assertHistoryIndexes(t *testing.T, db *sql.DB) {
+	t.Helper()
+	rows, err := db.Query(`SELECT name FROM sys.indexes`)
+	if err != nil {
+		t.Fatalf("querying tinySQL indexes: %v", err)
+	}
+	defer rows.Close()
+
+	got := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scanning tinySQL index: %v", err)
+		}
+		got[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating tinySQL indexes: %v", err)
+	}
+	for _, want := range []string{
+		"metric_samples_server_name_idx",
+		"metric_samples_collected_at_idx",
+		"alert_firings_fired_at_idx",
+	} {
+		if !got[want] {
+			t.Fatalf("tinySQL indexes = %#v, missing %q", got, want)
+		}
+	}
+}
+
 func TestTinySQLStoreRetentionDays(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.tinysql")
 	store, err := OpenTinySQLWithConfig(config.StorageConfig{Path: path, RetentionDays: 1})
@@ -118,6 +151,36 @@ func TestTinySQLStoreRetentionDays(t *testing.T) {
 	}
 	if len(records) != 0 {
 		t.Fatalf("RecentMetrics() len = %d, want 0 after retention", len(records))
+	}
+}
+
+func TestRetryTinySQLWriteRetriesOnlyTransactionConflicts(t *testing.T) {
+	attempts := 0
+	err := retryTinySQLWrite(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return tsqldriver.ErrTransactionConflict
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retryTinySQLWrite() error = %v", err)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+
+	attempts = 0
+	want := errors.New("write failed")
+	err = retryTinySQLWrite(context.Background(), func() error {
+		attempts++
+		return want
+	})
+	if !errors.Is(err, want) {
+		t.Fatalf("retryTinySQLWrite() error = %v, want %v", err, want)
+	}
+	if attempts != 1 {
+		t.Fatalf("non-conflict attempts = %d, want 1", attempts)
 	}
 }
 
