@@ -32,6 +32,86 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestOperationalEndpointsAndOpenAPI(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	srv := NewServer(state, ":0")
+
+	for _, path := range []string{"/healthz", "/livez"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, want %d", path, rec.Code, http.StatusOK)
+		}
+		if rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("%s Cache-Control = %q, want no-store", path, rec.Header().Get("Cache-Control"))
+		}
+		if rec.Header().Get("X-Request-ID") == "" {
+			t.Fatalf("%s did not return a request ID", path)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/openapi.json", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("OpenAPI status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/vnd.oai.openapi+json") {
+		t.Fatalf("OpenAPI Content-Type = %q", rec.Header().Get("Content-Type"))
+	}
+	var document map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &document); err != nil {
+		t.Fatalf("OpenAPI document is invalid JSON: %v", err)
+	}
+	if document["openapi"] != "3.1.0" {
+		t.Fatalf("OpenAPI version = %v, want 3.1.0", document["openapi"])
+	}
+	paths, ok := document["paths"].(map[string]any)
+	if !ok || paths["/api/v1/metrics"] == nil {
+		t.Fatalf("OpenAPI document does not declare /api/v1/metrics")
+	}
+}
+
+func TestVersionedAPIAndProblemResponses(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("versioned metrics status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/probes", nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("versioned probes POST status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/problem+json") {
+		t.Fatalf("problem Content-Type = %q", rec.Header().Get("Content-Type"))
+	}
+	var problem map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("problem response is invalid JSON: %v", err)
+	}
+	if problem["status"] != float64(http.StatusMethodNotAllowed) || problem["request_id"] == "" {
+		t.Fatalf("unexpected problem response: %#v", problem)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/history/metrics", nil)
+	rec = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled history status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/problem+json") {
+		t.Fatalf("disabled history Content-Type = %q", rec.Header().Get("Content-Type"))
+	}
+}
+
 func TestDashboardAuthentication(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("correct horse battery staple"), bcrypt.MinCost)
 	if err != nil {

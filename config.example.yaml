@@ -99,7 +99,7 @@ web:
   listen: ":8080"    # TCP address and port to listen on
 
   # Optional protection for the dashboard, JSON APIs, and /metrics.
-  # Keep healthz and readyz public for service managers and load balancers.
+  # Keep healthz, livez, and readyz public for service managers and load balancers.
   # Generate a bcrypt value interactively with: htpasswd -nBC 12 ops
   # auth:
   #   username: ops

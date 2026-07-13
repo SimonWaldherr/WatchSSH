@@ -522,10 +522,18 @@ records after the database file grows beyond the configured size.
 
 The web dashboard exposes the stored data at `/history`. JSON consumers can use:
 
-- `GET /api/history/metrics?server=<name>&limit=100`
-- `GET /api/history/alerts?limit=100`
-- `GET /api/history/summary?server=<name>&limit=500`
-- `GET /api/probes?server=<name>`
+- `GET /api/v1/metrics`
+- `GET /api/v1/history/metrics?server=<name>&limit=100`
+- `GET /api/v1/history/alerts?limit=100`
+- `GET /api/v1/history/summary?server=<name>&limit=500`
+- `GET /api/v1/probes?server=<name>`
+
+The machine-readable [OpenAPI 3.1](https://spec.openapis.org/oas/latest.html)
+document is available at `GET /openapi.json`; load it in Swagger UI, Redoc, or
+an API client of your choice. The existing unversioned `/api/...` routes remain
+available as compatibility aliases, but new integrations should use `/api/v1`.
+API errors use `application/problem+json` (RFC 9457) and include the response's
+`X-Request-ID` for correlation in clients, proxies, and support requests.
 
 WatchSSH also exposes current live values in Prometheus text format at
 `GET /metrics`. This endpoint reports current state only; persisted history
@@ -906,7 +914,12 @@ visible; less common network probes are grouped in an expandable section.
 Health endpoints for automation:
 
 - `GET /healthz` → liveness (`200 ok`)
+- `GET /livez` → Kubernetes-compatible alias for liveness (`200 ok`)
 - `GET /readyz` → readiness (`200` when first metrics are available, otherwise `503`)
+
+All health endpoints return `Cache-Control: no-store` and remain public when
+`web.auth` is enabled. The dashboard, `/openapi.json`, `/api/v1/...`, and
+`/metrics` retain the configured authentication policy.
 
 ## Architecture
 

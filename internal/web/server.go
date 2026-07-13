@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
@@ -77,15 +78,16 @@ var templates = template.Must(
 
 // Server is the HTTP monitoring dashboard.
 type Server struct {
-	state   *State
-	mux     *http.ServeMux
-	listen  string
-	history history.Store
+	state     *State
+	mux       *http.ServeMux
+	listen    string
+	history   history.Store
+	startedAt time.Time
 }
 
 // NewServer creates a Server backed by state, listening on addr.
 func NewServer(state *State, listen string, stores ...history.Store) *Server {
-	s := &Server{state: state, mux: http.NewServeMux(), listen: listen}
+	s := &Server{state: state, mux: http.NewServeMux(), listen: listen, startedAt: time.Now()}
 	if len(stores) > 0 {
 		s.history = stores[0]
 	}
@@ -107,6 +109,11 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if requestID == "" {
+			requestID = newRequestID()
+		}
+		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
 		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		w.Header().Set("Referrer-Policy", "same-origin")
@@ -116,9 +123,17 @@ func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+func newRequestID() string {
+	var bytes [12]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("watchssh-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", bytes)
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/livez" || r.URL.Path == "/readyz" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -157,13 +172,23 @@ func (s *Server) registerRoutes() {
 		fmt.Fprint(w, css)
 	})
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/livez", s.handleHealthz)
 	s.mux.HandleFunc("/readyz", s.handleReadyz)
+	s.mux.HandleFunc("/openapi.json", s.handleOpenAPI)
 	s.mux.HandleFunc("/api/test-connection", s.handleTestConnection)
 	s.mux.HandleFunc("/api/metrics", s.handleAPIMetrics)
 	s.mux.HandleFunc("/api/probes", s.handleAPIProbes)
 	s.mux.HandleFunc("/api/history/metrics", s.handleAPIHistoryMetrics)
 	s.mux.HandleFunc("/api/history/alerts", s.handleAPIHistoryAlerts)
 	s.mux.HandleFunc("/api/history/summary", s.handleAPIHistorySummary)
+	// /api/v1 is the stable, documented public API. The unversioned routes
+	// above remain compatibility aliases for existing integrations.
+	s.mux.HandleFunc("/api/v1/test-connection", s.handleTestConnection)
+	s.mux.HandleFunc("/api/v1/metrics", s.handleAPIMetrics)
+	s.mux.HandleFunc("/api/v1/probes", s.handleAPIProbes)
+	s.mux.HandleFunc("/api/v1/history/metrics", s.handleAPIHistoryMetrics)
+	s.mux.HandleFunc("/api/v1/history/alerts", s.handleAPIHistoryAlerts)
+	s.mux.HandleFunc("/api/v1/history/summary", s.handleAPIHistorySummary)
 	s.mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
 	s.mux.HandleFunc("/server/", s.handleServerDetail)
 	s.mux.HandleFunc("/history", s.handleHistory)
@@ -1005,13 +1030,10 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 // ── JSON API ──────────────────────────────────────────────────────────────────
 
 func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request) {
-	_ = r
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	metrics := s.state.Metrics()
-	// Use json encoder for streaming
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	_ = enc.Encode(metrics)
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.state.Metrics())
 }
 
 type probeAPIResult struct {
@@ -1021,6 +1043,9 @@ type probeAPIResult struct {
 }
 
 func (s *Server) handleAPIProbes(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	serverFilter := strings.TrimSpace(r.URL.Query().Get("server"))
 	results := make([]probeAPIResult, 0)
 	for _, m := range s.state.Metrics() {
@@ -1037,8 +1062,11 @@ func (s *Server) handleAPIProbes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAPIHistoryMetrics(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	if !s.historyEnabled() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
+		writeProblem(w, r, http.StatusServiceUnavailable, "History storage unavailable", "history storage is not enabled")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -1046,15 +1074,18 @@ func (s *Server) handleAPIHistoryMetrics(w http.ResponseWriter, r *http.Request)
 
 	records, err := s.history.RecentMetrics(ctx, strings.TrimSpace(r.URL.Query().Get("server")), parseLimit(r, 100))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeProblem(w, r, http.StatusInternalServerError, "History query failed", "unable to read metric history")
 		return
 	}
 	writeJSON(w, http.StatusOK, records)
 }
 
 func (s *Server) handleAPIHistoryAlerts(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	if !s.historyEnabled() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
+		writeProblem(w, r, http.StatusServiceUnavailable, "History storage unavailable", "history storage is not enabled")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -1062,7 +1093,7 @@ func (s *Server) handleAPIHistoryAlerts(w http.ResponseWriter, r *http.Request) 
 
 	records, err := s.history.RecentFirings(ctx, parseLimit(r, 100))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeProblem(w, r, http.StatusInternalServerError, "History query failed", "unable to read alert history")
 		return
 	}
 	writeJSON(w, http.StatusOK, records)
@@ -1087,8 +1118,11 @@ type historySummary struct {
 }
 
 func (s *Server) handleAPIHistorySummary(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	if !s.historyEnabled() {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history storage is not enabled"})
+		writeProblem(w, r, http.StatusServiceUnavailable, "History storage unavailable", "history storage is not enabled")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -1096,16 +1130,39 @@ func (s *Server) handleAPIHistorySummary(w http.ResponseWriter, r *http.Request)
 
 	records, err := s.history.RecentMetrics(ctx, strings.TrimSpace(r.URL.Query().Get("server")), parseLimit(r, 500))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		writeProblem(w, r, http.StatusInternalServerError, "History query failed", "unable to summarize metric history")
 		return
 	}
 	writeJSON(w, http.StatusOK, summarizeHistory(records))
 }
 
 func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
-	_ = r
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	var b strings.Builder
+	cfg := s.state.Config()
+	servers := s.state.Metrics()
+	b.WriteString("# HELP watchssh_build_info WatchSSH build and API compatibility information.\n")
+	b.WriteString("# TYPE watchssh_build_info gauge\n")
+	fmt.Fprintf(&b, "watchssh_build_info%s 1\n", prometheusLabels(map[string]string{"api_version": "v1", "metrics_schema": "2"}))
+	b.WriteString("# HELP watchssh_process_start_time_seconds Unix time when the WatchSSH web server started.\n")
+	b.WriteString("# TYPE watchssh_process_start_time_seconds gauge\n")
+	fmt.Fprintf(&b, "watchssh_process_start_time_seconds %.3f\n", float64(s.startedAt.UnixNano())/float64(time.Second))
+	b.WriteString("# HELP watchssh_ready Whether WatchSSH has initial data for every configured server.\n")
+	b.WriteString("# TYPE watchssh_ready gauge\n")
+	ready := len(cfg.Servers) > 0 && len(servers) >= len(cfg.Servers)
+	fmt.Fprintf(&b, "watchssh_ready %d\n", boolGauge(ready))
+	b.WriteString("# HELP watchssh_configured_servers Number of configured monitoring targets.\n")
+	b.WriteString("# TYPE watchssh_configured_servers gauge\n")
+	fmt.Fprintf(&b, "watchssh_configured_servers %d\n", len(cfg.Servers))
+	b.WriteString("# HELP watchssh_collected_servers Number of targets with current metrics.\n")
+	b.WriteString("# TYPE watchssh_collected_servers gauge\n")
+	fmt.Fprintf(&b, "watchssh_collected_servers %d\n", len(servers))
+	b.WriteString("# HELP watchssh_last_collection_timestamp_seconds Unix time of the most recent collection per target.\n")
+	b.WriteString("# TYPE watchssh_last_collection_timestamp_seconds gauge\n")
 	b.WriteString("# HELP watchssh_up Whether WatchSSH collected the host successfully.\n")
 	b.WriteString("# TYPE watchssh_up gauge\n")
 	b.WriteString("# HELP watchssh_cpu_usage_percent CPU usage percent.\n")
@@ -1160,13 +1217,16 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_board_under_voltage gauge\n")
 	b.WriteString("# HELP watchssh_board_throttled Whether the board is currently throttled.\n")
 	b.WriteString("# TYPE watchssh_board_throttled gauge\n")
-	for _, m := range s.state.Metrics() {
+	for _, m := range servers {
 		labels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "platform": m.Platform})
 		up := 1
 		if m.Error != "" {
 			up = 0
 		}
 		fmt.Fprintf(&b, "watchssh_up%s %d\n", labels, up)
+		if !m.Timestamp.IsZero() {
+			fmt.Fprintf(&b, "watchssh_last_collection_timestamp_seconds%s %.3f\n", labels, float64(m.Timestamp.UnixNano())/float64(time.Second))
+		}
 		if m.CPU != nil {
 			fmt.Fprintf(&b, "watchssh_cpu_usage_percent%s %.6f\n", labels, m.CPU.UsagePercent)
 		}
@@ -1193,8 +1253,10 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			fmt.Fprintf(&b, "watchssh_banner_probe_up%s %d\n", probeLabels, boolGauge(banner.OK))
 			fmt.Fprintf(&b, "watchssh_banner_probe_latency_ms%s %.6f\n", probeLabels, banner.LatencyMs)
 		}
-		for _, h := range m.Connectivity.HTTP {
-			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "target": h.URL, "method": h.Method})
+		for index, h := range m.Connectivity.HTTP {
+			// URLs may include sensitive query data and create uncontrolled label
+			// cardinality. The stable server-local index identifies configured probes.
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": strconv.Itoa(index + 1), "method": h.Method})
 			fmt.Fprintf(&b, "watchssh_http_probe_up%s %d\n", probeLabels, boolGauge(h.OK))
 			fmt.Fprintf(&b, "watchssh_http_probe_latency_ms%s %.6f\n", probeLabels, h.LatencyMs)
 		}
@@ -1351,8 +1413,41 @@ func parseLimit(r *http.Request, fallback int) int {
 	return limit
 }
 
+func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+	if r.Method == method {
+		return true
+	}
+	w.Header().Set("Allow", method)
+	writeProblem(w, r, http.StatusMethodNotAllowed, "Method not allowed", "this endpoint only accepts "+method)
+	return false
+}
+
+// problemDetails follows RFC 9457 and provides an integration-safe error shape.
+type problemDetails struct {
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	Status    int    `json:"status"`
+	Detail    string `json:"detail"`
+	Instance  string `json:"instance"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+func writeProblem(w http.ResponseWriter, r *http.Request, status int, title, detail string) {
+	w.Header().Set("Content-Type", "application/problem+json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(problemDetails{
+		Type:      "https://watchssh.dev/problems/" + strings.ToLower(strings.ReplaceAll(title, " ", "-")),
+		Title:     title,
+		Status:    status,
+		Detail:    detail,
+		Instance:  r.URL.Path,
+		RequestID: w.Header().Get("X-Request-ID"),
+	})
+}
+
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -1362,6 +1457,7 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok\n"))
 }
@@ -1383,6 +1479,7 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":          state,
