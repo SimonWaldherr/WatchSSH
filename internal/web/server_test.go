@@ -390,7 +390,10 @@ func TestHistoryPageAndAPI(t *testing.T) {
 		t.Fatalf("RecordFirings() error = %v", err)
 	}
 
-	state := NewState(&config.Config{Storage: config.StorageConfig{Type: "tinysql"}}, "")
+	state := NewState(&config.Config{
+		Storage: config.StorageConfig{Type: "tinysql"},
+		Servers: []config.Server{{Name: "localhost", Local: true}},
+	}, "")
 	srv := NewServer(state, ":0", store)
 
 	req := httptest.NewRequest(http.MethodGet, "/history", nil)
@@ -400,7 +403,7 @@ func TestHistoryPageAndAPI(t *testing.T) {
 		t.Fatalf("history status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Metric Samples", "localhost", "HighCPU"} {
+	for _, want := range []string{"Metric Samples", "localhost", "HighCPU", "History summary", "All targets", `value="localhost"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("history page missing %q", want)
 		}

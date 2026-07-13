@@ -253,6 +253,7 @@ type historyData struct {
 	MetricSamples  []history.MetricRecord
 	AlertFirings   []history.FiringRecord
 	ServerFilter   string
+	ServerNames    []string
 	Error          string
 }
 
@@ -264,6 +265,10 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		StorageEnabled: cfg.Storage.Type == "tinysql" && s.history != nil,
 		ServerFilter:   strings.TrimSpace(r.URL.Query().Get("server")),
 	}
+	for _, server := range cfg.Servers {
+		data.ServerNames = append(data.ServerNames, server.Name)
+	}
+	sort.Strings(data.ServerNames)
 	if !data.StorageEnabled {
 		s.render(w, "history-page", data)
 		return

@@ -242,8 +242,8 @@ const allTemplates = `
 
 {{define "history-page"}}
 {{template "hdr" .}}
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-  <h2 style="margin:0">History</h2>
+<div class="page-intro">
+  <div><h2>History</h2><p>Investigate recent measurements and alert evidence from the local tinySQL store.</p></div>
   {{if .StorageEnabled}}<span style="font-size:.8rem;color:#888">Newest records first</span>{{end}}
 </div>
 
@@ -252,13 +252,23 @@ const allTemplates = `
 {{else}}
   {{if .Error}}<div class="notice notice-err">{{.Error}}</div>{{end}}
 
+  <div class="config-summary" aria-label="History summary">
+    <div class="summary-item"><span>Metric samples</span><strong>{{len .MetricSamples}} loaded</strong></div>
+    <div class="summary-item"><span>Alert firings</span><strong>{{len .AlertFirings}} loaded</strong></div>
+    <div class="summary-item"><span>Scope</span><strong>{{if .ServerFilter}}{{.ServerFilter}}{{else}}All targets{{end}}</strong></div>
+    <div class="summary-item"><span>Storage</span><strong>tinySQL</strong></div>
+  </div>
+
   <div class="form-wrap" style="margin-top:0">
-    <h3>Filter</h3>
+    <div class="form-section-title"><h3>Scope</h3><span>Uses the server index for targeted history queries.</span></div>
     <form method="get" action="/history">
       <div class="form-row">
         <div>
-          <label>Server Name</label>
-          <input type="text" name="server" value="{{.ServerFilter}}" placeholder="all servers">
+          <label>Target</label>
+          <select name="server">
+            <option value="">All targets</option>
+            {{range .ServerNames}}<option value="{{.}}" {{if eq . $.ServerFilter}}selected{{end}}>{{.}}</option>{{end}}
+          </select>
         </div>
         <div style="display:flex;align-items:end;gap:.5rem">
           <button type="submit" class="btn btn-primary">Apply</button>
@@ -269,7 +279,7 @@ const allTemplates = `
   </div>
 
   <div class="section">
-    <h3>Metric Samples</h3>
+    <div class="form-section-title"><h3>Metric Samples</h3><span>Most recent 100 matching records.</span></div>
     {{if .MetricSamples}}
     <table>
       <thead><tr><th>Collected</th><th>Server</th><th>Platform</th><th>Status</th><th>CPU</th><th>RAM</th><th>Disk /</th><th>Load</th><th>Ping</th><th>DNS</th><th>TLS</th><th>Trace</th><th>Board</th></tr></thead>
@@ -297,7 +307,7 @@ const allTemplates = `
   </div>
 
   <div class="section">
-    <h3>Alert Firings</h3>
+    <div class="form-section-title"><h3>Alert Firings</h3><span>Most recent 100 records across all targets.</span></div>
     {{if .AlertFirings}}
     <table>
       <thead><tr><th>Fired</th><th>Rule</th><th>Metric</th><th>Server</th><th>Value</th><th>Message</th></tr></thead>
