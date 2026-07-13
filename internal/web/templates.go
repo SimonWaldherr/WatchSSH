@@ -5,12 +5,13 @@ const css = `
 *,*::before,*::after{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f6f8;color:#27313d;font-size:14px;line-height:1.45}
 a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}
+.skip-link{position:absolute;left:-9999px;top:.5rem;z-index:10;background:#fff;color:#18283b;border:2px solid #1b8a6b;border-radius:4px;padding:.4rem .65rem;font-weight:600}.skip-link:focus{left:.75rem}
 header{background:#18283b;color:#fff;padding:0 1.5rem;display:flex;align-items:center;height:56px;gap:2rem;border-bottom:3px solid #1b8a6b}
 header h1{font-size:1.1rem;font-weight:700;margin:0;white-space:nowrap}
 header nav{display:flex;gap:.25rem;flex:1}
 header nav a{color:#a8bdd9;padding:.35rem .75rem;border-radius:4px;font-size:.85rem;white-space:nowrap}
 header nav a:hover,header nav a.active{background:#2d4a7a;color:#fff;text-decoration:none}
-.mode-picker{display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:#b7c8d9;white-space:nowrap}.mode-picker select{width:auto;background:#243a54;border-color:#49617b;color:#fff;padding:.25rem .45rem;font-size:.78rem}
+.interface-controls{display:flex;align-items:center;gap:.7rem}.mode-picker{display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:#b7c8d9;white-space:nowrap}.mode-picker select{width:auto;background:#243a54;border-color:#49617b;color:#fff;padding:.25rem .45rem;font-size:.78rem}
 main{padding:1.5rem;max-width:1400px;margin:0 auto}
 h2{font-size:1.15rem;margin:0 0 .25rem;color:#27313d}
 h3{font-size:.95rem;margin:0 0 .75rem;color:#555}
@@ -75,7 +76,7 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 details.form-block{padding-bottom:.1rem}.form-block summary{cursor:pointer;color:#0066cc;font-weight:600;font-size:.84rem;user-select:none}.form-block[open] summary{margin-bottom:.9rem}
 body[data-ui-mode="beginner"] .mode-advanced,body[data-ui-mode="beginner"] .mode-expert,body[data-ui-mode="advanced"] .mode-expert{display:none!important}
 .health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0 1.25rem}.health-filter{appearance:none;width:100%;text-align:left;border:1px solid #dce3e8;border-radius:6px;background:#fff;padding:.65rem .75rem;cursor:pointer;color:#354151}.health-filter:hover,.health-filter.active{border-color:#1b8a6b;box-shadow:0 0 0 2px rgba(27,138,107,.12)}.health-filter span{display:block;font-size:.74rem;color:#6b7785}.health-filter strong{display:block;margin-top:.05rem;font-size:1.2rem;font-variant-numeric:tabular-nums}.health-filter.ok strong{color:#22863a}.health-filter.warn strong{color:#9b6700}.health-filter.error strong{color:#cb2431}.health-filter.unknown strong{color:#66717e}.server-card[hidden]{display:none}.filter-empty{display:none;padding:1.25rem 0;text-align:center;color:#66717e}.filter-empty.visible{display:block}
-@media(max-width:760px){header{height:auto;display:grid;grid-template-columns:1fr auto;align-items:center;padding:.65rem 1rem;gap:.5rem}header h1{grid-column:1}.mode-picker{grid-column:2;grid-row:1}header nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:.1rem}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
+@media(max-width:760px){header{height:auto;display:grid;grid-template-columns:1fr auto;align-items:center;padding:.65rem 1rem;gap:.5rem}header h1{grid-column:1}.interface-controls{grid-column:2;grid-row:1;gap:.35rem}.mode-picker{gap:.25rem}.mode-picker span{display:none}header nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:.1rem}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
 @media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary,.health-summary{grid-template-columns:1fr 1fr}}
 `
 
@@ -91,29 +92,67 @@ const allTemplates = `
 <link rel="stylesheet" href="/static/style.css">
 {{if .Refresh}}<meta http-equiv="refresh" content="30">{{end}}
 </head><body data-ui-mode="beginner">
+<a class="skip-link" href="#main-content" data-i18n="skip_to_content">Skip to content</a>
 <header>
   <h1>WatchSSH</h1>
-  <nav>
-    <a href="/" {{if eq .Page "dashboard"}}class="active"{{end}}>Dashboard</a>
-    <a href="/servers" {{if eq .Page "servers"}}class="active"{{end}}>Servers</a>
-    <a href="/alerts" {{if eq .Page "alerts"}}class="active"{{end}}>Alerts</a>
-    <a href="/history" {{if eq .Page "history"}}class="active"{{end}}>History</a>
-    <a href="/config" {{if eq .Page "config"}}class="active"{{end}}>Configuration</a>
+  <nav aria-label="Primary navigation" data-i18n-aria-label="primary_navigation">
+    <a href="/" {{if eq .Page "dashboard"}}class="active" aria-current="page"{{end}} data-i18n="dashboard">Dashboard</a>
+    <a href="/servers" {{if eq .Page "servers"}}class="active" aria-current="page"{{end}} data-i18n="servers">Servers</a>
+    <a href="/alerts" {{if eq .Page "alerts"}}class="active" aria-current="page"{{end}} data-i18n="alerts">Alerts</a>
+    <a href="/history" {{if eq .Page "history"}}class="active" aria-current="page"{{end}} data-i18n="history">History</a>
+    <a href="/config" {{if eq .Page "config"}}class="active" aria-current="page"{{end}} data-i18n="configuration">Configuration</a>
   </nav>
-  <label class="mode-picker">Mode
-    <select id="ui-mode" aria-label="Configuration complexity">
-      <option value="beginner">Beginner</option>
-      <option value="advanced">Advanced</option>
-      <option value="expert">Expert</option>
-    </select>
-  </label>
+  <div class="interface-controls">
+    <label class="mode-picker"><span data-i18n="mode">Mode</span>
+      <select id="ui-mode" aria-label="Configuration complexity" data-i18n-aria-label="configuration_complexity">
+        <option value="beginner" data-i18n="beginner">Beginner</option>
+        <option value="advanced" data-i18n="advanced">Advanced</option>
+        <option value="expert" data-i18n="expert">Expert</option>
+      </select>
+    </label>
+    <label class="mode-picker"><span data-i18n="language">Language</span>
+      <select id="ui-language" aria-label="Interface language" data-i18n-aria-label="interface_language">
+        <option value="en" data-i18n="english">English</option>
+        <option value="de" data-i18n="german">Deutsch</option>
+      </select>
+    </label>
+  </div>
 </header>
-<main>
+<main id="main-content" tabindex="-1">
 {{end}}
 
 {{define "ftr"}}</main>
 <script>
 (function(){
+  var translations={
+    en:{skip_to_content:'Skip to content',primary_navigation:'Primary navigation',dashboard:'Dashboard',servers:'Servers',alerts:'Alerts',history:'History',configuration:'Configuration',mode:'Mode',language:'Language',configuration_complexity:'Configuration complexity',interface_language:'Interface language',beginner:'Beginner',advanced:'Advanced',expert:'Expert',english:'English',german:'Deutsch',operations_overview:'Operations Overview',add_server:'Add server',manage_alerts:'Manage alerts',server_health_summary:'Server health summary',all_targets:'All targets',healthy:'Healthy',needs_attention:'Needs attention',unavailable:'Unavailable',targets:'Targets',details:'Details',no_targets_match:'No targets match this status filter.',server_management:'Server Management',configured_servers:'Configured Servers',test_connection:'Test Connection',add_alert_rule:'Add Alert Rule',start_with_template:'Start with a template',custom_rule:'Custom rule',add_rule:'Add Rule',remove:'Remove',remove_server:'Remove server',remove_alert_rule:'Remove alert rule'},
+    de:{skip_to_content:'Zum Inhalt springen',primary_navigation:'Hauptnavigation',dashboard:'Übersicht',servers:'Server',alerts:'Alerts',history:'Verlauf',configuration:'Konfiguration',mode:'Modus',language:'Sprache',configuration_complexity:'Konfigurationsumfang',interface_language:'Oberflächensprache',beginner:'Einfach',advanced:'Fortgeschritten',expert:'Expertin/Experte',english:'English',german:'Deutsch',operations_overview:'Betriebsübersicht',add_server:'Server hinzufügen',manage_alerts:'Alerts verwalten',server_health_summary:'Serverzustand',all_targets:'Alle Ziele',healthy:'Gesund',needs_attention:'Aufmerksamkeit nötig',unavailable:'Nicht erreichbar',targets:'Ziele',details:'Details',no_targets_match:'Keine Ziele entsprechen diesem Statusfilter.',server_management:'Serververwaltung',configured_servers:'Konfigurierte Server',test_connection:'Verbindung testen',add_alert_rule:'Alert-Regel hinzufügen',start_with_template:'Mit Vorlage beginnen',custom_rule:'Benutzerdefinierte Regel',add_rule:'Regel hinzufügen',remove:'Entfernen',remove_server:'Server entfernen',remove_alert_rule:'Alert-Regel entfernen'}
+  };
+  var languageSelect=document.getElementById('ui-language');
+  function applyLanguage(language){
+    if(!translations[language]) language='en';
+    var dictionary=translations[language];
+    document.documentElement.lang=language;
+    document.querySelectorAll('[data-i18n]').forEach(function(el){
+      var value=dictionary[el.getAttribute('data-i18n')];
+      if(value) el.textContent=value;
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el){
+      var value=dictionary[el.getAttribute('data-i18n-aria-label')];
+      if(value) el.setAttribute('aria-label',value);
+    });
+    document.querySelectorAll('[data-i18n-aria-prefix]').forEach(function(el){
+      var prefix=dictionary[el.getAttribute('data-i18n-aria-prefix')];
+      var value=el.getAttribute('data-i18n-aria-value');
+      if(prefix && value) el.setAttribute('aria-label',prefix+' '+value);
+    });
+    if(languageSelect) languageSelect.value=language;
+  }
+  applyLanguage(localStorage.getItem('watchssh-ui-language') || 'en');
+  if(languageSelect) languageSelect.addEventListener('change',function(){
+    localStorage.setItem('watchssh-ui-language',languageSelect.value);
+    applyLanguage(languageSelect.value);
+  });
   var modeSelect=document.getElementById('ui-mode');
   function applyMode(mode){
     if(['beginner','advanced','expert'].indexOf(mode)===-1) mode='beginner';
@@ -158,19 +197,19 @@ const allTemplates = `
 {{define "dashboard"}}
 {{template "hdr" .}}
 <div class="page-intro">
-  <div><h2>Operations Overview</h2><p>Live agentless checks across {{len .Servers}} configured targets. Select a status to focus the grid.</p></div>
-  <div class="form-actions" style="margin:0"><a href="/servers#add-server" class="btn btn-primary">Add server</a><a href="/alerts" class="btn btn-secondary">Manage alerts</a></div>
+  <div><h2 data-i18n="operations_overview">Operations Overview</h2><p>Live agentless checks across {{len .Servers}} configured targets. Select a status to focus the grid.</p></div>
+  <div class="form-actions" style="margin:0"><a href="/servers#add-server" class="btn btn-primary" data-i18n="add_server">Add server</a><a href="/alerts" class="btn btn-secondary" data-i18n="manage_alerts">Manage alerts</a></div>
 </div>
 {{if .Flash}}<div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>{{end}}
-<div class="health-summary" aria-label="Server health summary">
-  <button type="button" class="health-filter active" data-health-filter="all" aria-pressed="true"><span>All targets</span><strong>{{len .Servers}}</strong></button>
-  <button type="button" class="health-filter ok" data-health-filter="ok" aria-pressed="false"><span>Healthy</span><strong>{{.OK}}</strong></button>
-  <button type="button" class="health-filter warn" data-health-filter="warn" aria-pressed="false"><span>Needs attention</span><strong>{{.Warnings}}</strong></button>
-  <button type="button" class="health-filter error" data-health-filter="error" aria-pressed="false"><span>Unavailable</span><strong>{{.Errors}}</strong></button>
+<div class="health-summary" aria-label="Server health summary" data-i18n-aria-label="server_health_summary">
+  <button type="button" class="health-filter active" data-health-filter="all" aria-pressed="true"><span data-i18n="all_targets">All targets</span><strong>{{len .Servers}}</strong></button>
+  <button type="button" class="health-filter ok" data-health-filter="ok" aria-pressed="false"><span data-i18n="healthy">Healthy</span><strong>{{.OK}}</strong></button>
+  <button type="button" class="health-filter warn" data-health-filter="warn" aria-pressed="false"><span data-i18n="needs_attention">Needs attention</span><strong>{{.Warnings}}</strong></button>
+  <button type="button" class="health-filter error" data-health-filter="error" aria-pressed="false"><span data-i18n="unavailable">Unavailable</span><strong>{{.Errors}}</strong></button>
 </div>
 {{if .Unknown}}<p class="restart-note">{{.Unknown}} target{{if ne .Unknown 1}}s{{end}} waiting for their first result.</p>{{end}}
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-  <h3 style="margin:0">Targets</h3>
+  <h3 style="margin:0" data-i18n="targets">Targets</h3>
   <span style="font-size:.8rem;color:#888">Auto-refresh in <span id="refresh-count">30</span>s</span>
 </div>
 <div class="grid">
@@ -178,7 +217,7 @@ const allTemplates = `
   <div class="card server-card" data-server-status="{{serverStatus .}}">
     <div class="card-head">
       <span class="card-title" title="{{.ServerName}}">{{.ServerName}}</span>
-      <span class="badge badge-{{serverStatus .}}">{{serverStatusLabel .}}</span>
+      <span class="badge badge-{{serverStatus .}}" role="status">{{serverStatusLabel .}}</span>
     </div>
     <div class="card-body">
       {{if .Error}}
@@ -226,14 +265,14 @@ const allTemplates = `
     </div>
     <div class="card-foot">
       <span>{{timeAgo .Timestamp}}</span>
-      <a href="/server/{{.ServerName}}" class="btn btn-secondary btn-sm">Details</a>
+      <a href="/server/{{.ServerName}}" class="btn btn-secondary btn-sm" data-i18n="details">Details</a>
     </div>
   </div>
 {{else}}
   <p class="empty">No servers configured yet. <a href="/servers">Add one.</a></p>
 {{end}}
 </div>
-<p id="server-filter-empty" class="filter-empty" role="status">No targets match this status filter.</p>
+<p id="server-filter-empty" class="filter-empty" role="status" data-i18n="no_targets_match">No targets match this status filter.</p>
 
 {{if .Firings}}
 <h2>Recent Alerts</h2>
@@ -241,7 +280,7 @@ const allTemplates = `
 <div class="firing-item">
   <div class="msg">{{.Message}}</div>
   <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}}</div>
-  {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
+  {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .DeferredRemediations}}<div class="ts">Watchdog actions deferred below the configured severity: {{range .DeferredRemediations}}{{.}} {{end}}</div>{{end}}{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
   {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
 </div>
 {{end}}
@@ -672,14 +711,14 @@ const allTemplates = `
 {{define "servers-manage"}}
 {{template "hdr" .}}
 <div class="page-intro">
-  <div><h2>Server Management</h2><p>Build an agentless monitoring target. WatchSSH connects over SSH only when host metrics or a remote custom check are needed.</p></div>
-  <a href="#add-server" class="btn btn-primary">Add server</a>
+  <div><h2 data-i18n="server_management">Server Management</h2><p>Build an agentless monitoring target. WatchSSH connects over SSH only when host metrics or a remote custom check are needed.</p></div>
+  <a href="#add-server" class="btn btn-primary" data-i18n="add_server">Add server</a>
 </div>
 <div class="notice notice-info mode-advanced">Advanced mode exposes operational probe settings. Switch to Expert only when you need custom commands or protocol-level tuning.</div>
 {{if .Flash}}<div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>{{end}}
 
 <div class="section">
-  <h3>Configured Servers ({{len .Servers}})</h3>
+  <h3><span data-i18n="configured_servers">Configured Servers</span> ({{len .Servers}})</h3>
   {{if .Servers}}
   <div class="table-scroll">
   <table>
@@ -694,12 +733,12 @@ const allTemplates = `
       <td>{{if not .Host}}local{{else}}SSH{{end}}</td>
       <td>{{range .Tags}}<span class="pill">{{.}}</span>{{else}}—{{end}}</td>
       <td>{{.CheckSummary}}</td>
-      <td><span class="badge badge-{{serverStatus .ServerMetrics}}">{{serverStatusLabel .ServerMetrics}}</span></td>
+      <td><span class="badge badge-{{serverStatus .ServerMetrics}}" role="status">{{serverStatusLabel .ServerMetrics}}</span></td>
       <td>
         <form method="post" action="/servers/remove" style="display:inline">
           <input type="hidden" name="name" value="{{.ServerName}}">
-          <button type="submit" class="btn btn-danger btn-sm"
-            onclick="return confirm('Remove {{.ServerName}}?')">Remove</button>
+          <button type="submit" class="btn btn-danger btn-sm" aria-label="Remove server {{.ServerName}}" data-i18n-aria-prefix="remove_server" data-i18n-aria-value="{{.ServerName}}"
+            onclick="return confirm('Remove {{.ServerName}}?')" data-i18n="remove">Remove</button>
         </form>
       </td>
     </tr>
@@ -713,7 +752,7 @@ const allTemplates = `
 </div>
 
 <div class="form-wrap" id="add-server">
-  <div class="form-section-title"><h3>Add Server</h3><span>Changes are saved to the active configuration file.</span></div>
+  <div class="form-section-title"><h3 data-i18n="add_server">Add Server</h3><span>Changes are saved to the active configuration file.</span></div>
   <div class="setup-steps">
     <div class="setup-step active"><strong>1. Choose a profile</strong>Start with suitable checks and tags.</div>
     <div class="setup-step"><strong>2. Connect securely</strong>Use a restricted SSH account where required.</div>
@@ -722,8 +761,8 @@ const allTemplates = `
   <form method="post" action="/servers/add">
     <div class="form-row">
       <div>
-        <label>Profile</label>
-        <select name="profile" id="server-profile">
+        <label for="server-profile">Profile</label>
+        <select name="profile" id="server-profile" aria-describedby="profile-note">
           <option value="">Custom</option>
           <option value="web">Web / HTTPS service</option>
           <option value="harp">HARP reverse proxy</option>
@@ -733,23 +772,23 @@ const allTemplates = `
         <div class="profile-note" id="profile-note">Custom starts with host metrics. Add only the probes this target needs.</div>
       </div>
       <div>
-        <label>Tags</label>
-        <input type="text" name="tags" placeholder="linux, production, edge">
+        <label for="server-tags">Tags</label>
+        <input type="text" id="server-tags" name="tags" placeholder="linux, production, edge">
       </div>
     </div>
     <div class="form-block">
       <h4>Connection</h4>
     <div class="form-row">
-      <div><label>Name *</label><input type="text" name="name" placeholder="web-01" required></div>
-      <div><label>Host / IP *</label><input type="text" name="host" placeholder="192.168.1.10"></div>
+      <div><label for="server-name">Name *</label><input type="text" id="server-name" name="name" placeholder="web-01" required></div>
+      <div><label for="server-host">Host / IP *</label><input type="text" id="server-host" name="host" placeholder="192.168.1.10"></div>
     </div>
     <div class="form-row mode-advanced">
       <div><label>SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div>
       <div></div>
     </div>
     <div class="form-row">
-      <div><label>SSH Username</label><input type="text" name="username" placeholder="monitor"></div>
-      <div><label id="auth-credential-label">Private Key File</label><input type="text" id="auth-credential" name="auth_credential" placeholder="~/.ssh/id_ed25519"></div>
+      <div><label for="server-username">SSH Username</label><input type="text" id="server-username" name="username" placeholder="monitor"></div>
+      <div><label id="auth-credential-label" for="auth-credential">Private Key File</label><input type="text" id="auth-credential" name="auth_credential" placeholder="~/.ssh/id_ed25519"></div>
     </div>
     <div class="form-row mode-advanced">
       <div>
@@ -764,13 +803,13 @@ const allTemplates = `
     <div class="form-row">
       <div>
         <label class="inline-check">
-          <input type="checkbox" name="local" value="1">
+          <input type="checkbox" id="server-local" name="local" value="1">
           Monitor this machine locally (no SSH)
         </label>
       </div>
       <div>
         <label class="inline-check">
-          <input type="checkbox" name="ping" value="1">
+          <input type="checkbox" id="server-ping" name="ping" value="1">
           Enable ping check
         </label>
       </div>
@@ -858,9 +897,9 @@ const allTemplates = `
       </div>
     </details>
     <div class="form-actions">
-      <button type="button" class="btn btn-secondary" id="btn-test-conn">Test Connection</button>
-      <button type="submit" class="btn btn-primary">Add Server</button>
-      <span id="test-conn-result" style="font-size:.83rem;margin-left:.5rem"></span>
+      <button type="button" class="btn btn-secondary" id="btn-test-conn" data-i18n="test_connection">Test Connection</button>
+      <button type="submit" class="btn btn-primary" data-i18n="add_server">Add Server</button>
+      <span id="test-conn-result" role="status" aria-live="polite" style="font-size:.83rem;margin-left:.5rem"></span>
     </div>
   </form>
 </div>
@@ -986,7 +1025,7 @@ const allTemplates = `
   <div class="firing-item">
     <div class="msg">{{.Message}}</div>
     <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}} — server: {{.Server}}</div>
-    {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
+    {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .DeferredRemediations}}<div class="ts">Watchdog actions deferred below the configured severity: {{range .DeferredRemediations}}{{.}} {{end}}</div>{{end}}{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
     {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
   </div>
   {{end}}
@@ -1002,6 +1041,7 @@ const allTemplates = `
     <tr><td class="m-label">State</td><td>{{if .Enabled}}<span class="dot dot-ok"></span>Enabled{{else}}<span class="dot dot-warn"></span>Disabled{{end}}</td></tr>
     <tr><td class="m-label">Model</td><td><code>{{.Model}}</code></td></tr>
     <tr><td class="m-label">Cooldown</td><td>{{.Cooldown}}s per source server</td></tr>
+    <tr><td class="m-label">Action Severity</td><td>{{.MinRemediationSeverity}} or higher</td></tr>
     <tr><td class="m-label">Approved Actions</td><td>{{if .AllowedRemediations}}{{range .AllowedRemediations}}<code>{{.}}</code> {{end}}{{else}}<em>advisory only</em>{{end}}</td></tr>
     <tr><td class="m-label">Identifiers</td><td>{{if .IncludeIdentifiers}}included{{else}}redacted{{end}}</td></tr>
   </tbody></table>
@@ -1047,8 +1087,8 @@ const allTemplates = `
       <td>
         <form method="post" action="/alerts/remove" style="display:inline">
           <input type="hidden" name="name" value="{{.Name}}">
-          <button type="submit" class="btn btn-danger btn-sm"
-            onclick="return confirm('Remove rule {{.Name}}?')">Remove</button>
+          <button type="submit" class="btn btn-danger btn-sm" aria-label="Remove alert rule {{.Name}}" data-i18n-aria-prefix="remove_alert_rule" data-i18n-aria-value="{{.Name}}"
+            onclick="return confirm('Remove rule {{.Name}}?')" data-i18n="remove">Remove</button>
         </form>
       </td>
     </tr>
@@ -1061,13 +1101,32 @@ const allTemplates = `
 </div>
 
 <div class="form-wrap">
-  <h3>Add Alert Rule</h3>
+  <div class="form-section-title"><h3 data-i18n="add_alert_rule">Add Alert Rule</h3><span>Choose a template or configure every condition yourself.</span></div>
   <form method="post" action="/alerts/add">
     <div class="form-row">
-      <div><label>Rule Name *</label><input type="text" name="name" placeholder="High CPU" required></div>
       <div>
-        <label>Metric *</label>
-        <select name="metric" required>
+        <label for="alert-template" data-i18n="start_with_template">Start with a template</label>
+        <select id="alert-template" aria-describedby="alert-template-note">
+          <option value="" data-i18n="custom_rule">Custom rule</option>
+          <option value="cpu">High CPU usage</option>
+          <option value="disk">Disk almost full</option>
+          <option value="http-failed">HTTP health check failed</option>
+          <option value="http-slow">Slow HTTP response</option>
+          <option value="tls-expiry">TLS certificate expires soon</option>
+          <option value="ping-failed">Host is unreachable</option>
+        </select>
+        <div class="profile-note" id="alert-template-note">Custom rules expose the complete metric catalog.</div>
+      </div>
+      <div class="mode-advanced">
+        <label>Scope</label>
+        <p class="restart-note">Leave detailed scope empty to apply the rule to every compatible target.</p>
+      </div>
+    </div>
+    <div class="form-row">
+      <div><label for="alert-name">Rule Name *</label><input type="text" id="alert-name" name="name" placeholder="High CPU" required></div>
+      <div>
+        <label for="alert-metric">Metric *</label>
+        <select id="alert-metric" name="metric" required>
           <optgroup label="System">
           <option value="cpu_usage">cpu_usage (%)</option>
           <option value="mem_usage">mem_usage (%)</option>
@@ -1117,8 +1176,8 @@ const allTemplates = `
     </div>
     <div class="form-row w3">
       <div>
-        <label>Operator</label>
-        <select name="operator">
+        <label for="alert-operator">Operator</label>
+        <select id="alert-operator" name="operator">
           <option value=">">&gt;</option>
           <option value=">=">&gt;=</option>
           <option value="<">&lt;</option>
@@ -1127,10 +1186,10 @@ const allTemplates = `
           <option value="!=">!=</option>
         </select>
       </div>
-      <div><label>Threshold</label><input type="number" name="threshold" step="any" placeholder="90"></div>
-      <div><label>Mount Point (disk only)</label><input type="text" name="mount_point" placeholder="/"></div>
+      <div><label for="alert-threshold">Threshold</label><input type="number" id="alert-threshold" name="threshold" step="any" placeholder="90" required></div>
+      <div class="mode-advanced"><label>Mount Point (disk only)</label><input type="text" name="mount_point" placeholder="/"></div>
     </div>
-    <div class="form-row">
+    <div class="form-row mode-advanced">
       <div>
         <label>Limit to Servers <small style="color:#888">(hold Ctrl/⌘ for multi-select; none selected = all servers)</small></label>
         {{if $.ServerNames}}
@@ -1145,10 +1204,44 @@ const allTemplates = `
       <div><label>HTTP URL (HTTP only)</label><input type="url" name="url" placeholder="https://example.com/health"></div>
     </div>
     <div class="form-actions">
-      <button type="submit" class="btn btn-primary">Add Rule</button>
+      <button type="submit" class="btn btn-primary" data-i18n="add_rule">Add Rule</button>
     </div>
   </form>
 </div>
+
+<script>
+(function(){
+  var preset = document.getElementById('alert-template');
+  if(!preset) return;
+  var form = preset.closest('form');
+  var note = document.getElementById('alert-template-note');
+  var presets = {
+    cpu: {name:'High CPU usage', metric:'cpu_usage', operator:'>=', threshold:'90', note:'Warn when CPU usage reaches 90% or more.'},
+    disk: {name:'Disk almost full', metric:'disk_usage', operator:'>=', threshold:'90', mount:'/', note:'Warn when the root filesystem reaches 90% usage.'},
+    'http-failed': {name:'HTTP health check failed', metric:'http_failed', operator:'>', threshold:'0', note:'Warn when any configured HTTP health check fails.'},
+    'http-slow': {name:'Slow HTTP response', metric:'http_latency', operator:'>', threshold:'2000', note:'Warn when an HTTP response takes more than 2 seconds.'},
+    'tls-expiry': {name:'TLS certificate expires soon', metric:'tls_cert_expires_days', operator:'<=', threshold:'21', note:'Warn when a TLS certificate has 21 days or less remaining.'},
+    'ping-failed': {name:'Host is unreachable', metric:'ping_failed', operator:'>', threshold:'0', note:'Warn when the configured ping probe cannot reach a target.'}
+  };
+  function setValue(name, value){
+    var input = form.querySelector('[name='+name+']');
+    if(input && value !== undefined) input.value = value;
+  }
+  preset.addEventListener('change', function(){
+    var selected = presets[preset.value];
+    if(!selected){
+      if(note) note.textContent = 'Custom rules expose the complete metric catalog.';
+      return;
+    }
+    setValue('name', selected.name);
+    setValue('metric', selected.metric);
+    setValue('operator', selected.operator);
+    setValue('threshold', selected.threshold);
+    setValue('mount_point', selected.mount || '');
+    if(note) note.textContent = selected.note;
+  });
+})();
+</script>
 
 {{with .EmailCfg}}
 <div class="section" style="margin-top:1.25rem">

@@ -88,12 +88,20 @@ func TestInterfaceModeControlIsRendered(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
+		`class="skip-link"`,
+		`id="main-content"`,
+		`aria-label="Primary navigation"`,
+		`aria-current="page"`,
 		`id="ui-mode"`,
+		`id="ui-language"`,
 		`value="beginner"`,
 		`value="advanced"`,
 		`value="expert"`,
 		"watchssh-ui-mode",
+		"watchssh-ui-language",
+		"data-i18n",
 		"Custom remote check",
+		`role="status" aria-live="polite"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
@@ -337,7 +345,7 @@ func TestAlertsPageShowsRemediations(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"AI Watchdog", "local-model", "Automatic Remediations", "restart-web", "Watchdog local-model: analyzed (critical) - Restart selected", "Remediation restart-web on web-01: succeeded"} {
+	for _, want := range []string{"AI Watchdog", "local-model", "Automatic Remediations", "restart-web", "Watchdog local-model: analyzed (critical) - Restart selected", "Remediation restart-web on web-01: succeeded", `id="alert-template"`, "TLS certificate expires soon", "HTTP health check failed"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}

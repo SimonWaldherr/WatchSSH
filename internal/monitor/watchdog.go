@@ -56,13 +56,16 @@ type watchdogAlert struct {
 // custom command output, SSH credentials, and raw banners. Identifiers are
 // pseudonymous unless include_identifiers is explicitly enabled.
 type watchdogProbeSnapshot struct {
-	ServerRef       string          `json:"server_ref"`
-	Platform        string          `json:"platform,omitempty"`
-	CollectionError string          `json:"collection_error,omitempty"`
-	CPUUsage        *float64        `json:"cpu_usage_percent,omitempty"`
-	MemoryUsage     *float64        `json:"memory_usage_percent,omitempty"`
-	Load1           *float64        `json:"load1,omitempty"`
-	Probes          []watchdogProbe `json:"probes,omitempty"`
+	ServerRef        string          `json:"server_ref"`
+	Platform         string          `json:"platform,omitempty"`
+	CollectionError  string          `json:"collection_error,omitempty"`
+	CPUUsage         *float64        `json:"cpu_usage_percent,omitempty"`
+	MemoryUsage      *float64        `json:"memory_usage_percent,omitempty"`
+	Load1            *float64        `json:"load1,omitempty"`
+	Probes           []watchdogProbe `json:"probes,omitempty"`
+	ProbeCount       int             `json:"probe_count"`
+	FailedProbeCount int             `json:"failed_probe_count"`
+	FailedProbeTypes []string        `json:"failed_probe_types,omitempty"`
 }
 
 type watchdogProbe struct {
@@ -158,6 +161,11 @@ func (m *Monitor) runWatchdog(cfg *config.Config, metrics []ServerMetrics, firin
 		result.Severity = decision.Severity
 		result.Summary = abbreviateWatchdogText(decision.Summary, 1024)
 		result.RequestedRemediations = decision.Remediations
+		if !watchdogSeverityAtLeast(decision.Severity, watchdog.MinRemediationSeverity) {
+			result.DeferredRemediations = append(result.DeferredRemediations, decision.Remediations...)
+			firing.Watchdog = &result
+			continue
+		}
 		seen := make(map[string]struct{}, len(decision.Remediations))
 		for _, name := range decision.Remediations {
 			if _, duplicate := seen[name]; duplicate {
@@ -331,11 +339,24 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 	for index, probe := range metric.CustomChecks {
 		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "custom", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("custom-%d", index+1), includeIdentifiers), OK: probe.OK})
 	}
+	snapshot.ProbeCount = len(snapshot.Probes)
+	failedTypes := make(map[string]struct{})
+	for _, probe := range snapshot.Probes {
+		if probe.OK {
+			continue
+		}
+		snapshot.FailedProbeCount++
+		failedTypes[probe.Type] = struct{}{}
+	}
+	for probeType := range failedTypes {
+		snapshot.FailedProbeTypes = append(snapshot.FailedProbeTypes, probeType)
+	}
+	sort.Strings(snapshot.FailedProbeTypes)
 	return snapshot
 }
 
 func watchdogSystemPrompt(extra string) string {
-	prompt := "You are a conservative WatchSSH operations watchdog. Analyze only the provided telemetry. Return a JSON object with summary (max 500 characters), severity (info, warning, or critical), and remediations (an array of action names). Select an action only when telemetry strongly supports it. You may use only names listed in available_actions. Never invent commands, endpoints, or tool calls. An empty remediations array is preferred when uncertain."
+	prompt := "You are a conservative WatchSSH operations watchdog. Analyze only the provided telemetry. Return a JSON object with summary (max 500 characters), severity (info, warning, or critical), and remediations (an array of action names). Select an action only when telemetry strongly supports it. The reported severity must reflect the evidence, not the desired action. You may use only names listed in available_actions. Never invent commands, endpoints, or tool calls. An empty remediations array is preferred when uncertain."
 	if strings.TrimSpace(extra) != "" {
 		prompt += "\nAdditional operator policy:\n" + extra
 	}
@@ -385,6 +406,14 @@ func validateWatchdogDecision(decision watchdogDecision) error {
 		return fmt.Errorf("watchdog decision severity %q is invalid", decision.Severity)
 	}
 	return nil
+}
+
+func watchdogSeverityAtLeast(actual, minimum string) bool {
+	if minimum == "" {
+		minimum = "critical"
+	}
+	levels := map[string]int{"info": 1, "warning": 2, "critical": 3}
+	return levels[actual] >= levels[minimum]
 }
 
 func watchdogIdentifier(value, fallback string, include bool) string {

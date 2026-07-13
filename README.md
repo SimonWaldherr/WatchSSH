@@ -840,6 +840,9 @@ alerts:
     max_tokens: 300
     response_format: json_schema # json_object is available for older backends
     include_identifiers: false
+    # Model-selected actions execute only at this severity or higher.
+    # Keep critical for a conservative production default.
+    min_remediation_severity: critical
     allowed_remediations: [restart-storefront-watchdog]
     system_prompt: "Prefer no action unless the health probe is clearly failing."
 ```
@@ -865,7 +868,12 @@ Watchdog configuration reference:
   and cannot cause a remediation.
 - `max_input_bytes` caps the serialized probe snapshot before it leaves
   WatchSSH. The watchdog does not follow HTTP redirects, and each request has
-  the configured `timeout`.
+  the configured `timeout`. The snapshot includes an aggregate count and type
+  list for failed probes, while retaining the individual redacted probe facts.
+- `min_remediation_severity` defaults to `critical`. A model may still analyze
+  and recommend actions at `info` or `warning`, but WatchSSH records those
+  recommendations as deferred and executes no watchdog-selected command. Set
+  it to `warning` or `info` only for explicitly approved, low-risk runbooks.
 - An empty `allowed_remediations` list makes the watchdog advisory-only.
   Remediations without `mode: watchdog` retain the normal deterministic
   alert-rule behavior and cannot be chosen by the model.

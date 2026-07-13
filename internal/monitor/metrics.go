@@ -326,6 +326,7 @@ type WatchdogResult struct {
 	Severity              string              `json:"severity,omitempty"`
 	Summary               string              `json:"summary,omitempty"`
 	RequestedRemediations []string            `json:"requested_remediations,omitempty"`
+	DeferredRemediations  []string            `json:"deferred_remediations,omitempty"`
 	RejectedRemediations  []string            `json:"rejected_remediations,omitempty"`
 	Remediations          []RemediationResult `json:"remediations,omitempty"`
 	Error                 string              `json:"error,omitempty"`

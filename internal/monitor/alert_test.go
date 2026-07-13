@@ -636,6 +636,9 @@ func TestRunWatchdogSelectsOnlyAllowlistedRemediations(t *testing.T) {
 		if strings.Contains(request.Messages[1].Content, "sensitive-web-01") {
 			t.Fatal("watchdog telemetry sent a server identifier without opt-in")
 		}
+		if !strings.Contains(request.Messages[1].Content, `"failed_probe_count":1`) || !strings.Contains(request.Messages[1].Content, `"failed_probe_types":["http"]`) {
+			t.Fatalf("watchdog telemetry is missing probe failure summary: %s", request.Messages[1].Content)
+		}
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"summary\":\"HTTP health check failed\",\"severity\":\"critical\",\"remediations\":[\"restart-web\",\"not-allowed\"]}"}}]}`))
 	}))
 	defer api.Close()
@@ -675,5 +678,37 @@ func TestRunWatchdogSelectsOnlyAllowlistedRemediations(t *testing.T) {
 	monitor.runRemediations(cfg, firings)
 	if len(firings[0].Remediations) != 0 {
 		t.Fatalf("watchdog-only remediation ran through deterministic alert path: %#v", firings[0].Remediations)
+	}
+}
+
+func TestRunWatchdogDefersActionsBelowMinimumSeverity(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"summary\":\"Transient latency increase\",\"severity\":\"warning\",\"remediations\":[\"restart-web\"]}"}}]}`))
+	}))
+	defer api.Close()
+
+	cfg := &config.Config{
+		Servers: []config.Server{{Name: "web-01", Local: true}},
+		Alerts: config.AlertsConfig{
+			Remediations: []config.RemediationConfig{{
+				Name: "restart-web", Enabled: true, Mode: "watchdog", Command: "printf restarted", Timeout: 1, Cooldown: 60, MaxAttempts: 3, Window: 3600,
+			}},
+			Watchdog: &config.WatchdogConfig{
+				Enabled: true, BaseURL: api.URL, Model: "local-model", Timeout: 1, Cooldown: 60,
+				MaxInputBytes: 4096, MaxTokens: 100, ResponseFormat: "json_object", MinRemediationSeverity: "critical", AllowedRemediations: []string{"restart-web"},
+			},
+		},
+	}
+	monitor := &Monitor{remediationMgr: NewRemediationManager(), watchdogMgr: NewWatchdogManager()}
+	metrics := []ServerMetrics{{ServerName: "web-01", Timestamp: time.Now()}}
+	firings := []Firing{{RuleName: "high-latency", Metric: "http_latency", Server: "web-01", Value: 2500}}
+	monitor.runWatchdog(cfg, metrics, firings)
+
+	result := firings[0].Watchdog
+	if result == nil || result.Status != "analyzed" || result.Severity != "warning" {
+		t.Fatalf("watchdog result = %#v", result)
+	}
+	if len(result.Remediations) != 0 || len(result.DeferredRemediations) != 1 || result.DeferredRemediations[0] != "restart-web" {
+		t.Fatalf("watchdog action gate = %#v", result)
 	}
 }

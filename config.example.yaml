@@ -566,6 +566,9 @@ alerts:
   #   response_format: json_schema  # or json_object for older compatible APIs
   #   # Keep server and endpoint names redacted by default.
   #   include_identifiers: false
+  #   # Run model-selected actions only at this severity or higher.
+  #   # Valid values: info, warning, critical (default: critical).
+  #   min_remediation_severity: critical
   #   allowed_remediations:
   #     - restart-nginx-watchdog
   #   system_prompt: "Prefer no action unless a health check is clearly failing."

@@ -376,20 +376,21 @@ type RemediationConfig struct {
 // complete /chat/completions URL. APIKeyEnv is optional for local servers such
 // as LM Studio. The watchdog is disabled unless Enabled is explicitly true.
 type WatchdogConfig struct {
-	Enabled             bool     `yaml:"enabled"`
-	BaseURL             string   `yaml:"base_url"`
-	BaseURLEnv          string   `yaml:"base_url_env"`
-	APIKeyEnv           string   `yaml:"api_key_env"`
-	Model               string   `yaml:"model"`
-	Timeout             int      `yaml:"timeout"`         // seconds, default 20
-	Cooldown            int      `yaml:"cooldown"`        // seconds, default 300 per source server
-	MaxInputBytes       int      `yaml:"max_input_bytes"` // default 65536
-	MaxTokens           int      `yaml:"max_tokens"`      // default 300
-	Temperature         float64  `yaml:"temperature"`     // default 0 (deterministic)
-	ResponseFormat      string   `yaml:"response_format"` // json_schema (default) or json_object
-	IncludeIdentifiers  bool     `yaml:"include_identifiers"`
-	AllowedRemediations []string `yaml:"allowed_remediations"`
-	SystemPrompt        string   `yaml:"system_prompt"`
+	Enabled                bool     `yaml:"enabled"`
+	BaseURL                string   `yaml:"base_url"`
+	BaseURLEnv             string   `yaml:"base_url_env"`
+	APIKeyEnv              string   `yaml:"api_key_env"`
+	Model                  string   `yaml:"model"`
+	Timeout                int      `yaml:"timeout"`         // seconds, default 20
+	Cooldown               int      `yaml:"cooldown"`        // seconds, default 300 per source server
+	MaxInputBytes          int      `yaml:"max_input_bytes"` // default 65536
+	MaxTokens              int      `yaml:"max_tokens"`      // default 300
+	Temperature            float64  `yaml:"temperature"`     // default 0 (deterministic)
+	ResponseFormat         string   `yaml:"response_format"` // json_schema (default) or json_object
+	IncludeIdentifiers     bool     `yaml:"include_identifiers"`
+	MinRemediationSeverity string   `yaml:"min_remediation_severity"` // critical (default), warning, or info
+	AllowedRemediations    []string `yaml:"allowed_remediations"`
+	SystemPrompt           string   `yaml:"system_prompt"`
 }
 
 // Config is the root configuration structure.
@@ -539,6 +540,9 @@ func applyDefaults(cfg *Config) {
 		}
 		if watchdog.ResponseFormat == "" {
 			watchdog.ResponseFormat = "json_schema"
+		}
+		if watchdog.MinRemediationSeverity == "" {
+			watchdog.MinRemediationSeverity = "critical"
 		}
 	}
 	for i := range cfg.Alerts.Routes {
@@ -785,6 +789,9 @@ func validateWatchdog(watchdog *WatchdogConfig, remediations []RemediationConfig
 	}
 	if watchdog.ResponseFormat != "json_schema" && watchdog.ResponseFormat != "json_object" {
 		return fmt.Errorf("alerts.watchdog.response_format must be json_schema or json_object")
+	}
+	if watchdog.MinRemediationSeverity != "info" && watchdog.MinRemediationSeverity != "warning" && watchdog.MinRemediationSeverity != "critical" {
+		return fmt.Errorf("alerts.watchdog.min_remediation_severity must be info, warning, or critical")
 	}
 	available := make(map[string]RemediationConfig, len(remediations))
 	for _, remediation := range remediations {

@@ -414,7 +414,7 @@ alerts:
 		t.Fatalf("Load() error = %v", err)
 	}
 	watchdog := cfg.Alerts.Watchdog
-	if watchdog == nil || watchdog.Timeout != 20 || watchdog.Cooldown != 300 || watchdog.MaxInputBytes != 65536 || watchdog.MaxTokens != 300 || watchdog.ResponseFormat != "json_schema" {
+	if watchdog == nil || watchdog.Timeout != 20 || watchdog.Cooldown != 300 || watchdog.MaxInputBytes != 65536 || watchdog.MaxTokens != 300 || watchdog.ResponseFormat != "json_schema" || watchdog.MinRemediationSeverity != "critical" {
 		t.Fatalf("watchdog defaults = %#v", watchdog)
 	}
 }
