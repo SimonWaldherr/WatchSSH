@@ -101,6 +101,37 @@ func TestInterfaceModeControlIsRendered(t *testing.T) {
 	}
 }
 
+func TestDashboardRendersHealthSummary(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	state.Update([]monitor.ServerMetrics{
+		{ServerName: "ok", Timestamp: time.Now()},
+		{ServerName: "warn", Timestamp: time.Now(), CPU: &monitor.CPUStats{UsagePercent: 95}},
+		{ServerName: "down", Error: "connection refused"},
+		{ServerName: "pending"},
+	}, nil)
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Operations Overview",
+		`data-health-filter="warn"`,
+		`data-server-status="error"`,
+		"Needs attention",
+		"waiting for their first result",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body missing %q", want)
+		}
+	}
+}
+
 func TestReadyzNotReadyWithoutMetrics(t *testing.T) {
 	state := NewState(&config.Config{
 		Servers: []config.Server{{Name: "web-01", Host: "192.0.2.10", Username: "monitor"}},

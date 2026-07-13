@@ -196,6 +196,10 @@ type dashboardData struct {
 	FlashErr bool
 	Servers  []monitor.ServerMetrics
 	Firings  []monitor.Firing
+	OK       int
+	Warnings int
+	Errors   int
+	Unknown  int
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -216,13 +220,27 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	for i, j := 0, len(recent)-1; i < j; i, j = i+1, j-1 {
 		recent[i], recent[j] = recent[j], recent[i]
 	}
-	s.render(w, "dashboard", dashboardData{
+	servers := s.state.Metrics()
+	data := dashboardData{
 		Title:   "Dashboard",
 		Page:    "dashboard",
 		Refresh: true,
-		Servers: s.state.Metrics(),
+		Servers: servers,
 		Firings: recent,
-	})
+	}
+	for _, metrics := range servers {
+		switch serverStatus(metrics) {
+		case "ok":
+			data.OK++
+		case "warn":
+			data.Warnings++
+		case "error":
+			data.Errors++
+		default:
+			data.Unknown++
+		}
+	}
+	s.render(w, "dashboard", data)
 }
 
 // ── History ───────────────────────────────────────────────────────────────────

@@ -74,8 +74,9 @@ input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px 
 .config-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin:1rem 0}.summary-item{background:#f8fafb;border:1px solid #e1e7eb;border-radius:5px;padding:.6rem .7rem}.summary-item span{display:block;color:#71808e;font-size:.72rem}.summary-item strong{display:block;margin-top:.08rem;font-size:.88rem;color:#27313d;word-break:break-word}
 details.form-block{padding-bottom:.1rem}.form-block summary{cursor:pointer;color:#0066cc;font-weight:600;font-size:.84rem;user-select:none}.form-block[open] summary{margin-bottom:.9rem}
 body[data-ui-mode="beginner"] .mode-advanced,body[data-ui-mode="beginner"] .mode-expert,body[data-ui-mode="advanced"] .mode-expert{display:none!important}
+.health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0 1.25rem}.health-filter{appearance:none;width:100%;text-align:left;border:1px solid #dce3e8;border-radius:6px;background:#fff;padding:.65rem .75rem;cursor:pointer;color:#354151}.health-filter:hover,.health-filter.active{border-color:#1b8a6b;box-shadow:0 0 0 2px rgba(27,138,107,.12)}.health-filter span{display:block;font-size:.74rem;color:#6b7785}.health-filter strong{display:block;margin-top:.05rem;font-size:1.2rem;font-variant-numeric:tabular-nums}.health-filter.ok strong{color:#22863a}.health-filter.warn strong{color:#9b6700}.health-filter.error strong{color:#cb2431}.health-filter.unknown strong{color:#66717e}.server-card[hidden]{display:none}
 @media(max-width:760px){header{height:auto;align-items:flex-start;flex-direction:column;padding:.75rem 1rem;gap:.5rem}header nav{flex-wrap:wrap}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
-@media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary{grid-template-columns:1fr 1fr}}
+@media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary,.health-summary{grid-template-columns:1fr 1fr}}
 `
 
 // allTemplates is parsed once at startup into the global template set.
@@ -124,6 +125,18 @@ const allTemplates = `
     localStorage.setItem('watchssh-ui-mode',modeSelect.value);
     applyMode(modeSelect.value);
   });
+  var healthFilters=document.querySelectorAll('[data-health-filter]');
+  var serverCards=document.querySelectorAll('[data-server-status]');
+  healthFilters.forEach(function(filter){
+    filter.addEventListener('click',function(){
+      var wanted=filter.getAttribute('data-health-filter');
+      healthFilters.forEach(function(item){ item.classList.remove('active'); });
+      filter.classList.add('active');
+      serverCards.forEach(function(card){
+        card.hidden=wanted !== 'all' && card.getAttribute('data-server-status') !== wanted;
+      });
+    });
+  });
   // Auto-refresh countdown.
   if(!document.querySelector('meta[http-equiv=refresh]')) return;
   var sec=30;
@@ -136,14 +149,25 @@ const allTemplates = `
 
 {{define "dashboard"}}
 {{template "hdr" .}}
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
-  <h2 style="margin:0">Servers ({{len .Servers}})</h2>
-  <span style="font-size:.8rem;color:#888">Auto-refresh in <span id="refresh-count">30</span>s</span>
+<div class="page-intro">
+  <div><h2>Operations Overview</h2><p>Live agentless checks across {{len .Servers}} configured targets. Select a status to focus the grid.</p></div>
+  <div class="form-actions" style="margin:0"><a href="/servers#add-server" class="btn btn-primary">Add server</a><a href="/alerts" class="btn btn-secondary">Manage alerts</a></div>
 </div>
 {{if .Flash}}<div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>{{end}}
+<div class="health-summary" aria-label="Server health summary">
+  <button type="button" class="health-filter active" data-health-filter="all"><span>All targets</span><strong>{{len .Servers}}</strong></button>
+  <button type="button" class="health-filter ok" data-health-filter="ok"><span>Healthy</span><strong>{{.OK}}</strong></button>
+  <button type="button" class="health-filter warn" data-health-filter="warn"><span>Needs attention</span><strong>{{.Warnings}}</strong></button>
+  <button type="button" class="health-filter error" data-health-filter="error"><span>Unavailable</span><strong>{{.Errors}}</strong></button>
+</div>
+{{if .Unknown}}<p class="restart-note">{{.Unknown}} target{{if ne .Unknown 1}}s{{end}} waiting for their first result.</p>{{end}}
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+  <h3 style="margin:0">Targets</h3>
+  <span style="font-size:.8rem;color:#888">Auto-refresh in <span id="refresh-count">30</span>s</span>
+</div>
 <div class="grid">
 {{range .Servers}}
-  <div class="card">
+  <div class="card server-card" data-server-status="{{serverStatus .}}">
     <div class="card-head">
       <span class="card-title" title="{{.ServerName}}">{{.ServerName}}</span>
       <span class="badge badge-{{serverStatus .}}">{{serverStatusLabel .}}</span>
