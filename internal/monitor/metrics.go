@@ -167,7 +167,9 @@ type ConnectivityStats struct {
 
 // PortResult holds the outcome of a single TCP port check.
 type PortResult struct {
+	Host      string  `json:"host,omitempty"`
 	Port      int     `json:"port"`
+	Source    string  `json:"source,omitempty"` // monitor or target
 	Open      bool    `json:"open"`
 	LatencyMs float64 `json:"latency_ms"`
 	Error     string  `json:"error,omitempty"`

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -27,19 +28,19 @@ type Client interface {
 	// Run executes cmd on the remote host and returns combined stdout+stderr.
 	// It respects ctx cancellation.
 	Run(ctx context.Context, cmd string) (string, error)
+	// DialTCP opens a TCP connection from the SSH target with direct-tcpip.
+	// It does not invoke a remote shell or require netcat on the target.
+	DialTCP(ctx context.Context, host string, port int) (time.Duration, error)
 	// Close releases the underlying connection.
 	Close() error
 }
 
 // sshClient wraps a raw *gossh.Client.
 type sshClient struct {
-	conn *gossh.Client
-}
-
-// agentClient wraps an sshClient and additionally closes the agent connection.
-type agentClient struct {
-	*sshClient
-	agentConn net.Conn
+	conn          *gossh.Client
+	cleanup       []io.Closer
+	stopKeepalive chan struct{}
+	closeOnce     sync.Once
 }
 
 // New dials the server described by srv and returns a ready Client.
@@ -51,54 +52,105 @@ type agentClient struct {
 // insecure_ignore_host_key: true in the server's config — and be aware of the
 // security implications (MITM risk).
 func New(ctx context.Context, srv config.Server, globalCfg *config.Config, timeout time.Duration) (Client, error) {
-	authMethods, agentConn, err := buildAuthMethods(ctx, srv.Auth, globalCfg)
+	targetCfg, targetAgent, err := buildClientConfig(ctx, srv, globalCfg, timeout)
 	if err != nil {
-		return nil, fmt.Errorf("building auth methods: %w", err)
+		return nil, err
+	}
+	addr := net.JoinHostPort(srv.Host, fmt.Sprintf("%d", srv.Port))
+	cleanup := make([]io.Closer, 0, 3)
+	if targetAgent != nil {
+		cleanup = append(cleanup, targetAgent)
 	}
 
+	var targetConn net.Conn
+	if srv.ProxyJump == nil {
+		targetConn, err = dialTCP(ctx, addr, timeout)
+	} else {
+		jumpSrv := config.Server{Host: srv.ProxyJump.Host, Port: srv.ProxyJump.Port, Username: srv.ProxyJump.Username, Auth: srv.ProxyJump.Auth, InsecureIgnoreHostKey: srv.ProxyJump.InsecureIgnoreHostKey}
+		jumpCfg, jumpAgent, configErr := buildClientConfig(ctx, jumpSrv, globalCfg, timeout)
+		if configErr != nil {
+			closeAll(cleanup)
+			return nil, fmt.Errorf("building proxy jump configuration: %w", configErr)
+		}
+		if jumpAgent != nil {
+			cleanup = append(cleanup, jumpAgent)
+		}
+		jumpAddr := net.JoinHostPort(jumpSrv.Host, fmt.Sprintf("%d", jumpSrv.Port))
+		jumpConn, dialErr := dialTCP(ctx, jumpAddr, timeout)
+		if dialErr != nil {
+			closeAll(cleanup)
+			return nil, fmt.Errorf("proxy jump TCP connect to %s: %w", jumpAddr, dialErr)
+		}
+		jumpClient, handshakeErr := newSSHClient(jumpConn, jumpAddr, jumpCfg)
+		if handshakeErr != nil {
+			closeAll(append(cleanup, jumpConn))
+			return nil, fmt.Errorf("proxy jump SSH handshake with %s: %w", jumpAddr, handshakeErr)
+		}
+		cleanup = append(cleanup, jumpClient)
+		targetConn, err = dialSSHChannel(ctx, jumpClient, addr)
+	}
+	if err != nil {
+		closeAll(cleanup)
+		return nil, fmt.Errorf("TCP connect to %s: %w", addr, err)
+	}
+	targetClient, err := newSSHClient(targetConn, addr, targetCfg)
+	if err != nil {
+		closeAll(append(cleanup, targetConn))
+		return nil, fmt.Errorf("SSH handshake with %s: %w", addr, err)
+	}
+	client := &sshClient{conn: targetClient, cleanup: cleanup}
+	if srv.KeepaliveInterval > 0 {
+		client.startKeepalives(time.Duration(srv.KeepaliveInterval)*time.Second, srv.KeepaliveCountMax)
+	}
+	return client, nil
+}
+
+func buildClientConfig(ctx context.Context, srv config.Server, globalCfg *config.Config, timeout time.Duration) (*gossh.ClientConfig, net.Conn, error) {
+	authMethods, agentConn, err := buildAuthMethods(ctx, srv.Auth, globalCfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("building auth methods: %w", err)
+	}
 	hostKeyCallback, err := buildHostKeyCallback(srv, globalCfg)
 	if err != nil {
 		if agentConn != nil {
-			agentConn.Close()
+			_ = agentConn.Close()
 		}
-		return nil, fmt.Errorf("host key setup: %w", err)
+		return nil, nil, fmt.Errorf("host key setup: %w", err)
 	}
+	return &gossh.ClientConfig{User: srv.Username, Auth: authMethods, HostKeyCallback: hostKeyCallback, Timeout: timeout}, agentConn, nil
+}
 
-	sshCfg := &gossh.ClientConfig{
-		User: srv.Username,
-		Auth: authMethods,
-		// hostKeyCallback is either knownhosts.New (strict, default) or InsecureIgnoreHostKey
-		// when explicitly opted in via InsecureIgnoreHostKey:true or StrictHostKeyChecking:false.
-		// The insecure path is always guarded by explicit operator consent. //nolint:gosec
-		HostKeyCallback: hostKeyCallback,
-		Timeout:         timeout,
-	}
+func dialTCP(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
+	return (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
+}
 
-	addr := net.JoinHostPort(srv.Host, fmt.Sprintf("%d", srv.Port))
-
-	// Use a context-aware dialer so we can cancel early.
-	netConn, err := (&net.Dialer{Timeout: timeout}).DialContext(ctx, "tcp", addr)
+func newSSHClient(conn net.Conn, addr string, cfg *gossh.ClientConfig) (*gossh.Client, error) {
+	sshConn, chans, reqs, err := gossh.NewClientConn(conn, addr, cfg)
 	if err != nil {
-		if agentConn != nil {
-			agentConn.Close()
-		}
-		return nil, fmt.Errorf("TCP connect to %s: %w", addr, err)
+		_ = conn.Close()
+		return nil, err
 	}
+	return gossh.NewClient(sshConn, chans, reqs), nil
+}
 
-	sshConn, chans, reqs, err := gossh.NewClientConn(netConn, addr, sshCfg)
-	if err != nil {
-		netConn.Close()
-		if agentConn != nil {
-			agentConn.Close()
-		}
-		return nil, fmt.Errorf("SSH handshake with %s: %w", addr, err)
+func dialSSHChannel(ctx context.Context, client *gossh.Client, addr string) (net.Conn, error) {
+	type result struct {
+		conn net.Conn
+		err  error
 	}
-
-	base := &sshClient{conn: gossh.NewClient(sshConn, chans, reqs)}
-	if agentConn != nil {
-		return &agentClient{sshClient: base, agentConn: agentConn}, nil
+	resultCh := make(chan result, 1)
+	go func() { conn, err := client.Dial("tcp", addr); resultCh <- result{conn, err} }()
+	select {
+	case result := <-resultCh:
+		return result.conn, result.err
+	case <-ctx.Done():
+		go func() {
+			if result := <-resultCh; result.conn != nil {
+				_ = result.conn.Close()
+			}
+		}()
+		return nil, ctx.Err()
 	}
-	return base, nil
 }
 
 // Run executes cmd on the remote host and returns combined stdout+stderr.
@@ -131,16 +183,64 @@ func (c *sshClient) Run(ctx context.Context, cmd string) (string, error) {
 	}
 }
 
-// Close releases the underlying SSH connection.
-func (c *sshClient) Close() error {
-	return c.conn.Close()
+// DialTCP opens a connection from the authenticated SSH target with
+// direct-tcpip. It is the agentless alternative to running nc remotely.
+func (c *sshClient) DialTCP(ctx context.Context, host string, port int) (time.Duration, error) {
+	startedAt := time.Now()
+	conn, err := dialSSHChannel(ctx, c.conn, net.JoinHostPort(host, fmt.Sprintf("%d", port)))
+	if err != nil {
+		return time.Since(startedAt), err
+	}
+	_ = conn.Close()
+	return time.Since(startedAt), nil
 }
 
-// Close releases both the SSH connection and the agent connection.
-func (c *agentClient) Close() error {
-	err := c.sshClient.Close()
-	_ = c.agentConn.Close()
+// Close releases the underlying SSH connection.
+func (c *sshClient) Close() error {
+	var err error
+	c.closeOnce.Do(func() {
+		if c.stopKeepalive != nil {
+			close(c.stopKeepalive)
+		}
+		err = c.conn.Close()
+		closeAll(c.cleanup)
+	})
 	return err
+}
+
+func (c *sshClient) startKeepalives(interval time.Duration, maxFailures int) {
+	if maxFailures <= 0 {
+		maxFailures = 3
+	}
+	c.stopKeepalive = make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		failures := 0
+		for {
+			select {
+			case <-c.stopKeepalive:
+				return
+			case <-ticker.C:
+				_, _, err := c.conn.SendRequest("keepalive@openssh.com", true, nil)
+				if err == nil {
+					failures = 0
+					continue
+				}
+				failures++
+				if failures >= maxFailures {
+					_ = c.Close()
+					return
+				}
+			}
+		}
+	}()
+}
+
+func closeAll(closers []io.Closer) {
+	for i := len(closers) - 1; i >= 0; i-- {
+		_ = closers[i].Close()
+	}
 }
 
 // buildAuthMethods constructs the SSH auth methods plus an optional agent

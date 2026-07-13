@@ -454,6 +454,9 @@ func (m *Monitor) collectServer(srv config.Server, cfg *config.Config) ServerMet
 	if err := m.gatherAll(cmdCtx, client, &metrics, srv); err != nil {
 		metrics.Error = err.Error()
 	}
+	remoteCtx, remoteCancel := context.WithTimeout(context.Background(), timeout)
+	defer remoteCancel()
+	metrics.Connectivity.Ports = append(metrics.Connectivity.Ports, runTargetPortChecks(remoteCtx, client, srv)...)
 	return metrics
 }
 
@@ -471,8 +474,15 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 	}
 
 	for _, pc := range srv.Checks.Ports {
-		r := check.CheckPort(srv.Host, pc.Port, pc.Timeout)
-		result := PortResult{Port: r.Port, Open: r.Open, LatencyMs: r.LatencyMs}
+		if pc.Source == "target" {
+			continue
+		}
+		host := pc.Host
+		if host == "" {
+			host = srv.Host
+		}
+		r := check.CheckPort(host, pc.Port, pc.Timeout)
+		result := PortResult{Host: host, Port: r.Port, Source: "monitor", Open: r.Open, LatencyMs: r.LatencyMs}
 		if r.Err != nil {
 			result.Error = r.Err.Error()
 		}
@@ -564,6 +574,35 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 	return cs
 }
 
+type targetPortDialer interface {
+	DialTCP(ctx context.Context, host string, port int) (time.Duration, error)
+}
+
+// runTargetPortChecks opens direct-tcpip channels through the monitored host.
+// This checks dependencies from the target network without requiring nc, bash,
+// curl, or any other target-side helper binary.
+func runTargetPortChecks(ctx context.Context, client targetPortDialer, srv config.Server) []PortResult {
+	results := make([]PortResult, 0)
+	for _, pc := range srv.Checks.Ports {
+		if pc.Source != "target" {
+			continue
+		}
+		host := pc.Host
+		if host == "" {
+			host = srv.Host
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, time.Duration(pc.Timeout)*time.Second)
+		latency, err := client.DialTCP(probeCtx, host, pc.Port)
+		cancel()
+		result := PortResult{Host: host, Port: pc.Port, Source: "target", Open: err == nil, LatencyMs: float64(latency) / float64(time.Millisecond)}
+		if err != nil {
+			result.Error = err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 // runLocalConnectivityChecks runs port and HTTP checks for a local server
 // (ping to self is skipped).
 func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
@@ -571,8 +610,11 @@ func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
 
 	host := "127.0.0.1"
 	for _, pc := range srv.Checks.Ports {
+		if pc.Source == "target" {
+			continue
+		}
 		r := check.CheckPort(host, pc.Port, pc.Timeout)
-		result := PortResult{Port: r.Port, Open: r.Open, LatencyMs: r.LatencyMs}
+		result := PortResult{Host: host, Port: r.Port, Source: "monitor", Open: r.Open, LatencyMs: r.LatencyMs}
 		if r.Err != nil {
 			result.Error = r.Err.Error()
 		}

@@ -79,10 +79,13 @@ type PingCheck struct {
 	Timeout int  `yaml:"timeout"` // wait seconds before giving up (default 5)
 }
 
-// PortCheck configures a TCP reachability test run from the monitoring machine.
+// PortCheck configures a TCP reachability test. Source is "monitor" (the
+// default) or "target" to open a direct-tcpip channel from the SSH target.
 type PortCheck struct {
-	Port    int `yaml:"port"`
-	Timeout int `yaml:"timeout"` // dial timeout in seconds (default 5)
+	Host    string `yaml:"host"` // default: monitored server host
+	Port    int    `yaml:"port"`
+	Source  string `yaml:"source"`  // monitor (default) or target
+	Timeout int    `yaml:"timeout"` // dial timeout in seconds (default 5)
 }
 
 // BannerCheck verifies a greeting sent immediately after a TCP connection,
@@ -173,13 +176,30 @@ type Checks struct {
 	Custom []CustomCheck     `yaml:"custom"`
 }
 
+// JumpHost describes one explicit SSH bastion. WatchSSH authenticates to the
+// bastion, verifies its host key, then opens the target SSH connection through
+// an SSH direct-tcpip channel. Arbitrary ProxyCommand shell strings are not
+// supported.
+type JumpHost struct {
+	Host                  string `yaml:"host"`
+	Port                  int    `yaml:"port"`
+	Username              string `yaml:"username"`
+	Auth                  Auth   `yaml:"auth"`
+	InsecureIgnoreHostKey bool   `yaml:"insecure_ignore_host_key"`
+}
+
 // Server holds connection details for one monitored host.
 type Server struct {
-	Name     string `yaml:"name"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Username string `yaml:"username"`
-	Auth     Auth   `yaml:"auth"`
+	Name      string    `yaml:"name"`
+	Host      string    `yaml:"host"`
+	Port      int       `yaml:"port"`
+	Username  string    `yaml:"username"`
+	Auth      Auth      `yaml:"auth"`
+	ProxyJump *JumpHost `yaml:"proxy_jump"`
+	// KeepaliveInterval sends OpenSSH-compatible keepalive requests while a
+	// connection is in use. 0 disables them; the default count maximum is 3.
+	KeepaliveInterval int `yaml:"keepalive_interval"`
+	KeepaliveCountMax int `yaml:"keepalive_count_max"`
 
 	// InsecureIgnoreHostKey disables host key verification.
 	// WARNING: this is dangerous and should only be used for testing.
@@ -611,6 +631,23 @@ func applyDefaults(cfg *Config) {
 			if srv.Checks.Ports[j].Timeout == 0 {
 				srv.Checks.Ports[j].Timeout = 5
 			}
+			if srv.Checks.Ports[j].Source == "" {
+				srv.Checks.Ports[j].Source = "monitor"
+			}
+			if srv.Checks.Ports[j].Host == "" {
+				srv.Checks.Ports[j].Host = srv.Host
+			}
+		}
+		if srv.ProxyJump != nil {
+			if srv.ProxyJump.Port == 0 {
+				srv.ProxyJump.Port = 22
+			}
+			if srv.ProxyJump.Username == "" {
+				srv.ProxyJump.Username = srv.Username
+			}
+		}
+		if srv.KeepaliveInterval > 0 && srv.KeepaliveCountMax == 0 {
+			srv.KeepaliveCountMax = 3
 		}
 		for j := range srv.Checks.Banner {
 			if srv.Checks.Banner[j].Timeout == 0 {
@@ -704,6 +741,32 @@ func validate(cfg *Config) error {
 		}
 		if err := validateAuth(srv.Auth, cfg.Secrets.Vault); err != nil {
 			return fmt.Errorf("server[%d] (%q): auth: %w", i, srv.Name, err)
+		}
+		if srv.KeepaliveInterval < 0 || srv.KeepaliveCountMax < 0 {
+			return fmt.Errorf("server[%d] (%q): keepalive_interval and keepalive_count_max must be >= 0", i, srv.Name)
+		}
+		if srv.ProxyJump != nil {
+			jump := srv.ProxyJump
+			if strings.TrimSpace(jump.Host) == "" {
+				return fmt.Errorf("server[%d] (%q): proxy_jump.host is required", i, srv.Name)
+			}
+			if strings.TrimSpace(jump.Username) == "" {
+				return fmt.Errorf("server[%d] (%q): proxy_jump.username is required", i, srv.Name)
+			}
+			if err := validateAuth(jump.Auth, cfg.Secrets.Vault); err != nil {
+				return fmt.Errorf("server[%d] (%q): proxy_jump.auth: %w", i, srv.Name, err)
+			}
+		}
+		for j, port := range srv.Checks.Ports {
+			if port.Port < 1 || port.Port > 65535 {
+				return fmt.Errorf("server[%d] (%q): checks.ports[%d].port must be between 1 and 65535", i, srv.Name, j)
+			}
+			if port.Source != "monitor" && port.Source != "target" {
+				return fmt.Errorf("server[%d] (%q): checks.ports[%d].source must be monitor or target", i, srv.Name, j)
+			}
+			if strings.TrimSpace(port.Host) == "" {
+				return fmt.Errorf("server[%d] (%q): checks.ports[%d].host is required", i, srv.Name, j)
+			}
 		}
 	}
 	if cfg.Alerts.Action != nil {

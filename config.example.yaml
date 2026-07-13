@@ -133,6 +133,20 @@ servers:
 
     # insecure_ignore_host_key: false   # Default: false. NEVER enable in production.
 
+    # Optional explicit bastion. WatchSSH verifies this host key first, then
+    # reaches the target through an SSH direct-tcpip channel. ProxyCommand is
+    # intentionally not supported because it would execute local shell code.
+    # proxy_jump:
+    #   host: bastion.example.com
+    #   port: 22
+    #   username: jump-monitor
+    #   auth:
+    #     type: agent
+
+    # Keep long-lived collection connections usable across NATs and firewalls.
+    # keepalive_interval: 30      # seconds; 0 disables keepalives
+    # keepalive_count_max: 3      # close after this many unanswered requests
+
     # Optional tags for grouping and CLI filtering via `-tags`.
     tags:
       - linux
@@ -156,6 +170,13 @@ servers:
           timeout: 5
         - port: 443
           timeout: 5
+
+        # Probe a private dependency from the monitored server's network.
+        # This uses SSH direct-tcpip, not netcat or a remote shell command.
+        # - host: db.internal
+        #   port: 5432
+        #   source: target         # monitor (default) or target
+        #   timeout: 5
 
       # Services such as SSH, SMTP, FTP, and Redis send a greeting first.
       # This validates the expected protocol rather than only an open port.

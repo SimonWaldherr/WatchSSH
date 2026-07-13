@@ -250,7 +250,7 @@ const allTemplates = `
           <span class="m-label">Ports</span>
           <span class="m-val">
             {{range .Connectivity.Ports}}
-              <span class="tag {{if .Open}}tag-ok{{else}}tag-err{{end}}">:{{.Port}}</span>
+              <span class="tag {{if .Open}}tag-ok{{else}}tag-err{{end}}" title="{{if .Host}}{{.Host}}:{{end}}{{.Port}} checked from {{if .Source}}{{.Source}}{{else}}monitor{{end}}">:{{.Port}}</span>
             {{end}}
           </span>
         </div>
@@ -470,7 +470,7 @@ const allTemplates = `
     {{end}}
     {{range .Ports}}
     <div class="m-row" style="flex-wrap:wrap">
-      <span class="m-label">Port {{.Port}}</span>
+      <span class="m-label">Port {{if .Host}}{{.Host}}:{{end}}{{.Port}}{{if eq .Source "target"}} (from target){{end}}</span>
       <span>{{if .Open}}<span class="dot dot-ok"></span>Open{{else}}<span class="dot dot-err"></span>Closed{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
       {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
     </div>

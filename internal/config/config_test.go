@@ -439,3 +439,54 @@ alerts:
 		t.Fatal("expected watchdog to require remediation mode: watchdog")
 	}
 }
+
+func TestLoad_ProxyJumpKeepaliveAndTargetPortProbe(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    keepalive_interval: 20
+    proxy_jump:
+      host: bastion.example.test
+      username: jump-monitor
+      auth:
+        type: agent
+    checks:
+      ports:
+        - host: db.internal
+          port: 5432
+          source: target
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	srv := cfg.Servers[0]
+	if srv.ProxyJump == nil || srv.ProxyJump.Port != 22 || srv.ProxyJump.Username != "jump-monitor" {
+		t.Fatalf("proxy jump defaults = %#v", srv.ProxyJump)
+	}
+	if srv.KeepaliveCountMax != 3 {
+		t.Fatalf("keepalive count max = %d, want 3", srv.KeepaliveCountMax)
+	}
+	port := srv.Checks.Ports[0]
+	if port.Source != "target" || port.Host != "db.internal" || port.Timeout != 5 {
+		t.Fatalf("target port probe = %#v", port)
+	}
+}
+
+func TestLoad_RejectsInvalidTargetPortSource(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      ports:
+        - port: 443
+          source: somewhere-else
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected invalid port probe source to be rejected")
+	}
+}

@@ -1244,7 +1244,7 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			fmt.Fprintf(&b, "watchssh_ping_probe_loss_percent%s %.6f\n", probeLabels, m.Connectivity.PingLoss)
 		}
 		for _, p := range m.Connectivity.Ports {
-			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "port": strconv.Itoa(p.Port)})
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": p.Host, "source": p.Source, "port": strconv.Itoa(p.Port)})
 			fmt.Fprintf(&b, "watchssh_tcp_probe_up%s %d\n", probeLabels, boolGauge(p.Open))
 			fmt.Fprintf(&b, "watchssh_tcp_probe_latency_ms%s %.6f\n", probeLabels, p.LatencyMs)
 		}

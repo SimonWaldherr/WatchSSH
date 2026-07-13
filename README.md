@@ -348,6 +348,39 @@ when a connection is opened, so rotated credentials take effect on the next
 poll. For SSH certificates, use `certificate_file` or `certificate` alongside
 key authentication. SSH-agent authentication continues to use `SSH_AUTH_SOCK`.
 
+### Bastions, Keepalives, and Private Dependencies
+
+Use `proxy_jump` when targets are only reachable through a bastion. WatchSSH
+verifies the bastion host key and target host key independently, then creates
+the target SSH connection through an SSH `direct-tcpip` channel. It does not
+execute `ProxyCommand` strings or require a local shell helper.
+
+```yaml
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    proxy_jump:
+      host: bastion.example.com
+      username: jump-monitor
+      auth:
+        type: agent
+    keepalive_interval: 30
+    keepalive_count_max: 3
+    checks:
+      ports:
+        - host: db.internal
+          port: 5432
+          source: target
+          timeout: 5
+```
+
+Port checks use `source: monitor` by default and run from the WatchSSH host.
+Set `source: target` to test a dependency from the monitored server's network.
+This is the safe, portable alternative to running `nc` remotely: no netcat,
+shell command, or target-side installation is required. The result includes
+the target host, port, source, latency, and error detail.
+
 ### Security Best Practices
 
 1. **Dedicated monitoring user** — Create a read-only `monitor` user on each
@@ -387,7 +420,7 @@ web:
     password_hash: "$2y$12$copy-only-the-hash-after-ops:"
 ```
 
-`/healthz` and `/readyz` stay public for service managers and load balancers.
+`/healthz`, `/livez`, and `/readyz` stay public for service managers and load balancers.
 Everything else under the dashboard listener, including `/metrics`, requires
 authentication. Keep the listener on loopback when a reverse proxy terminates
 TLS; otherwise bind it only to a protected internal network.
@@ -920,6 +953,9 @@ Health endpoints for automation:
 All health endpoints return `Cache-Control: no-store` and remain public when
 `web.auth` is enabled. The dashboard, `/openapi.json`, `/api/v1/...`, and
 `/metrics` retain the configured authentication policy.
+
+For deployment contracts, API versioning, Prometheus cardinality, and reverse
+proxy guidance, see [Operations and API reference](docs/operations.md).
 
 ## Architecture
 
