@@ -96,6 +96,15 @@ with its `host` and `port`. WatchSSH opens an SSH `direct-tcpip` channel from
 that target to the dependency, so no `nc`, `socat`, shell command, or target
 side package is required.
 
+## Probe Bundles
+
+The Servers page includes a Probe Library for adding, removing, importing, and
+exporting individual probes. Exports are portable JSON or YAML bundles with a
+`version`, optional source server name, and `checks` payload. Imports merge the
+bundle into an explicitly selected existing server. The bundle format never
+contains SSH credentials, private keys, passwords, certificate paths, tags, or
+host-key policy.
+
 ## Deployment Checklist
 
 1. Run the service under a dedicated non-login user.

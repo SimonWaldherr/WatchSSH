@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -21,6 +23,7 @@ import (
 	"github.com/SimonWaldherr/WatchSSH/internal/monitor"
 	sshclient "github.com/SimonWaldherr/WatchSSH/internal/ssh"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/yaml.v3"
 )
 
 // funcMap provides helper functions available inside all HTML templates.
@@ -194,6 +197,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/history", s.handleHistory)
 	s.mux.HandleFunc("/servers/add", s.handleAddServer)
 	s.mux.HandleFunc("/servers/remove", s.handleRemoveServer)
+	s.mux.HandleFunc("/probes/add", s.handleAddProbe)
+	s.mux.HandleFunc("/probes/remove", s.handleRemoveProbe)
+	s.mux.HandleFunc("/probes/export", s.handleExportProbes)
+	s.mux.HandleFunc("/probes/import", s.handleImportProbes)
 	s.mux.HandleFunc("/servers", s.handleServers)
 	s.mux.HandleFunc("/alerts/add", s.handleAddAlert)
 	s.mux.HandleFunc("/alerts/remove", s.handleRemoveAlert)
@@ -350,12 +357,22 @@ func (s *Server) handleServerDetail(w http.ResponseWriter, r *http.Request) {
 // ── Server management ─────────────────────────────────────────────────────────
 
 type serversData struct {
-	Title    string
-	Page     string
-	Refresh  bool
-	Flash    string
-	FlashErr bool
-	Servers  []serverRow
+	Title       string
+	Page        string
+	Refresh     bool
+	Flash       string
+	FlashErr    bool
+	Servers     []serverRow
+	ServerNames []string
+	Probes      []probeRow
+}
+
+type probeRow struct {
+	Server string
+	Kind   string
+	Index  int
+	Name   string
+	Detail string
 }
 
 type serverRow struct {
@@ -379,7 +396,9 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows := make([]serverRow, 0, len(cfg.Servers))
+	serverNames := make([]string, 0, len(cfg.Servers))
 	for _, srv := range cfg.Servers {
+		serverNames = append(serverNames, srv.Name)
 		row := serverRow{
 			ServerName:    srv.Name,
 			Host:          srv.Host,
@@ -399,11 +418,13 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 
 	flash, flashErr := flashFromQuery(r)
 	s.render(w, "servers-manage", serversData{
-		Title:    "Servers",
-		Page:     "servers",
-		Flash:    flash,
-		FlashErr: flashErr,
-		Servers:  rows,
+		Title:       "Servers",
+		Page:        "servers",
+		Flash:       flash,
+		FlashErr:    flashErr,
+		Servers:     rows,
+		ServerNames: serverNames,
+		Probes:      probeRows(cfg.Servers),
 	})
 }
 
@@ -623,6 +644,155 @@ func serverCheckSummary(srv config.Server) string {
 	return strings.Join(parts, ", ")
 }
 
+func probeRows(servers []config.Server) []probeRow {
+	rows := make([]probeRow, 0)
+	for _, srv := range servers {
+		checks := srv.Checks
+		if checks.Ping.Enabled {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "ping", Name: "Ping", Detail: fmt.Sprintf("%d packets, %ds timeout", checks.Ping.Count, checks.Ping.Timeout)})
+		}
+		for i, probe := range checks.Ports {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "tcp", Index: i, Name: "TCP", Detail: fmt.Sprintf("%s:%d from %s", defaultString(probe.Host, srv.Host), probe.Port, defaultString(probe.Source, "monitor"))})
+		}
+		for i, probe := range checks.Banner {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "banner", Index: i, Name: "Banner", Detail: fmt.Sprintf("%s:%d expects %q", probe.Host, probe.Port, probe.ExpectedPrefix)})
+		}
+		for i, probe := range checks.HTTP {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "http", Index: i, Name: "HTTP", Detail: fmt.Sprintf("%s %s expects %d", defaultString(probe.Method, http.MethodGet), probe.URL, probe.ExpectedStatus)})
+		}
+		for i, probe := range checks.DNS {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "dns", Index: i, Name: "DNS", Detail: fmt.Sprintf("%s %s", probe.Type, probe.Host)})
+		}
+		for i, probe := range checks.TLS {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "tls", Index: i, Name: "TLS", Detail: fmt.Sprintf("%s:%d", probe.Host, probe.Port)})
+		}
+		for i, probe := range checks.NTP {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "ntp", Index: i, Name: "NTP", Detail: fmt.Sprintf("%s:%d", probe.Host, probe.Port)})
+		}
+		for i, probe := range checks.Trace {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "trace", Index: i, Name: "Traceroute", Detail: probe.Host})
+		}
+		for i, probe := range checks.Custom {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "custom", Index: i, Name: "Custom", Detail: probe.Name})
+		}
+	}
+	return rows
+}
+
+func removeProbe(checks *config.Checks, kind string, index int) bool {
+	switch kind {
+	case "ping":
+		if !checks.Ping.Enabled || index != 0 {
+			return false
+		}
+		checks.Ping = config.PingCheck{}
+		return true
+	case "tcp":
+		if index >= len(checks.Ports) {
+			return false
+		}
+		checks.Ports = append(checks.Ports[:index], checks.Ports[index+1:]...)
+	case "banner":
+		if index >= len(checks.Banner) {
+			return false
+		}
+		checks.Banner = append(checks.Banner[:index], checks.Banner[index+1:]...)
+	case "http":
+		if index >= len(checks.HTTP) {
+			return false
+		}
+		checks.HTTP = append(checks.HTTP[:index], checks.HTTP[index+1:]...)
+	case "dns":
+		if index >= len(checks.DNS) {
+			return false
+		}
+		checks.DNS = append(checks.DNS[:index], checks.DNS[index+1:]...)
+	case "tls":
+		if index >= len(checks.TLS) {
+			return false
+		}
+		checks.TLS = append(checks.TLS[:index], checks.TLS[index+1:]...)
+	case "ntp":
+		if index >= len(checks.NTP) {
+			return false
+		}
+		checks.NTP = append(checks.NTP[:index], checks.NTP[index+1:]...)
+	case "trace":
+		if index >= len(checks.Trace) {
+			return false
+		}
+		checks.Trace = append(checks.Trace[:index], checks.Trace[index+1:]...)
+	case "custom":
+		if index >= len(checks.Custom) {
+			return false
+		}
+		checks.Custom = append(checks.Custom[:index], checks.Custom[index+1:]...)
+	default:
+		return false
+	}
+	return true
+}
+
+func mergeChecks(destination *config.Checks, imported config.Checks) {
+	if imported.Ping.Enabled {
+		destination.Ping = imported.Ping
+	}
+	destination.Ports = append(destination.Ports, imported.Ports...)
+	destination.Banner = append(destination.Banner, imported.Banner...)
+	destination.HTTP = append(destination.HTTP, imported.HTTP...)
+	destination.DNS = append(destination.DNS, imported.DNS...)
+	destination.Trace = append(destination.Trace, imported.Trace...)
+	destination.TLS = append(destination.TLS, imported.TLS...)
+	destination.NTP = append(destination.NTP, imported.NTP...)
+	destination.Custom = append(destination.Custom, imported.Custom...)
+}
+
+func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
+	if checks.Ping.Enabled {
+		if checks.Ping.Count == 0 {
+			checks.Ping.Count = 3
+		}
+		if checks.Ping.Timeout == 0 {
+			checks.Ping.Timeout = 5
+		}
+	}
+	for i := range checks.Ports {
+		if checks.Ports[i].Host == "" {
+			checks.Ports[i].Host = defaultHost
+		}
+		if checks.Ports[i].Source == "" {
+			checks.Ports[i].Source = "monitor"
+		}
+		if checks.Ports[i].Timeout == 0 {
+			checks.Ports[i].Timeout = 5
+		}
+	}
+	for i := range checks.HTTP {
+		if checks.HTTP[i].Method == "" {
+			checks.HTTP[i].Method = http.MethodGet
+		}
+		if checks.HTTP[i].ExpectedStatus == 0 {
+			checks.HTTP[i].ExpectedStatus = http.StatusOK
+		}
+		if checks.HTTP[i].Timeout == 0 {
+			checks.HTTP[i].Timeout = 10
+		}
+	}
+}
+
+func safeFilename(value string) string {
+	var out strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			out.WriteRune(r)
+		}
+	}
+	if out.Len() == 0 {
+		return "server"
+	}
+	return out.String()
+}
+
 func splitList(input string) []string {
 	fields := strings.FieldsFunc(input, func(r rune) bool {
 		return r == ',' || r == '\n' || r == '\r' || r == ';'
@@ -752,6 +922,224 @@ func (s *Server) handleRemoveServer(w http.ResponseWriter, r *http.Request) {
 		log.Printf("auto-save config after RemoveServer: %v", err)
 	}
 	redirectWithFlash(w, r, "/servers", fmt.Sprintf("Server %q removed.", name), false)
+}
+
+// probeBundle intentionally contains checks only. It can be shared between
+// teams without exporting SSH credentials, secrets, host keys, or server tags.
+type probeBundle struct {
+	Version int           `json:"version"`
+	Server  string        `json:"server,omitempty"`
+	Checks  config.Checks `json:"checks"`
+}
+
+func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/servers", http.StatusSeeOther)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		redirectWithFlash(w, r, "/servers", "Invalid probe form data.", true)
+		return
+	}
+	serverName := strings.TrimSpace(r.FormValue("server"))
+	kind := strings.TrimSpace(r.FormValue("kind"))
+	if serverName == "" || kind == "" {
+		redirectWithFlash(w, r, "/servers", "Choose a target and probe type.", true)
+		return
+	}
+	var buildErr error
+	updated := s.state.UpdateServer(serverName, func(srv *config.Server) {
+		if buildErr != nil {
+			return
+		}
+		target := strings.TrimSpace(r.FormValue("target"))
+		if target == "" {
+			target = srv.Host
+		}
+		timeout := formInt(r, "timeout", 5)
+		port := formInt(r, "probe_port", 0)
+		switch kind {
+		case "ping":
+			srv.Checks.Ping = config.PingCheck{Enabled: true, Count: formInt(r, "ping_count", 3), Timeout: timeout}
+		case "tcp":
+			if target == "" || port == 0 {
+				buildErr = fmt.Errorf("TCP probes need a host and port")
+				return
+			}
+			source := defaultString(strings.TrimSpace(r.FormValue("source")), "monitor")
+			if source != "monitor" && source != "target" {
+				buildErr = fmt.Errorf("TCP probe source must be monitor or target")
+				return
+			}
+			srv.Checks.Ports = append(srv.Checks.Ports, config.PortCheck{Host: target, Port: port, Source: source, Timeout: timeout})
+		case "http":
+			if target == "" {
+				buildErr = fmt.Errorf("HTTP probes need a URL")
+				return
+			}
+			srv.Checks.HTTP = append(srv.Checks.HTTP, config.HTTPCheck{URL: target, Method: defaultString(strings.ToUpper(strings.TrimSpace(r.FormValue("method"))), http.MethodGet), ExpectedStatus: formInt(r, "expected_status", 200), ExpectedBody: strings.TrimSpace(r.FormValue("expected_body")), Timeout: timeout})
+		case "dns":
+			if target == "" {
+				buildErr = fmt.Errorf("DNS probes need a hostname")
+				return
+			}
+			srv.Checks.DNS = append(srv.Checks.DNS, config.DNSCheck{Name: target, Host: target, Type: defaultString(strings.ToUpper(strings.TrimSpace(r.FormValue("dns_type"))), "A"), Server: strings.TrimSpace(r.FormValue("resolver")), Timeout: timeout})
+		case "tls":
+			if target == "" {
+				buildErr = fmt.Errorf("TLS probes need a hostname")
+				return
+			}
+			if port == 0 {
+				port = 443
+			}
+			srv.Checks.TLS = append(srv.Checks.TLS, config.TLSCheck{Name: target, Host: target, Port: port, ServerName: target, Timeout: timeout})
+		case "ntp":
+			if target == "" {
+				buildErr = fmt.Errorf("NTP probes need a server")
+				return
+			}
+			if port == 0 {
+				port = 123
+			}
+			srv.Checks.NTP = append(srv.Checks.NTP, config.NTPCheck{Name: target, Host: target, Port: port, MaxOffsetMs: formFloat(r, "max_offset_ms", 0), Timeout: timeout})
+		case "trace":
+			if target == "" {
+				buildErr = fmt.Errorf("Traceroute probes need a hostname")
+				return
+			}
+			srv.Checks.Trace = append(srv.Checks.Trace, config.TracerouteCheck{Name: target, Host: target, MaxHops: formInt(r, "max_hops", 30), Timeout: timeout})
+		case "custom":
+			name := strings.TrimSpace(r.FormValue("probe_name"))
+			command := strings.TrimSpace(r.FormValue("command"))
+			if name == "" || command == "" {
+				buildErr = fmt.Errorf("custom probes need a name and command")
+				return
+			}
+			srv.Checks.Custom = append(srv.Checks.Custom, config.CustomCheck{Name: name, Command: command, ExpectedOutput: strings.TrimSpace(r.FormValue("expected_body"))})
+		default:
+			buildErr = fmt.Errorf("unsupported probe type %q", kind)
+		}
+	})
+	if !updated {
+		redirectWithFlash(w, r, "/servers", "The selected target no longer exists.", true)
+		return
+	}
+	if buildErr != nil {
+		redirectWithFlash(w, r, "/servers", buildErr.Error(), true)
+		return
+	}
+	if err := s.state.SaveConfig(); err != nil {
+		redirectWithFlash(w, r, "/servers", "Failed to save probe: "+err.Error(), true)
+		return
+	}
+	redirectWithFlash(w, r, "/servers#probe-workspace", "Probe added to "+serverName+".", false)
+}
+
+func (s *Server) handleRemoveProbe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/servers", http.StatusSeeOther)
+		return
+	}
+	index, err := strconv.Atoi(r.FormValue("index"))
+	if err != nil || index < 0 {
+		redirectWithFlash(w, r, "/servers", "Invalid probe selection.", true)
+		return
+	}
+	serverName, kind := r.FormValue("server"), r.FormValue("kind")
+	removed := false
+	found := s.state.UpdateServer(serverName, func(srv *config.Server) { removed = removeProbe(&srv.Checks, kind, index) })
+	if !found || !removed {
+		redirectWithFlash(w, r, "/servers", "Probe was not found.", true)
+		return
+	}
+	if err := s.state.SaveConfig(); err != nil {
+		redirectWithFlash(w, r, "/servers", "Failed to save probe removal: "+err.Error(), true)
+		return
+	}
+	redirectWithFlash(w, r, "/servers#probe-workspace", "Probe removed.", false)
+}
+
+func (s *Server) handleExportProbes(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("server"))
+	for _, srv := range s.state.Config().Servers {
+		if srv.Name == name {
+			bundle := probeBundle{Version: 1, Server: srv.Name, Checks: srv.Checks}
+			if r.URL.Query().Get("format") == "yaml" {
+				data, err := yaml.Marshal(bundle)
+				if err != nil {
+					writeProblem(w, r, http.StatusInternalServerError, "Export failed", "unable to encode probe bundle")
+					return
+				}
+				w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+				w.Header().Set("Content-Disposition", `attachment; filename="watchssh-`+safeFilename(name)+`-probes.yaml"`)
+				_, _ = w.Write(data)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Content-Disposition", `attachment; filename="watchssh-`+safeFilename(name)+`-probes.json"`)
+			_ = json.NewEncoder(w).Encode(bundle)
+			return
+		}
+	}
+	writeProblem(w, r, http.StatusNotFound, "Target not found", "no configured server has this name")
+}
+
+func (s *Server) handleImportProbes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Redirect(w, r, "/servers", http.StatusSeeOther)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	if err := r.ParseMultipartForm(1 << 20); err != nil {
+		redirectWithFlash(w, r, "/servers", "Probe bundle must be a JSON file smaller than 1 MiB.", true)
+		return
+	}
+	file, _, err := r.FormFile("bundle")
+	if err != nil {
+		redirectWithFlash(w, r, "/servers", "Choose a probe bundle to import.", true)
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, 1<<20))
+	if err != nil {
+		redirectWithFlash(w, r, "/servers", "Could not read the probe bundle.", true)
+		return
+	}
+	var bundle probeBundle
+	if json.Unmarshal(data, &bundle) != nil {
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		if err := decoder.Decode(&bundle); err != nil {
+			redirectWithFlash(w, r, "/servers", "Probe bundle must be a WatchSSH JSON or YAML export.", true)
+			return
+		}
+	}
+	if bundle.Version != 1 {
+		redirectWithFlash(w, r, "/servers", "Probe bundle must be a WatchSSH version 1 JSON export.", true)
+		return
+	}
+	target := strings.TrimSpace(r.FormValue("server"))
+	if target == "" {
+		target = bundle.Server
+	}
+	imported := false
+	s.state.UpdateServer(target, func(srv *config.Server) {
+		normalizeImportedChecks(&bundle.Checks, srv.Host)
+		mergeChecks(&srv.Checks, bundle.Checks)
+		imported = true
+	})
+	if !imported {
+		redirectWithFlash(w, r, "/servers", "Choose an existing target for the imported probes.", true)
+		return
+	}
+	if err := s.state.SaveConfig(); err != nil {
+		redirectWithFlash(w, r, "/servers", "Failed to save imported probes: "+err.Error(), true)
+		return
+	}
+	redirectWithFlash(w, r, "/servers#probe-workspace", "Probe bundle imported into "+target+".", false)
 }
 
 // ── Alert management ──────────────────────────────────────────────────────────

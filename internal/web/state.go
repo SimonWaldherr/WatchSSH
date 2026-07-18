@@ -91,6 +91,20 @@ func (s *State) AddServer(srv config.Server) {
 	s.cfg.Servers = append(s.cfg.Servers, srv)
 }
 
+// UpdateServer applies an in-place configuration change to one named server.
+// The callback runs while the state lock is held and must not block.
+func (s *State) UpdateServer(name string, update func(*config.Server)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.cfg.Servers {
+		if s.cfg.Servers[i].Name == name {
+			update(&s.cfg.Servers[i])
+			return true
+		}
+	}
+	return false
+}
+
 // RemoveServer removes the server with the given name from the live config and
 // deletes its cached metrics.
 func (s *State) RemoveServer(name string) {

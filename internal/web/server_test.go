@@ -1,7 +1,9 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -156,7 +158,7 @@ func TestDashboardAuthentication(t *testing.T) {
 }
 
 func TestInterfaceModeControlIsRendered(t *testing.T) {
-	state := NewState(&config.Config{}, "")
+	state := NewState(&config.Config{Servers: []config.Server{{Name: "localhost", Local: true}}}, "")
 	srv := NewServer(state, ":0")
 
 	req := httptest.NewRequest(http.MethodGet, "/servers", nil)
@@ -181,6 +183,9 @@ func TestInterfaceModeControlIsRendered(t *testing.T) {
 		"watchssh-ui-language",
 		"data-i18n",
 		"Custom remote check",
+		"Probe Library",
+		"/probes/import",
+		"/probes/export",
 		`role="status" aria-live="polite"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -372,6 +377,68 @@ func TestAddServerWithProfileAndChecks(t *testing.T) {
 		if !containsString(added.Tags, want) {
 			t.Fatalf("tags = %#v, missing %q", added.Tags, want)
 		}
+	}
+}
+
+func TestProbeWorkspaceAddExportImportAndRemove(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	state := NewState(&config.Config{Servers: []config.Server{{Name: "app-01", Host: "app.internal", Username: "monitor"}, {Name: "app-02", Host: "app-02.internal", Username: "monitor"}}}, cfgPath)
+	srv := NewServer(state, ":0")
+
+	form := url.Values{"server": {"app-01"}, "kind": {"tcp"}, "target": {"db.internal"}, "probe_port": {"5432"}, "source": {"target"}, "timeout": {"5"}}
+	req := httptest.NewRequest(http.MethodPost, "/probes/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("add probe status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	checks := state.Config().Servers[0].Checks
+	if len(checks.Ports) != 1 || checks.Ports[0].Host != "db.internal" || checks.Ports[0].Source != "target" {
+		t.Fatalf("added checks = %#v", checks)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/probes/export?server=app-01", nil)
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Disposition"), "watchssh-app-01-probes.json") {
+		t.Fatalf("export status/headers = %d %#v", rec.Code, rec.Header())
+	}
+	var bundle probeBundle
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil || bundle.Version != 1 || len(bundle.Checks.Ports) != 1 {
+		t.Fatalf("export bundle = %#v, %v", bundle, err)
+	}
+
+	var payload bytes.Buffer
+	writer := multipart.NewWriter(&payload)
+	part, err := writer.CreateFormFile("bundle", "probes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(rec.Body.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteField("server", "app-02"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/probes/import", &payload)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || len(state.Config().Servers[1].Checks.Ports) != 1 {
+		t.Fatalf("import status/checks = %d %#v", rec.Code, state.Config().Servers[1].Checks)
+	}
+
+	remove := url.Values{"server": {"app-01"}, "kind": {"tcp"}, "index": {"0"}}
+	req = httptest.NewRequest(http.MethodPost, "/probes/remove", strings.NewReader(remove.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || len(state.Config().Servers[0].Checks.Ports) != 0 {
+		t.Fatalf("remove status/checks = %d %#v", rec.Code, state.Config().Servers[0].Checks)
 	}
 }
 

@@ -944,6 +944,12 @@ ping, TCP port, HTTP response content, DNS, TLS, traceroute, NTP, and one custom
 command check without editing YAML by hand. Frequent TCP and HTTP settings stay
 visible; less common network probes are grouped in an expandable section.
 
+The **Probe Library** on the Servers page adds and removes individual checks
+without editing a large form. It can export a server's `checks` as a JSON or
+YAML probe bundle and import that bundle into another configured target. Bundles
+contain probe definitions only; SSH credentials, keys, passwords, host-key
+settings, and tags are never exported.
+
 Health endpoints for automation:
 
 - `GET /healthz` → liveness (`200 ok`)

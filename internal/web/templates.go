@@ -2,82 +2,87 @@ package web
 
 // css is the shared stylesheet served at /static/style.css.
 const css = `
+:root{--bg:#f4f6f8;--surface:#fff;--surface-alt:#f7f8fa;--text:#27313d;--text-muted:#666;--text-faint:#888;--text-subtle:#71808e;--border:#e5e9ed;--border-strong:#d1d5da;--link:#0066cc;--link-hover:#0055bb;--accent:#1b8a6b;--accent-soft-bg:#edf9f5;--accent-soft-text:#12674f;--accent-ring:rgba(27,138,107,.12);--shadow:rgba(0,0,0,.1);--header-bg:#18283b;--header-text:#fff;--header-nav-text:#a8bdd9;--header-nav-hover-bg:#2d4a7a;--ok-text:#22863a;--ok-soft-bg:#dff0d8;--ok-soft-border:#a3d6a3;--warn-text:#9b6700;--error-text:#cb2431;--error-soft-bg:#f8d7da;--error-soft-border:#f5c6cb;--info-soft-bg:#e7f1fb;--info-soft-border:#b9d8f5;--info-text:#254e77;--input-bg:#fff;--track-bg:#e9ecef;--pill-bg:#eef2f7;--pill-text:#445;--focus-ring:rgba(0,102,204,.15)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1420;--surface:#161f2c;--surface-alt:#111a27;--text:#dbe4ee;--text-muted:#9aa8b8;--text-faint:#7c8fa1;--text-subtle:#8a9aac;--border:#263242;--border-strong:#374a5e;--link:#5eb0ff;--link-hover:#8cc5ff;--accent:#2fbf94;--accent-soft-bg:#102a23;--accent-soft-text:#6fd8b8;--accent-ring:rgba(47,191,148,.2);--shadow:rgba(0,0,0,.5);--header-bg:#0a121e;--header-text:#fff;--header-nav-text:#9fb3cc;--header-nav-hover-bg:#24405f;--ok-text:#3fb950;--ok-soft-bg:#0f2b1a;--ok-soft-border:#1f5c34;--warn-text:#d29922;--error-text:#f85149;--error-soft-bg:#3c1418;--error-soft-border:#6e2630;--info-soft-bg:#0f2740;--info-soft-border:#1f4a68;--info-text:#9cc7ea;--input-bg:#101823;--track-bg:#202b3a;--pill-bg:#1c2836;--pill-text:#b7c3cf;--focus-ring:rgba(94,176,255,.25)}}
+:root[data-theme="dark"]{--bg:#0d1420;--surface:#161f2c;--surface-alt:#111a27;--text:#dbe4ee;--text-muted:#9aa8b8;--text-faint:#7c8fa1;--text-subtle:#8a9aac;--border:#263242;--border-strong:#374a5e;--link:#5eb0ff;--link-hover:#8cc5ff;--accent:#2fbf94;--accent-soft-bg:#102a23;--accent-soft-text:#6fd8b8;--accent-ring:rgba(47,191,148,.2);--shadow:rgba(0,0,0,.5);--header-bg:#0a121e;--header-text:#fff;--header-nav-text:#9fb3cc;--header-nav-hover-bg:#24405f;--ok-text:#3fb950;--ok-soft-bg:#0f2b1a;--ok-soft-border:#1f5c34;--warn-text:#d29922;--error-text:#f85149;--error-soft-bg:#3c1418;--error-soft-border:#6e2630;--info-soft-bg:#0f2740;--info-soft-border:#1f4a68;--info-text:#9cc7ea;--input-bg:#101823;--track-bg:#202b3a;--pill-bg:#1c2836;--pill-text:#b7c3cf;--focus-ring:rgba(94,176,255,.25)}
 *,*::before,*::after{box-sizing:border-box}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f6f8;color:#27313d;font-size:14px;line-height:1.45}
-a{color:#0066cc;text-decoration:none}a:hover{text-decoration:underline}
-.skip-link{position:absolute;left:-9999px;top:.5rem;z-index:10;background:#fff;color:#18283b;border:2px solid #1b8a6b;border-radius:4px;padding:.4rem .65rem;font-weight:600}.skip-link:focus{left:.75rem}
-header{background:#18283b;color:#fff;padding:0 1.5rem;display:flex;align-items:center;height:56px;gap:2rem;border-bottom:3px solid #1b8a6b}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);font-size:14px;line-height:1.45}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+.skip-link{position:absolute;left:-9999px;top:.5rem;z-index:10;background:var(--surface);color:var(--text);border:2px solid var(--accent);border-radius:4px;padding:.4rem .65rem;font-weight:600}.skip-link:focus{left:.75rem}
+header{background:var(--header-bg);color:var(--header-text);padding:0 1.5rem;display:flex;align-items:center;height:56px;gap:2rem;border-bottom:3px solid var(--accent)}
 header h1{font-size:1.1rem;font-weight:700;margin:0;white-space:nowrap}
 header nav{display:flex;gap:.25rem;flex:1}
-header nav a{color:#a8bdd9;padding:.35rem .75rem;border-radius:4px;font-size:.85rem;white-space:nowrap}
-header nav a:hover,header nav a.active{background:#2d4a7a;color:#fff;text-decoration:none}
-.interface-controls{display:flex;align-items:center;gap:.7rem}.mode-picker{display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:#b7c8d9;white-space:nowrap}.mode-picker select{width:auto;background:#243a54;border-color:#49617b;color:#fff;padding:.25rem .45rem;font-size:.78rem}
+header nav a{color:var(--header-nav-text);padding:.35rem .75rem;border-radius:4px;font-size:.85rem;white-space:nowrap}
+header nav a:hover,header nav a.active{background:var(--header-nav-hover-bg);color:var(--header-text);text-decoration:none}
+.interface-controls{display:flex;align-items:center;gap:.7rem}.mode-picker{display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:var(--header-nav-text);white-space:nowrap}.mode-picker select{width:auto;background:var(--header-nav-hover-bg);border-color:#49617b;color:#fff;padding:.25rem .45rem;font-size:.78rem}
 main{padding:1.5rem;max-width:1400px;margin:0 auto}
-h2{font-size:1.15rem;margin:0 0 .25rem;color:#27313d}
-h3{font-size:.95rem;margin:0 0 .75rem;color:#555}
+h2{font-size:1.15rem;margin:0 0 .25rem;color:var(--text)}
+h3{font-size:.95rem;margin:0 0 .75rem;color:var(--text-muted)}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:1rem;margin-bottom:1.5rem}
-.card{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);overflow:hidden}
-.card-head{padding:.65rem 1rem;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee}
+.card{background:var(--surface);border-radius:8px;box-shadow:0 1px 4px var(--shadow);overflow:hidden}
+.card-head{padding:.65rem 1rem;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)}
 .card-title{font-weight:600;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card-body{padding:.9rem 1rem}
-.card-foot{padding:.45rem 1rem;background:#fafafa;border-top:1px solid #eee;font-size:.78rem;color:#888;display:flex;justify-content:space-between;align-items:center}
+.card-foot{padding:.45rem 1rem;background:var(--surface-alt);border-top:1px solid var(--border);font-size:.78rem;color:var(--text-faint);display:flex;justify-content:space-between;align-items:center}
 .badge{display:inline-block;padding:.12rem .45rem;border-radius:10px;font-size:.7rem;font-weight:700;color:#fff;letter-spacing:.02em;white-space:nowrap}
 .badge-ok{background:#22863a}.badge-warn{background:#b08800}.badge-error{background:#cb2431}.badge-unknown{background:#888}
 .m-row{display:flex;justify-content:space-between;margin-bottom:.3rem;font-size:.82rem}
-.m-label{color:#666}.m-val{font-weight:600;font-variant-numeric:tabular-nums}
-.pbar-wrap{background:#e9ecef;border-radius:3px;height:5px;margin:.15rem 0 .4rem;overflow:hidden}
+.m-label{color:var(--text-muted)}.m-val{font-weight:600;font-variant-numeric:tabular-nums}
+.pbar-wrap{background:var(--track-bg);border-radius:3px;height:5px;margin:.15rem 0 .4rem;overflow:hidden}
 .pbar{height:100%;border-radius:3px;background:#22863a;transition:width .3s}
 .pbar.warn{background:#b08800}.pbar.error{background:#cb2431}
 table{width:100%;border-collapse:collapse;font-size:.84rem}
-th{text-align:left;padding:.45rem .75rem;background:#f6f8fa;color:#555;font-weight:600;border-bottom:2px solid #e1e4e8;white-space:nowrap}
-td{padding:.4rem .75rem;border-bottom:1px solid #eee;vertical-align:middle}
-tr:hover td{background:#fafbfc}
+th{text-align:left;padding:.45rem .75rem;background:var(--surface-alt);color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-strong);white-space:nowrap}
+td{padding:.4rem .75rem;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:hover td{background:var(--surface-alt)}
 .btn{display:inline-block;padding:.32rem .7rem;border-radius:5px;border:1px solid transparent;cursor:pointer;font-size:.82rem;font-weight:500;text-align:center;line-height:1.4}
 .btn-primary{background:#0066cc;border-color:#0055bb;color:#fff}.btn-primary:hover{background:#0055bb;color:#fff;text-decoration:none}
 .btn-danger{background:#cb2431;border-color:#a51c26;color:#fff}.btn-danger:hover{background:#a51c26;color:#fff;text-decoration:none}
-.btn-secondary{background:#fff;border-color:#d1d5da;color:#444}.btn-secondary:hover{background:#f3f4f6;color:#333;text-decoration:none}
+.btn-secondary{background:var(--surface);border-color:var(--border-strong);color:var(--text)}.btn-secondary:hover{background:var(--surface-alt);color:var(--text);text-decoration:none}
 .btn-sm{padding:.18rem .5rem;font-size:.76rem}
-.form-wrap{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);padding:1.25rem;margin-top:1.25rem}
+.form-wrap{background:var(--surface);border-radius:8px;box-shadow:0 1px 4px var(--shadow);padding:1.25rem;margin-top:1.25rem}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem}
 .form-row.w3{grid-template-columns:1fr 1fr 1fr}
 .form-row.wide{grid-template-columns:1fr}
 .form-grow{grid-column:span 2}
-.form-block{border-top:1px solid #eee;margin-top:1rem;padding-top:1rem}
-.form-block h4{font-size:.82rem;color:#666;margin:0 0 .75rem}
-.probe-details{border-top:1px solid #eee;margin-top:.8rem;padding-top:.8rem}.probe-details summary{cursor:pointer;color:#0066cc;font-size:.82rem;font-weight:600;user-select:none}.probe-details[open] summary{margin-bottom:.85rem}.probe-details summary:hover{color:#0055bb}.m-error{width:100%;font-family:monospace;font-size:.72rem;color:#a51c26;word-break:break-word;margin-top:.15rem}
-.inline-check{display:flex;align-items:center;gap:.35rem;font-size:.82rem;color:#555;margin:.45rem 0}
-label{display:block;font-size:.8rem;color:#555;margin-bottom:.25rem;font-weight:500}
-input[type=text],input[type=number],input[type=password],input[type=email],select{width:100%;padding:.38rem .6rem;border:1px solid #d1d5da;border-radius:5px;font-size:.85rem;background:#fff}
-input:focus,select:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px rgba(0,102,204,.15)}
+.form-block{border-top:1px solid var(--border);margin-top:1rem;padding-top:1rem}
+.form-block h4{font-size:.82rem;color:var(--text-muted);margin:0 0 .75rem}
+.probe-details{border-top:1px solid var(--border);margin-top:.8rem;padding-top:.8rem}.probe-details summary{cursor:pointer;color:var(--link);font-size:.82rem;font-weight:600;user-select:none}.probe-details[open] summary{margin-bottom:.85rem}.probe-details summary:hover{color:var(--link-hover)}.m-error{width:100%;font-family:monospace;font-size:.72rem;color:var(--error-text);word-break:break-word;margin-top:.15rem}
+.inline-check{display:flex;align-items:center;gap:.35rem;font-size:.82rem;color:var(--text-muted);margin:.45rem 0}
+label{display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:.25rem;font-weight:500}
+input[type=text],input[type=number],input[type=password],input[type=email],select{width:100%;padding:.38rem .6rem;border:1px solid var(--border-strong);border-radius:5px;font-size:.85rem;background:var(--input-bg);color:var(--text)}
+input:focus,select:focus{outline:none;border-color:var(--link);box-shadow:0 0 0 2px var(--focus-ring)}
 .form-actions{margin-top:1rem;display:flex;gap:.5rem;align-items:center}
-.firing-item{background:#fff;border-left:4px solid #cb2431;border-radius:4px;padding:.65rem 1rem;margin-bottom:.5rem;box-shadow:0 1px 3px rgba(0,0,0,.07)}
+.firing-item{background:var(--surface);border-left:4px solid #cb2431;border-radius:4px;padding:.65rem 1rem;margin-bottom:.5rem;box-shadow:0 1px 3px var(--shadow)}
 .firing-item .msg{font-weight:500;font-size:.88rem}
-.firing-item .ts{font-size:.77rem;color:#888;margin-top:.15rem}
+.firing-item .ts{font-size:.77rem;color:var(--text-faint);margin-top:.15rem}
 .notice{border-radius:5px;padding:.55rem 1rem;font-size:.84rem;margin-bottom:1rem}
-.notice-ok{background:#dff0d8;border:1px solid #a3d6a3}
-.notice-err{background:#f8d7da;border:1px solid #f5c6cb}
-.notice-info{background:#e7f1fb;border:1px solid #b9d8f5;color:#254e77}
-.section{background:#fff;border-radius:8px;box-shadow:0 1px 4px rgba(0,0,0,.1);padding:1rem;margin-bottom:1rem}
-.section h3{font-size:.88rem;color:#555;margin:0 0 .65rem;padding-bottom:.45rem;border-bottom:1px solid #eee}
+.notice-ok{background:var(--ok-soft-bg);border:1px solid var(--ok-soft-border)}
+.notice-err{background:var(--error-soft-bg);border:1px solid var(--error-soft-border)}
+.notice-info{background:var(--info-soft-bg);border:1px solid var(--info-soft-border);color:var(--info-text)}
+.section{background:var(--surface);border-radius:8px;box-shadow:0 1px 4px var(--shadow);padding:1rem;margin-bottom:1rem}
+.section h3{font-size:.88rem;color:var(--text-muted);margin:0 0 .65rem;padding-bottom:.45rem;border-bottom:1px solid var(--border)}
 .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;vertical-align:middle;margin-right:4px}
-.dot-ok{background:#22863a}.dot-err{background:#cb2431}.dot-unk{background:#888}
+.dot-ok{background:var(--ok-text)}.dot-err{background:var(--error-text)}.dot-unk{background:var(--text-faint)}
 .tag{display:inline-block;padding:.1rem .4rem;border-radius:3px;font-size:.72rem;font-weight:600;margin-left:.3rem}
-.tag-ok{background:#dff0d8;color:#22863a}.tag-err{background:#f8d7da;color:#cb2431}
-.pill{display:inline-block;background:#eef2f7;color:#445;padding:.08rem .38rem;border-radius:3px;font-size:.72rem;margin:.05rem .15rem .05rem 0}
-.empty{color:#888;font-size:.87rem;padding:1rem 0}
+.tag-ok{background:var(--ok-soft-bg);color:var(--ok-text)}.tag-err{background:var(--error-soft-bg);color:var(--error-text)}
+.pill{display:inline-block;background:var(--pill-bg);color:var(--pill-text);padding:.08rem .38rem;border-radius:3px;font-size:.72rem;margin:.05rem .15rem .05rem 0}
+.empty{color:var(--text-faint);font-size:.87rem;padding:1rem 0}
 .table-scroll{overflow-x:auto}
-.page-intro{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1.1rem}.page-intro p{margin:0;color:#66717e;font-size:.86rem;max-width:58rem}
-.setup-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin:0 0 1rem}.setup-step{border:1px solid #dbe2e8;border-radius:5px;padding:.55rem .65rem;background:#fafcfd;font-size:.78rem;color:#637080}.setup-step strong{display:block;color:#334155;font-size:.8rem}.setup-step.active{border-color:#1b8a6b;background:#edf9f5}.setup-step.active strong{color:#12674f}
-.profile-note{margin:.5rem 0 0;padding:.55rem .65rem;border-left:3px solid #1b8a6b;background:#f1faf7;color:#3c5d54;font-size:.8rem}.profile-note code{font-size:.78rem}
-.form-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:.8rem}.form-section-title h3{margin:0}.form-section-title span{color:#788492;font-size:.78rem}
-.restart-note{font-size:.8rem;color:#66717e;margin:.2rem 0 0}.restart-note strong{color:#9b6700}
-.config-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin:1rem 0}.summary-item{background:#f8fafb;border:1px solid #e1e7eb;border-radius:5px;padding:.6rem .7rem}.summary-item span{display:block;color:#71808e;font-size:.72rem}.summary-item strong{display:block;margin-top:.08rem;font-size:.88rem;color:#27313d;word-break:break-word}
-details.form-block{padding-bottom:.1rem}.form-block summary{cursor:pointer;color:#0066cc;font-weight:600;font-size:.84rem;user-select:none}.form-block[open] summary{margin-bottom:.9rem}
+.text-ok{color:var(--ok-text)}.text-error{color:var(--error-text)}.text-faint{color:var(--text-faint)}
+.page-intro{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1.1rem}.page-intro p{margin:0;color:var(--text-subtle);font-size:.86rem;max-width:58rem}
+.setup-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin:0 0 1rem}.setup-step{border:1px solid var(--border);border-radius:5px;padding:.55rem .65rem;background:var(--surface-alt);font-size:.78rem;color:var(--text-subtle)}.setup-step strong{display:block;color:var(--text);font-size:.8rem}.setup-step.active{border-color:var(--accent);background:var(--accent-soft-bg)}.setup-step.active strong{color:var(--accent-soft-text)}
+.profile-note{margin:.5rem 0 0;padding:.55rem .65rem;border-left:3px solid var(--accent);background:var(--accent-soft-bg);color:var(--accent-soft-text);font-size:.8rem}.profile-note code{font-size:.78rem}
+.form-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:.8rem}.form-section-title h3{margin:0}.form-section-title span{color:var(--text-subtle);font-size:.78rem}
+.probe-builder{border-top:1px solid var(--border);padding-top:1rem}.probe-transfer{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)}.inline-form{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:end;gap:.45rem}.inline-form label{margin:0;white-space:nowrap}.inline-form input[type=file]{min-width:0;font-size:.76rem}
+.restart-note{font-size:.8rem;color:var(--text-subtle);margin:.2rem 0 0}.restart-note strong{color:var(--warn-text)}
+.config-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin:1rem 0}.summary-item{background:var(--surface-alt);border:1px solid var(--border);border-radius:5px;padding:.6rem .7rem}.summary-item span{display:block;color:var(--text-subtle);font-size:.72rem}.summary-item strong{display:block;margin-top:.08rem;font-size:.88rem;color:var(--text);word-break:break-word}
+details.form-block{padding-bottom:.1rem}.form-block summary{cursor:pointer;color:var(--link);font-weight:600;font-size:.84rem;user-select:none}.form-block[open] summary{margin-bottom:.9rem}
 body[data-ui-mode="beginner"] .mode-advanced,body[data-ui-mode="beginner"] .mode-expert,body[data-ui-mode="advanced"] .mode-expert{display:none!important}
-.health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0 1.25rem}.health-filter{appearance:none;width:100%;text-align:left;border:1px solid #dce3e8;border-radius:6px;background:#fff;padding:.65rem .75rem;cursor:pointer;color:#354151}.health-filter:hover,.health-filter.active{border-color:#1b8a6b;box-shadow:0 0 0 2px rgba(27,138,107,.12)}.health-filter span{display:block;font-size:.74rem;color:#6b7785}.health-filter strong{display:block;margin-top:.05rem;font-size:1.2rem;font-variant-numeric:tabular-nums}.health-filter.ok strong{color:#22863a}.health-filter.warn strong{color:#9b6700}.health-filter.error strong{color:#cb2431}.health-filter.unknown strong{color:#66717e}.server-card[hidden]{display:none}.filter-empty{display:none;padding:1.25rem 0;text-align:center;color:#66717e}.filter-empty.visible{display:block}
-@media(max-width:760px){header{height:auto;display:grid;grid-template-columns:1fr auto;align-items:center;padding:.65rem 1rem;gap:.5rem}header h1{grid-column:1}.interface-controls{grid-column:2;grid-row:1;gap:.35rem}.mode-picker{gap:.25rem}.mode-picker span{display:none}header nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:.1rem}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
-@media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary,.health-summary{grid-template-columns:1fr 1fr}}
+.health-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.65rem;margin:1rem 0 1.25rem}.health-filter{appearance:none;width:100%;text-align:left;border:1px solid var(--border);border-radius:6px;background:var(--surface);padding:.65rem .75rem;cursor:pointer;color:var(--text)}.health-filter:hover,.health-filter.active{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-ring)}.health-filter span{display:block;font-size:.74rem;color:var(--text-subtle)}.health-filter strong{display:block;margin-top:.05rem;font-size:1.2rem;font-variant-numeric:tabular-nums}.health-filter.ok strong{color:var(--ok-text)}.health-filter.warn strong{color:var(--warn-text)}.health-filter.error strong{color:var(--error-text)}.health-filter.unknown strong{color:var(--text-faint)}.server-card[hidden]{display:none}.filter-empty{display:none;padding:1.25rem 0;text-align:center;color:var(--text-subtle)}.filter-empty.visible{display:block}
+@media(max-width:760px){header{height:auto;display:grid;grid-template-columns:1fr auto;align-items:center;padding:.65rem 1rem;gap:.5rem}header h1{grid-column:1}.interface-controls{grid-column:2;grid-row:1;gap:.35rem;flex-wrap:wrap;justify-content:flex-end}.mode-picker{gap:.25rem}.mode-picker span{display:none}header nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;width:100%;padding-bottom:.1rem;background-image:linear-gradient(to right,var(--header-bg) 40%,transparent),linear-gradient(to left,var(--header-bg) 40%,transparent),linear-gradient(to right,rgba(0,0,0,.35),transparent),linear-gradient(to left,rgba(0,0,0,.35),transparent);background-position:left,right,left,right;background-repeat:no-repeat;background-color:var(--header-bg);background-size:40px 100%,40px 100%,14px 100%,14px 100%;background-attachment:local,local,scroll,scroll}.detail-grid{grid-template-columns:1fr}.form-row,.form-row.w3{grid-template-columns:1fr}.form-grow{grid-column:auto}.form-actions{flex-wrap:wrap}}
+@media(max-width:760px){.page-intro{display:block}.page-intro p{margin-top:.35rem}.setup-steps,.config-summary,.probe-transfer{grid-template-columns:1fr}.health-summary{grid-template-columns:1fr 1fr}.inline-form{grid-template-columns:1fr}.inline-form .btn{justify-self:start}}
 `
 
 // allTemplates is parsed once at startup into the global template set.
@@ -116,6 +121,13 @@ const allTemplates = `
         <option value="de" data-i18n="german">Deutsch</option>
       </select>
     </label>
+    <label class="mode-picker"><span data-i18n="theme">Theme</span>
+      <select id="ui-theme" aria-label="Color theme" data-i18n-aria-label="color_theme">
+        <option value="auto" data-i18n="theme_auto">Auto</option>
+        <option value="light" data-i18n="theme_light">Light</option>
+        <option value="dark" data-i18n="theme_dark">Dark</option>
+      </select>
+    </label>
   </div>
 </header>
 <main id="main-content" tabindex="-1">
@@ -125,8 +137,8 @@ const allTemplates = `
 <script>
 (function(){
   var translations={
-    en:{skip_to_content:'Skip to content',primary_navigation:'Primary navigation',dashboard:'Dashboard',servers:'Servers',alerts:'Alerts',history:'History',configuration:'Configuration',mode:'Mode',language:'Language',configuration_complexity:'Configuration complexity',interface_language:'Interface language',beginner:'Beginner',advanced:'Advanced',expert:'Expert',english:'English',german:'Deutsch',operations_overview:'Operations Overview',add_server:'Add server',manage_alerts:'Manage alerts',server_health_summary:'Server health summary',all_targets:'All targets',healthy:'Healthy',needs_attention:'Needs attention',unavailable:'Unavailable',targets:'Targets',details:'Details',no_targets_match:'No targets match this status filter.',server_management:'Server Management',configured_servers:'Configured Servers',test_connection:'Test Connection',add_alert_rule:'Add Alert Rule',start_with_template:'Start with a template',custom_rule:'Custom rule',add_rule:'Add Rule',remove:'Remove',remove_server:'Remove server',remove_alert_rule:'Remove alert rule'},
-    de:{skip_to_content:'Zum Inhalt springen',primary_navigation:'Hauptnavigation',dashboard:'Übersicht',servers:'Server',alerts:'Alerts',history:'Verlauf',configuration:'Konfiguration',mode:'Modus',language:'Sprache',configuration_complexity:'Konfigurationsumfang',interface_language:'Oberflächensprache',beginner:'Einfach',advanced:'Fortgeschritten',expert:'Expertin/Experte',english:'English',german:'Deutsch',operations_overview:'Betriebsübersicht',add_server:'Server hinzufügen',manage_alerts:'Alerts verwalten',server_health_summary:'Serverzustand',all_targets:'Alle Ziele',healthy:'Gesund',needs_attention:'Aufmerksamkeit nötig',unavailable:'Nicht erreichbar',targets:'Ziele',details:'Details',no_targets_match:'Keine Ziele entsprechen diesem Statusfilter.',server_management:'Serververwaltung',configured_servers:'Konfigurierte Server',test_connection:'Verbindung testen',add_alert_rule:'Alert-Regel hinzufügen',start_with_template:'Mit Vorlage beginnen',custom_rule:'Benutzerdefinierte Regel',add_rule:'Regel hinzufügen',remove:'Entfernen',remove_server:'Server entfernen',remove_alert_rule:'Alert-Regel entfernen'}
+    en:{skip_to_content:'Skip to content',primary_navigation:'Primary navigation',dashboard:'Dashboard',servers:'Servers',alerts:'Alerts',history:'History',configuration:'Configuration',mode:'Mode',language:'Language',theme:'Theme',configuration_complexity:'Configuration complexity',interface_language:'Interface language',color_theme:'Color theme',beginner:'Beginner',advanced:'Advanced',expert:'Expert',english:'English',german:'Deutsch',theme_auto:'Auto',theme_light:'Light',theme_dark:'Dark',operations_overview:'Operations Overview',add_server:'Add server',manage_alerts:'Manage alerts',server_health_summary:'Server health summary',all_targets:'All targets',healthy:'Healthy',needs_attention:'Needs attention',unavailable:'Unavailable',targets:'Targets',details:'Details',no_targets_match:'No targets match this status filter.',server_management:'Server Management',configured_servers:'Configured Servers',test_connection:'Test Connection',add_alert_rule:'Add Alert Rule',start_with_template:'Start with a template',custom_rule:'Custom rule',add_rule:'Add Rule',remove:'Remove',remove_server:'Remove server',remove_alert_rule:'Remove alert rule'},
+    de:{skip_to_content:'Zum Inhalt springen',primary_navigation:'Hauptnavigation',dashboard:'Übersicht',servers:'Server',alerts:'Alerts',history:'Verlauf',configuration:'Konfiguration',mode:'Modus',language:'Sprache',theme:'Design',configuration_complexity:'Konfigurationsumfang',interface_language:'Oberflächensprache',color_theme:'Farbschema',beginner:'Einfach',advanced:'Fortgeschritten',expert:'Expertin/Experte',english:'English',german:'Deutsch',theme_auto:'Automatisch',theme_light:'Hell',theme_dark:'Dunkel',operations_overview:'Betriebsübersicht',add_server:'Server hinzufügen',manage_alerts:'Alerts verwalten',server_health_summary:'Serverzustand',all_targets:'Alle Ziele',healthy:'Gesund',needs_attention:'Aufmerksamkeit nötig',unavailable:'Nicht erreichbar',targets:'Ziele',details:'Details',no_targets_match:'Keine Ziele entsprechen diesem Statusfilter.',server_management:'Serververwaltung',configured_servers:'Konfigurierte Server',test_connection:'Verbindung testen',add_alert_rule:'Alert-Regel hinzufügen',start_with_template:'Mit Vorlage beginnen',custom_rule:'Benutzerdefinierte Regel',add_rule:'Regel hinzufügen',remove:'Entfernen',remove_server:'Server entfernen',remove_alert_rule:'Alert-Regel entfernen'}
   };
   var languageSelect=document.getElementById('ui-language');
   function applyLanguage(language){
@@ -163,6 +175,18 @@ const allTemplates = `
   if(modeSelect) modeSelect.addEventListener('change',function(){
     localStorage.setItem('watchssh-ui-mode',modeSelect.value);
     applyMode(modeSelect.value);
+  });
+  var themeSelect=document.getElementById('ui-theme');
+  function applyTheme(theme){
+    if(['auto','light','dark'].indexOf(theme)===-1) theme='auto';
+    if(theme==='auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme',theme);
+    if(themeSelect) themeSelect.value=theme;
+  }
+  applyTheme(localStorage.getItem('watchssh-ui-theme') || 'auto');
+  if(themeSelect) themeSelect.addEventListener('change',function(){
+    localStorage.setItem('watchssh-ui-theme',themeSelect.value);
+    applyTheme(themeSelect.value);
   });
   var healthFilters=document.querySelectorAll('[data-health-filter]');
   var serverCards=document.querySelectorAll('[data-server-status]');
@@ -210,7 +234,7 @@ const allTemplates = `
 {{if .Unknown}}<p class="restart-note">{{.Unknown}} target{{if ne .Unknown 1}}s{{end}} waiting for their first result.</p>{{end}}
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
   <h3 style="margin:0" data-i18n="targets">Targets</h3>
-  <span style="font-size:.8rem;color:#888">Auto-refresh in <span id="refresh-count">30</span>s</span>
+  <span style="font-size:.8rem;color:var(--text-faint)">Auto-refresh in <span id="refresh-count">30</span>s</span>
 </div>
 <div class="grid">
 {{range .Servers}}
@@ -221,7 +245,7 @@ const allTemplates = `
     </div>
     <div class="card-body">
       {{if .Error}}
-        <p style="color:#cb2431;font-size:.84rem;margin:0">{{.Error}}</p>
+        <p style="color:var(--error-text);font-size:.84rem;margin:0">{{.Error}}</p>
       {{else}}
         <div class="m-row"><span class="m-label">CPU</span><span class="m-val">{{if .CPU}}{{printf "%.1f" (cpuPct .)}}%{{else}}n/a{{end}}</span></div>
         {{if .CPU}}<div class="pbar-wrap"><div class="pbar {{pbarClass (cpuPct .)}}" style="width:{{clamp (cpuPct .)}}%"></div></div>{{end}}
@@ -241,7 +265,7 @@ const allTemplates = `
         <div class="m-row">
           <span class="m-label">Ping</span>
           <span class="m-val">
-            {{if .Connectivity.PingOK}}{{printf "%.1f" .Connectivity.PingLatency}} ms{{else}}<span style="color:#cb2431">FAILED</span>{{end}}
+            {{if .Connectivity.PingOK}}{{printf "%.1f" .Connectivity.PingLatency}} ms{{else}}<span style="color:var(--error-text)">FAILED</span>{{end}}
           </span>
         </div>
         {{end}}
@@ -292,7 +316,7 @@ const allTemplates = `
 {{template "hdr" .}}
 <div class="page-intro">
   <div><h2>History</h2><p>Investigate recent measurements and alert evidence from the local tinySQL store.</p></div>
-  {{if .StorageEnabled}}<span style="font-size:.8rem;color:#888">Newest records first</span>{{end}}
+  {{if .StorageEnabled}}<span style="font-size:.8rem;color:var(--text-faint)">Newest records first</span>{{end}}
 </div>
 
 {{if not .StorageEnabled}}
@@ -383,7 +407,7 @@ const allTemplates = `
 <div style="margin-bottom:1rem;display:flex;align-items:center;gap:1rem">
   <a href="/" class="btn btn-secondary btn-sm">← Back</a>
   <h2 style="margin:0">{{.Metrics.ServerName}}
-    {{if .Metrics.Host}}<span style="font-weight:400;color:#888;font-size:.9rem">({{.Metrics.Host}})</span>{{end}}
+    {{if .Metrics.Host}}<span style="font-weight:400;color:var(--text-faint);font-size:.9rem">({{.Metrics.Host}})</span>{{end}}
     <span class="badge badge-{{serverStatus .Metrics}}" style="margin-left:.5rem">{{serverStatusLabel .Metrics}}</span>
   </h2>
 </div>
@@ -748,7 +772,58 @@ const allTemplates = `
   </div>
   {{else}}
   <p class="empty">No servers configured yet.</p>
+{{end}}
+</div>
+
+<div class="form-wrap" id="probe-workspace">
+  <div class="form-section-title"><h3>Probe Library</h3><span>Add focused checks, manage existing probes, or exchange probe-only bundles.</span></div>
+  {{if .ServerNames}}
+  <form method="post" action="/probes/add" class="probe-builder">
+    <div class="form-row w3">
+      <div><label for="probe-server">Target</label><select id="probe-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
+      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="custom">Remote command</option></select></div>
+      <div><label for="probe-timeout">Timeout (seconds)</label><input id="probe-timeout" type="number" name="timeout" value="5" min="1"></div>
+    </div>
+    <div class="form-row w3">
+      <div><label for="probe-target">URL or host</label><input id="probe-target" type="text" name="target" placeholder="https://service.example/health or db.internal"></div>
+      <div><label for="probe-port">Port</label><input id="probe-port" type="number" name="probe_port" placeholder="80, 443, 5432" min="1" max="65535"></div>
+      <div><label for="probe-source">TCP origin</label><select id="probe-source" name="source"><option value="monitor">Monitoring host</option><option value="target">Target network (SSH)</option></select></div>
+    </div>
+    <div class="form-row mode-advanced">
+      <div><label for="probe-method">HTTP method / DNS type</label><input id="probe-method" type="text" name="method" value="GET" placeholder="GET or A"></div>
+      <div><label for="probe-status">Expected HTTP status</label><input id="probe-status" type="number" name="expected_status" value="200" min="100" max="599"></div>
+    </div>
+    <details class="probe-details mode-expert">
+      <summary>Optional probe details</summary>
+      <div class="form-row w3">
+        <div><label>DNS type</label><input type="text" name="dns_type" value="A" placeholder="A, AAAA, MX"></div>
+        <div><label>DNS resolver</label><input type="text" name="resolver" placeholder="1.1.1.1"></div>
+        <div><label>NTP max offset (ms)</label><input type="number" name="max_offset_ms" min="0" step="0.1"></div>
+      </div>
+      <div class="form-row">
+        <div><label>Remote command name</label><input type="text" name="probe_name" placeholder="service-running"></div>
+        <div><label>Remote command</label><input type="text" name="command" placeholder="pgrep -x nginx && echo OK"></div>
+      </div>
+    </details>
+    <div class="form-actions"><button type="submit" class="btn btn-primary">Add probe</button><span class="restart-note">Target-network TCP probes use SSH direct-tcpip and do not need netcat.</span></div>
+  </form>
+
+  <div class="probe-transfer">
+    <form method="get" action="/probes/export" class="inline-form"><label for="probe-export-server">Export probes</label><select id="probe-export-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select><select name="format" aria-label="Export format"><option value="yaml">YAML</option><option value="json">JSON</option></select><button type="submit" class="btn btn-secondary">Download</button></form>
+    <form method="post" action="/probes/import" enctype="multipart/form-data" class="inline-form"><label for="probe-import-server">Import into</label><select id="probe-import-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select><input id="probe-bundle" type="file" name="bundle" accept="application/json,application/x-yaml,.json,.yaml,.yml"><button type="submit" class="btn btn-secondary">Import file</button></form>
+  </div>
+  {{else}}
+  <p class="empty">Add a server before creating or importing probes.</p>
   {{end}}
+</div>
+
+<div class="section" aria-labelledby="configured-probes-title">
+  <div class="form-section-title"><h3 id="configured-probes-title">Configured Probes</h3><span>{{len .Probes}} saved checks across all targets.</span></div>
+  {{if .Probes}}
+  <div class="table-scroll"><table><thead><tr><th>Target</th><th>Type</th><th>Definition</th><th></th></tr></thead><tbody>
+  {{range .Probes}}<tr><td>{{.Server}}</td><td><span class="pill">{{.Name}}</span></td><td><code>{{.Detail}}</code></td><td><form method="post" action="/probes/remove" style="display:inline"><input type="hidden" name="server" value="{{.Server}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="index" value="{{.Index}}"><button type="submit" class="btn btn-danger btn-sm" aria-label="Remove {{.Name}} probe from {{.Server}}" onclick="return confirm('Remove this probe?')">Remove</button></form></td></tr>{{end}}
+  </tbody></table></div>
+  {{else}}<p class="empty">No explicit probes yet. System metrics are collected automatically.</p>{{end}}
 </div>
 
 <div class="form-wrap" id="add-server">
@@ -912,6 +987,10 @@ const allTemplates = `
   var authType = document.querySelector('[name=auth_type]');
   var credentialLabel = document.getElementById('auth-credential-label');
   var credential = document.getElementById('auth-credential');
+  var probeKind = document.getElementById('probe-kind');
+  var probeTarget = document.getElementById('probe-target');
+  var probePort = document.getElementById('probe-port');
+  var probeSource = document.getElementById('probe-source');
   var profileNotes = {
     '': 'Custom starts with host metrics. Add only the probes this target needs.',
     web: 'Adds ports 80/443 plus HTTP health, DNS and TLS checks for the selected host.',
@@ -984,6 +1063,25 @@ const allTemplates = `
     credential.placeholder = '~/.ssh/id_ed25519';
   }
   if(authType){ authType.addEventListener('change', updateCredentialHint); updateCredentialHint(); }
+  function updateProbePreset(){
+    if(!probeKind || !probeTarget || !probePort || !probeSource) return;
+    var presets = {
+      http:{placeholder:'https://service.example/health',port:'',source:false},
+      tcp:{placeholder:'db.internal or service.example',port:'443',source:true},
+      dns:{placeholder:'example.com',port:'',source:false},
+      tls:{placeholder:'service.example',port:'443',source:false},
+      ping:{placeholder:'uses the target host when blank',port:'',source:false},
+      ntp:{placeholder:'time.cloudflare.com',port:'123',source:false},
+      trace:{placeholder:'example.com',port:'',source:false},
+      custom:{placeholder:'not required',port:'',source:false}
+    };
+    var preset = presets[probeKind.value] || presets.http;
+    probeTarget.placeholder = preset.placeholder;
+    probePort.value = preset.port;
+    probePort.disabled = probeKind.value === 'ping' || probeKind.value === 'dns' || probeKind.value === 'trace' || probeKind.value === 'custom';
+    probeSource.disabled = !preset.source;
+  }
+  if(probeKind){ probeKind.addEventListener('change', updateProbePreset); updateProbePreset(); }
   if(!btn) return;
   btn.addEventListener('click', function(){
     var form = btn.closest('form');
@@ -997,15 +1095,15 @@ const allTemplates = `
       local:      form.querySelector('[name=local]').checked
     });
     btn.disabled = true;
-    result.style.color = '#888';
+    result.className = 'text-faint';
     result.textContent = 'Testing…';
     fetch('/api/test-connection', {method:'POST', headers:{'Content-Type':'application/json'}, body:body})
       .then(function(r){ return r.json(); })
       .then(function(data){
-        result.style.color = data.ok ? '#22863a' : '#cb2431';
+        result.className = data.ok ? 'text-ok' : 'text-error';
         result.textContent = (data.ok ? '✓ ' : '✗ ') + data.message;
       })
-      .catch(function(e){ result.style.color='#cb2431'; result.textContent='Request failed: '+e; })
+      .catch(function(e){ result.className = 'text-error'; result.textContent='Request failed: '+e; })
       .finally(function(){ btn.disabled = false; });
   });
 })();
@@ -1191,7 +1289,7 @@ const allTemplates = `
     </div>
     <div class="form-row mode-advanced">
       <div>
-        <label>Limit to Servers <small style="color:#888">(hold Ctrl/⌘ for multi-select; none selected = all servers)</small></label>
+        <label>Limit to Servers <small style="color:var(--text-faint)">(hold Ctrl/⌘ for multi-select; none selected = all servers)</small></label>
         {{if $.ServerNames}}
         <select name="servers" multiple size="4" style="height:auto">
           {{range $.ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}
@@ -1252,7 +1350,7 @@ const allTemplates = `
     <tr><td class="m-label">From</td><td>{{.From}}</td></tr>
     <tr><td class="m-label">To</td><td>{{range .To}}{{.}} {{end}}</td></tr>
   </tbody></table>
-  <p style="margin:.75rem 0 0;font-size:.8rem;color:#888">Email settings are configured in the YAML config file under <code>alerts.email</code>.</p>
+  <p style="margin:.75rem 0 0;font-size:.8rem;color:var(--text-faint)">Email settings are configured in the YAML config file under <code>alerts.email</code>.</p>
 </div>
 {{end}}
 {{template "ftr" .}}
@@ -1289,7 +1387,7 @@ const allTemplates = `
         <input type="number" name="timeout" value="{{.Config.Timeout}}" min="1" required>
       </div>
       <div class="mode-advanced">
-        <label>Max Concurrent Workers <small style="color:#888">(0 = unlimited)</small></label>
+        <label>Max Concurrent Workers <small style="color:var(--text-faint)">(0 = unlimited)</small></label>
         <input type="number" name="workers" value="{{.Config.Workers}}" min="0">
       </div>
     </div>
@@ -1306,7 +1404,7 @@ const allTemplates = `
         </select>
       </div>
       <div>
-        <label>JSON Output File <small style="color:#888">(leave blank for stdout)</small></label>
+        <label>JSON Output File <small style="color:var(--text-faint)">(leave blank for stdout)</small></label>
         <input type="text" name="output_file" value="{{.Config.Output.File}}" placeholder="/var/log/watchssh/metrics.json">
       </div>
     </div>
@@ -1328,13 +1426,13 @@ const allTemplates = `
         <input type="text" name="storage_path" value="{{.Config.Storage.Path}}" placeholder="./watchssh.tinysql">
       </div>
       <div>
-        <label>Retention Days <small style="color:#888">(0 = disabled)</small></label>
+        <label>Retention Days <small style="color:var(--text-faint)">(0 = disabled)</small></label>
         <input type="number" name="storage_retention_days" value="{{.Config.Storage.RetentionDays}}" min="0">
       </div>
     </div>
     <div class="form-row">
       <div>
-        <label>Max Size MB <small style="color:#888">(0 = disabled)</small></label>
+        <label>Max Size MB <small style="color:var(--text-faint)">(0 = disabled)</small></label>
         <input type="number" name="storage_max_size_mb" value="{{.Config.Storage.MaxSizeMB}}" min="0">
       </div>
       <div></div>
@@ -1363,7 +1461,7 @@ const allTemplates = `
     <div class="form-section-title"><h3>SSH Security</h3><span>Global trust policy for remote connections.</span></div>
     <div class="form-row">
       <div class="mode-expert">
-        <label>Known Hosts File <small style="color:#888">(blank = ~/.ssh/known_hosts)</small></label>
+        <label>Known Hosts File <small style="color:var(--text-faint)">(blank = ~/.ssh/known_hosts)</small></label>
         <input type="text" name="known_hosts_path" value="{{.Config.KnownHostsPath}}" placeholder="~/.ssh/known_hosts">
       </div>
       <div>
