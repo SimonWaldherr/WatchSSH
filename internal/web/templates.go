@@ -39,7 +39,7 @@ tr:hover td{background:var(--surface-alt)}
 .btn-primary{background:#0066cc;border-color:#0055bb;color:#fff}.btn-primary:hover{background:#0055bb;color:#fff;text-decoration:none}
 .btn-danger{background:#cb2431;border-color:#a51c26;color:#fff}.btn-danger:hover{background:#a51c26;color:#fff;text-decoration:none}
 .btn-secondary{background:var(--surface);border-color:var(--border-strong);color:var(--text)}.btn-secondary:hover{background:var(--surface-alt);color:var(--text);text-decoration:none}
-.btn-sm{padding:.18rem .5rem;font-size:.76rem}
+.btn-sm{padding:.18rem .5rem;font-size:.76rem}.metric-action{float:right;margin-left:.6rem}.metric-alert{display:inline-grid;place-items:center;width:1.8rem;height:1.8rem;padding:0;border:1px solid var(--border-strong);border-radius:4px;background:var(--surface);color:var(--warn-text);font-size:1rem;line-height:1;text-decoration:none}.metric-alert:hover,.metric-alert:focus{background:var(--surface-alt);border-color:var(--warn-text);color:var(--warn-text);text-decoration:none}.metric-alert:focus{outline:2px solid var(--focus-ring);outline-offset:2px}
 .form-wrap{background:var(--surface);border-radius:8px;box-shadow:0 1px 4px var(--shadow);padding:1.25rem;margin-top:1.25rem}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-bottom:.75rem}
 .form-row.w3{grid-template-columns:1fr 1fr 1fr}
@@ -74,7 +74,7 @@ input:focus,select:focus{outline:none;border-color:var(--link);box-shadow:0 0 0 
 .page-intro{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1.1rem}.page-intro p{margin:0;color:var(--text-subtle);font-size:.86rem;max-width:58rem}
 .setup-steps{display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin:0 0 1rem}.setup-step{border:1px solid var(--border);border-radius:5px;padding:.55rem .65rem;background:var(--surface-alt);font-size:.78rem;color:var(--text-subtle)}.setup-step strong{display:block;color:var(--text);font-size:.8rem}.setup-step.active{border-color:var(--accent);background:var(--accent-soft-bg)}.setup-step.active strong{color:var(--accent-soft-text)}
 .profile-note{margin:.5rem 0 0;padding:.55rem .65rem;border-left:3px solid var(--accent);background:var(--accent-soft-bg);color:var(--accent-soft-text);font-size:.8rem}.profile-note code{font-size:.78rem}
-.form-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:.8rem}.form-section-title h3{margin:0}.form-section-title span{color:var(--text-subtle);font-size:.78rem}
+.form-section-title{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;margin-bottom:.8rem}.form-section-title h3{margin:0}.form-section-title span{color:var(--text-subtle);font-size:.78rem}.process-sort{display:inline-flex;border:1px solid var(--border-strong);border-radius:5px;overflow:hidden;white-space:nowrap}.process-sort a{display:block;padding:.27rem .55rem;border-right:1px solid var(--border-strong);color:var(--text-muted);font-size:.78rem;font-weight:600;text-decoration:none}.process-sort a:last-child{border-right:0}.process-sort a:hover{background:var(--surface-alt);color:var(--text)}.process-sort a.active{background:var(--accent);color:#fff}
 .probe-builder{border-top:1px solid var(--border);padding-top:1rem}.probe-transfer{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)}.inline-form{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:end;gap:.45rem}.inline-form label{margin:0;white-space:nowrap}.inline-form input[type=file]{min-width:0;font-size:.76rem}
 .restart-note{font-size:.8rem;color:var(--text-subtle);margin:.2rem 0 0}.restart-note strong{color:var(--warn-text)}
 .config-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:.65rem;margin:1rem 0}.summary-item{background:var(--surface-alt);border:1px solid var(--border);border-radius:5px;padding:.6rem .7rem}.summary-item span{display:block;color:var(--text-subtle);font-size:.72rem}.summary-item strong{display:block;margin-top:.08rem;font-size:.88rem;color:var(--text);word-break:break-word}
@@ -304,7 +304,7 @@ const allTemplates = `
 <div class="firing-item">
   <div class="msg">{{.Message}}</div>
   <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}}</div>
-  {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .DeferredRemediations}}<div class="ts">Watchdog actions deferred below the configured severity: {{range .DeferredRemediations}}{{.}} {{end}}</div>{{end}}{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
+  {{with .Watchdog}}<div class="ts">AI advisor {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .RecommendedRemediations}}<div class="ts">Operator review required for recommended runbooks: {{range .RecommendedRemediations}}{{.}} {{end}}</div>{{end}}{{if .RejectedRemediations}}<div class="ts">Unapproved AI recommendations ignored: {{range .RejectedRemediations}}{{.}} {{end}}</div>{{end}}{{end}}
   {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
 </div>
 {{end}}
@@ -404,6 +404,7 @@ const allTemplates = `
 
 {{define "server-detail"}}
 {{template "hdr" .}}
+{{if .Flash}}<div class="notice {{if .FlashErr}}notice-err{{else}}notice-ok{{end}}">{{.Flash}}</div>{{end}}
 <div style="margin-bottom:1rem;display:flex;align-items:center;gap:1rem">
   <a href="/" class="btn btn-secondary btn-sm">← Back</a>
   <h2 style="margin:0">{{.Metrics.ServerName}}
@@ -431,7 +432,7 @@ const allTemplates = `
   <div class="section">
     <h3>CPU &amp; Load</h3>
     <table><tbody>
-      {{if .Metrics.CPU}}<tr><td class="m-label">Usage</td><td>{{printf "%.1f" .Metrics.CPU.UsagePercent}}%</td></tr>
+      {{if .Metrics.CPU}}<tr><td class="m-label">Usage</td><td>{{printf "%.1f" .Metrics.CPU.UsagePercent}}% <a class="metric-alert metric-action" href="{{alertLink "High CPU usage" "cpu_usage" ">=" 90 .Metrics.ServerName ""}}" aria-label="Create CPU usage alert" title="Create CPU usage alert">&#9888;</a></td></tr>
       <tr><td class="m-label">User</td><td>{{printf "%.1f" .Metrics.CPU.UserPercent}}%</td></tr>
       <tr><td class="m-label">System</td><td>{{printf "%.1f" .Metrics.CPU.SystemPercent}}%</td></tr>
       <tr><td class="m-label">I/O Wait</td><td>{{printf "%.1f" .Metrics.CPU.IOWaitPercent}}%</td></tr>{{else}}<tr><td class="m-label">CPU</td><td>n/a</td></tr>{{end}}
@@ -446,8 +447,8 @@ const allTemplates = `
     <h3>Memory</h3>
     <table><tbody>
       {{if .Metrics.Memory}}<tr><td class="m-label">Total</td><td>{{fmtBytes .Metrics.Memory.TotalBytes}}</td></tr>
-      <tr><td class="m-label">Used</td><td>{{fmtBytes .Metrics.Memory.UsedBytes}} ({{printf "%.1f" .Metrics.Memory.UsagePercent}}%)</td></tr>
-      <tr><td class="m-label">Available</td><td>{{fmtBytes .Metrics.Memory.AvailableBytes}}</td></tr>{{else}}<tr><td class="m-label">RAM</td><td>n/a</td></tr>{{end}}
+      <tr><td class="m-label">Used</td><td>{{fmtBytes .Metrics.Memory.UsedBytes}} ({{printf "%.1f" .Metrics.Memory.UsagePercent}}%) <a class="metric-alert metric-action" href="{{alertLink "High memory usage" "mem_usage" ">=" 90 .Metrics.ServerName ""}}" aria-label="Create memory usage alert" title="Create memory usage alert">&#9888;</a></td></tr>
+      <tr><td class="m-label">Available</td><td>{{fmtBytes .Metrics.Memory.AvailableBytes}} <a class="metric-alert metric-action" href="{{alertLink "Low memory available" "mem_available_bytes" "<=" 1073741824 .Metrics.ServerName ""}}" aria-label="Create low memory alert" title="Create low memory alert">&#9888;</a></td></tr>{{else}}<tr><td class="m-label">RAM</td><td>n/a</td></tr>{{end}}
       {{if .Metrics.Swap}}
       <tr><td class="m-label">Swap Total</td><td>{{fmtBytes .Metrics.Swap.TotalBytes}}</td></tr>
       <tr><td class="m-label">Swap Used</td><td>{{fmtBytes .Metrics.Swap.UsedBytes}} ({{printf "%.1f" .Metrics.Swap.Percent}}%)</td></tr>
@@ -458,7 +459,7 @@ const allTemplates = `
   <div class="section">
     <h3>File Descriptors</h3>
     <table><tbody>
-      <tr><td class="m-label">In Use</td><td>{{fdInUse .Metrics.FileDescriptors}} / {{.Metrics.FileDescriptors.Max}} ({{printf "%.1f" .Metrics.FileDescriptors.UsagePercent}}%)</td></tr>
+      <tr><td class="m-label">In Use</td><td>{{fdInUse .Metrics.FileDescriptors}} / {{.Metrics.FileDescriptors.Max}} ({{printf "%.1f" .Metrics.FileDescriptors.UsagePercent}}%) <a class="metric-alert metric-action" href="{{alertLink "High file descriptor usage" "file_descriptor_usage" ">=" 90 .Metrics.ServerName ""}}" aria-label="Create file descriptor alert" title="Create file descriptor alert">&#9888;</a></td></tr>
       <tr><td class="m-label">Allocated</td><td>{{.Metrics.FileDescriptors.Allocated}}</td></tr>
       <tr><td class="m-label">Unused Allocated</td><td>{{.Metrics.FileDescriptors.Unused}}</td></tr>
     </tbody></table>
@@ -566,18 +567,19 @@ const allTemplates = `
 <div class="section">
   <h3>Disk Usage</h3>
   <table>
-    <thead><tr><th>Device</th><th>Mount</th><th>Used</th><th>Total</th><th>Usage</th><th>Inodes</th></tr></thead>
+    <thead><tr><th>Device</th><th>Mount</th><th>Used</th><th>Free</th><th>Total</th><th>Usage</th><th>Inodes</th></tr></thead>
     <tbody>
     {{range .Metrics.Disks}}
     <tr>
       <td>{{.Device}}</td>
       <td>{{.MountPoint}}</td>
       <td>{{fmtBytes .UsedBytes}}</td>
+      <td>{{fmtBytes .FreeBytes}} <a class="metric-alert metric-action" href="{{alertLink "Low disk space" "disk_free_bytes" "<=" 1073741824 $.Metrics.ServerName .MountPoint}}" aria-label="Create low disk space alert for {{.MountPoint}}" title="Create low disk space alert">&#9888;</a></td>
       <td>{{fmtBytes .TotalBytes}}</td>
       <td>
         <div style="display:flex;align-items:center;gap:.5rem">
           <div class="pbar-wrap" style="width:80px;margin:0"><div class="pbar {{pbarClass .UsagePercent}}" style="width:{{clamp .UsagePercent}}%"></div></div>
-          {{printf "%.1f" .UsagePercent}}%
+          {{printf "%.1f" .UsagePercent}}% <a class="metric-alert" href="{{alertLink "High disk usage" "disk_usage" ">=" 90 $.Metrics.ServerName .MountPoint}}" aria-label="Create disk usage alert for {{.MountPoint}}" title="Create disk usage alert">&#9888;</a>
         </div>
       </td>
       <td>{{if .InodesTotal}}{{.InodesUsed}} / {{.InodesTotal}} ({{printf "%.1f" .InodesUsagePercent}}%){{else}}n/a{{end}}</td>
@@ -709,11 +711,29 @@ const allTemplates = `
 </div>
 {{end}}
 
+{{with .Metrics.Audit}}
+<div class="section">
+  <h3>Optional Target Audit</h3>
+  <p class="restart-note">Read-only, bounded inventory. Credentials, password hashes, home-directory contents, and package metadata are not collected.</p>
+  <div class="detail-grid">
+    <div>{{if .Users}}<h4>Accounts{{if .UsersCut}} (truncated){{end}}</h4><table><thead><tr><th>Name</th><th>UID</th></tr></thead><tbody>{{range .Users}}<tr><td>{{.Name}}</td><td>{{.UID}}</td></tr>{{end}}</tbody></table>{{else}}<p class="empty">Account inventory: {{index .Capabilities "users"}}</p>{{end}}</div>
+    <div>{{if .Packages}}<h4>Packages{{if .PackagesCut}} (truncated){{end}}</h4><p class="restart-note">Source: {{.PackageTool}}</p><div>{{range .Packages}}<code>{{.}}</code> {{end}}</div>{{else}}<p class="empty">Package inventory: {{index .Capabilities "packages"}}</p>{{end}}</div>
+  </div>
+</div>
+{{end}}
+
+<div class="section" id="audit-history">
+  <div class="form-section-title"><h3>Audit History</h3><form method="post" action="/audit/run"><input type="hidden" name="server" value="{{.Metrics.ServerName}}"><button type="submit" class="btn btn-secondary">Run audit</button></form></div>
+  <p class="restart-note">Runs a bounded, read-only account and package inventory. Results are compared with the preceding audit held by this WatchSSH process.</p>
+  {{if .Audits}}{{range .Audits}}<div class="firing-item"><div class="ts">{{.CollectedAt.Format "2006-01-02 15:04:05 MST"}}{{if .Result.PackageTool}} - packages: {{.Result.PackageTool}}{{end}}</div>{{if or .AddedUsers .RemovedUsers .AddedPackages .RemovedPackages}}<div class="ts">{{if .AddedUsers}}Accounts added: {{range .AddedUsers}}<code>{{.}}</code> {{end}}{{end}}{{if .RemovedUsers}} Accounts removed: {{range .RemovedUsers}}<code>{{.}}</code> {{end}}{{end}}{{if .AddedPackages}} Packages added: {{range .AddedPackages}}<code>{{.}}</code> {{end}}{{end}}{{if .RemovedPackages}} Packages removed: {{range .RemovedPackages}}<code>{{.}}</code> {{end}}{{end}}</div>{{else}}<div class="ts">No account or package changes from the preceding audit.</div>{{end}}</div>{{end}}{{else}}<p class="empty">No audit has been recorded for this target.</p>{{end}}
+</div>
+
 {{if .Metrics.Processes}}
 <div class="section">
-  <h3>Top Processes (by CPU)</h3>
+  <div class="form-section-title"><h3>Top Processes (by {{processSortLabel .ProcessSort}})</h3><nav class="process-sort" aria-label="Sort processes"><a href="/server/{{.Metrics.ServerName}}?process_sort=cpu" {{if eq .ProcessSort "cpu"}}class="active" aria-current="page"{{end}}>CPU</a><a href="/server/{{.Metrics.ServerName}}?process_sort=memory" {{if eq .ProcessSort "memory"}}class="active" aria-current="page"{{end}}>RAM</a>{{if .ProcessDiskIOSupported}}<a href="/server/{{.Metrics.ServerName}}?process_sort=disk" {{if eq .ProcessSort "disk"}}class="active" aria-current="page"{{end}}>Disk I/O</a>{{end}}</nav></div>
+  {{if .ProcessDiskIOSupported}}<p class="restart-note">Disk I/O shows cumulative kernel read and write counters for the sampled processes.</p>{{end}}
   <table>
-    <thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>Command</th></tr></thead>
+    <thead><tr><th>PID</th><th>User</th><th>CPU%</th><th>MEM%</th><th>RAM</th>{{if .ProcessDiskIOSupported}}<th>Disk I/O</th>{{end}}<th>Command</th></tr></thead>
     <tbody>
     {{range .Metrics.Processes}}
     <tr>
@@ -721,6 +741,8 @@ const allTemplates = `
       <td>{{.User}}</td>
       <td>{{printf "%.1f" .CPUPercent}}</td>
       <td>{{printf "%.1f" .MemPercent}}</td>
+      <td>{{fmtBytes .RSSBytes}}</td>
+      {{if $.ProcessDiskIOSupported}}<td>{{fmtBytes .DiskReadBytes}} read / {{fmtBytes .DiskWriteBytes}} write</td>{{end}}
       <td style="font-family:monospace;font-size:.8rem;word-break:break-all">{{.Command}}</td>
     </tr>
     {{end}}
@@ -773,6 +795,16 @@ const allTemplates = `
   {{else}}
   <p class="empty">No servers configured yet.</p>
 {{end}}
+</div>
+
+<div class="section" id="inventory">
+  <h3>Asset & SSH Inventory</h3>
+  {{if .Inventory}}<div class="table-scroll"><table><thead><tr><th>Asset</th><th>Observed OS</th><th>Architecture</th><th>Connection</th><th>Dependencies</th><th>Standard tools</th><th>Last seen</th></tr></thead><tbody>{{range .Inventory}}<tr><td>{{.Name}}{{range .Tags}} <span class="pill">{{.}}</span>{{end}}</td><td>{{if .Platform}}{{.Platform}}{{else}}<em>awaiting collection</em>{{end}}</td><td>{{.Architecture}}</td><td>{{if .Local}}local{{else if .ProxyJump}}SSH via bastion{{else}}SSH{{end}}</td><td>{{if .DependsOn}}{{range .DependsOn}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</td><td>{{if .Tools}}{{range .Tools}}<code>{{.}}</code> {{end}}{{else}}<em>not inventoried</em>{{end}}</td><td>{{if .LastSeen}}{{timeAgo .LastSeen}}{{else}}—{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
+</div>
+
+<div class="section" id="security-posture">
+  <h3>Security Checks</h3>
+  {{if .Security}}<table><thead><tr><th>Severity</th><th>Server</th><th>Finding</th><th>Detail</th></tr></thead><tbody>{{range .Security}}<tr><td><span class="pill">{{.Severity}}</span></td><td>{{.Server}}</td><td><code>{{.Code}}</code></td><td>{{.Summary}}</td></tr>{{end}}</tbody></table>{{else}}<p class="empty">No SSH posture or observed TLS findings.</p>{{end}}
 </div>
 
 <div class="form-wrap" id="probe-workspace">
@@ -855,10 +887,13 @@ const allTemplates = `
       <h4>Connection</h4>
     <div class="form-row">
       <div><label for="server-name">Name *</label><input type="text" id="server-name" name="name" placeholder="web-01" required></div>
-      <div><label for="server-host">Host / IP *</label><input type="text" id="server-host" name="host" placeholder="192.168.1.10"></div>
+      <div><label for="server-host">Host / IP *</label><input type="text" id="server-host" name="host" placeholder="192.168.1.10 or ssh.example:2222"><p class="profile-note">A <code>host:port</code> shorthand is accepted.</p></div>
     </div>
     <div class="form-row mode-advanced">
-      <div><label>SSH Port</label><input type="number" name="port" value="22" min="1" max="65535"></div>
+      <div><label for="server-depends-on">Upstream dependencies</label><input type="text" id="server-depends-on" name="depends_on" placeholder="router-01, database-01"><p class="profile-note">Downstream alerts are suppressed while a listed target is unreachable.</p></div>
+    </div>
+    <div class="form-row">
+      <div><label for="server-port">SSH Port</label><input id="server-port" type="number" name="port" value="22" min="1" max="65535"><p class="profile-note">Use this for non-default SSH ports. A port in Host / IP takes precedence.</p></div>
       <div></div>
     </div>
     <div class="form-row">
@@ -899,6 +934,18 @@ const allTemplates = `
           Docker metrics
         </label>
       </div>
+	  <div>
+		<label class="inline-check" style="margin-top:1.35rem">
+		  <input type="checkbox" name="tool_inventory" value="1">
+		  Inventory standard tools
+		</label>
+	  </div>
+	  <div class="mode-expert">
+		<label class="inline-check" style="margin-top:1.35rem">
+		  <input type="checkbox" name="audit_enabled" value="1">
+		  Read-only accounts and packages audit
+		</label>
+	  </div>
     </div>
 
     <div class="form-block">
@@ -1123,7 +1170,7 @@ const allTemplates = `
   <div class="firing-item">
     <div class="msg">{{.Message}}</div>
     <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}} — server: {{.Server}}</div>
-    {{with .Watchdog}}<div class="ts">Watchdog {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .DeferredRemediations}}<div class="ts">Watchdog actions deferred below the configured severity: {{range .DeferredRemediations}}{{.}} {{end}}</div>{{end}}{{range .Remediations}}<div class="ts">Watchdog action {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}{{end}}
+    {{with .Watchdog}}<div class="ts">AI advisor {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .RecommendedRemediations}}<div class="ts">Operator review required for recommended runbooks: {{range .RecommendedRemediations}}{{.}} {{end}}</div>{{end}}{{if .RejectedRemediations}}<div class="ts">Unapproved AI recommendations ignored: {{range .RejectedRemediations}}{{.}} {{end}}</div>{{end}}{{end}}
     {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
   </div>
   {{end}}
@@ -1134,17 +1181,32 @@ const allTemplates = `
 
 {{with .Watchdog}}
 <div class="section">
-  <h3>AI Watchdog</h3>
+  <h3>AI Advisor</h3>
+  <p class="restart-note">Optional analysis only. WatchSSH never executes an AI recommendation; an operator must review and run a runbook separately.</p>
   <table><tbody>
     <tr><td class="m-label">State</td><td>{{if .Enabled}}<span class="dot dot-ok"></span>Enabled{{else}}<span class="dot dot-warn"></span>Disabled{{end}}</td></tr>
     <tr><td class="m-label">Model</td><td><code>{{.Model}}</code></td></tr>
     <tr><td class="m-label">Cooldown</td><td>{{.Cooldown}}s per source server</td></tr>
-    <tr><td class="m-label">Action Severity</td><td>{{.MinRemediationSeverity}} or higher</td></tr>
-    <tr><td class="m-label">Approved Actions</td><td>{{if .AllowedRemediations}}{{range .AllowedRemediations}}<code>{{.}}</code> {{end}}{{else}}<em>advisory only</em>{{end}}</td></tr>
+    <tr><td class="m-label">Review</td><td>Human approval required</td></tr>
+    <tr><td class="m-label">Runbook catalog</td><td>{{if .AllowedRemediations}}{{range .AllowedRemediations}}<code>{{.}}</code> {{end}}{{else}}<em>no runbooks offered to AI</em>{{end}}</td></tr>
     <tr><td class="m-label">Identifiers</td><td>{{if .IncludeIdentifiers}}included{{else}}redacted{{end}}</td></tr>
   </tbody></table>
 </div>
 {{end}}
+
+<div class="section" id="runbook-reviews">
+  <h3>Runbook Reviews</h3>
+  <p class="restart-note">Advisor suggestions are review items only. Updating a review never executes a command.</p>
+  {{if .Reviews}}<table><thead><tr><th>Runbook</th><th>Source</th><th>Assessment</th><th>State</th><th>Review</th></tr></thead><tbody>{{range .Reviews}}
+    <tr><td><code>{{.Runbook}}</code></td><td>{{.Server}} / {{.Rule}}</td><td>{{.Summary}}</td><td><span class="pill">{{.Status}}</span></td><td>{{if eq .Status "pending"}}<form method="post" action="/runbooks/review" class="inline-form"><input type="hidden" name="id" value="{{.ID}}"><input type="text" name="actor" placeholder="Operator" aria-label="Operator"><input type="text" name="note" placeholder="Review note" aria-label="Review note"><button name="status" value="acknowledged" type="submit" class="btn btn-secondary">Acknowledge</button><button name="status" value="declined" type="submit" class="btn btn-danger">Decline</button></form>{{else}}{{if .Actor}}{{.Actor}}{{end}}{{if .Note}}: {{.Note}}{{end}}{{end}}</td></tr>
+  {{end}}</tbody></table>{{else}}<p class="empty">No advisor recommendations awaiting review.</p>{{end}}
+</div>
+
+<div class="section" id="changes">
+  <h3>Change Correlation</h3>
+  <form method="post" action="/changes/add" class="inline-form"><select name="server" aria-label="Affected server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select><select name="kind" aria-label="Change type"><option value="deployment">Deployment</option><option value="maintenance">Maintenance</option><option value="restart">Restart</option><option value="configuration">Configuration</option></select><input name="summary" required placeholder="What changed?"><input name="actor" placeholder="Operator"><button type="submit" class="btn btn-secondary">Record change</button></form>
+  {{if .Changes}}<table><thead><tr><th>When</th><th>Server</th><th>Type</th><th>Change</th><th>By</th></tr></thead><tbody>{{range .Changes}}<tr><td>{{.StartedAt.Format "2006-01-02 15:04"}}</td><td>{{.Server}}</td><td><span class="pill">{{.Kind}}</span></td><td>{{.Summary}}</td><td>{{.Actor}}</td></tr>{{end}}</tbody></table>{{else}}<p class="empty">Record deployments, restarts, and maintenance to explain nearby alerts.</p>{{end}}
+</div>
 
 {{if .Remediations}}
 <div class="section">
@@ -1228,8 +1290,10 @@ const allTemplates = `
           <optgroup label="System">
           <option value="cpu_usage">cpu_usage (%)</option>
           <option value="mem_usage">mem_usage (%)</option>
+          <option value="mem_available_bytes">mem_available_bytes</option>
           <option value="swap_usage">swap_usage (%)</option>
           <option value="disk_usage">disk_usage (%)</option>
+          <option value="disk_free_bytes">disk_free_bytes</option>
           <option value="disk_inode_usage">disk_inode_usage (%)</option>
           <option value="load1">load1</option>
           <option value="load5">load5</option>
@@ -1338,6 +1402,18 @@ const allTemplates = `
     setValue('mount_point', selected.mount || '');
     if(note) note.textContent = selected.note;
   });
+  var draft = new URLSearchParams(window.location.search);
+  if(draft.has('metric')){
+    ['name','metric','operator','threshold','mount_point'].forEach(function(name){
+      if(draft.has(name)) setValue(name, draft.get(name));
+    });
+    var scoped = draft.get('servers');
+    if(scoped){
+      Array.prototype.forEach.call(form.querySelectorAll('[name=servers] option'), function(option){ option.selected = option.value === scoped; });
+      setValue('servers_text', scoped);
+    }
+    if(note) note.textContent = 'Review the prefilled threshold, then add this scoped alert rule.';
+  }
 })();
 </script>
 

@@ -162,7 +162,7 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 	}
 
 	// 8. Processes
-	psOut, err := r.Run(ctx, "ps -eo pid,user,%cpu,%mem,rss,stat,comm --no-headers --sort=-%cpu 2>/dev/null | head -10")
+	psOut, err := r.Run(ctx, "{ ps -eo pid,user,%cpu,%mem,rss,stat,comm --no-headers --sort=-%cpu 2>/dev/null | head -10; ps -eo pid,user,%cpu,%mem,rss,stat,comm --no-headers --sort=-%mem 2>/dev/null | head -10; }")
 	if err != nil {
 		s.setErr("processes", err.Error())
 	} else {
@@ -170,6 +170,9 @@ func (c *linuxCollector) Collect(ctx context.Context, r Runner) (*Snapshot, erro
 		if err != nil {
 			s.setErr("processes", err.Error())
 		} else {
+			if ioOut, ioErr := r.Run(ctx, "for pid in $(ps -eo pid= --sort=-%cpu 2>/dev/null | head -20); do read_bytes=$(awk '/^read_bytes:/ {print $2}' /proc/$pid/io 2>/dev/null); write_bytes=$(awk '/^write_bytes:/ {print $2}' /proc/$pid/io 2>/dev/null); [ -n \"$read_bytes$write_bytes\" ] && printf '%s %s %s\\n' \"$pid\" \"${read_bytes:-0}\" \"${write_bytes:-0}\"; done"); ioErr == nil {
+				mergeLinuxProcessIO(procs, ioOut)
+			}
 			s.Processes = procs
 			s.setOK("processes")
 		}
@@ -542,10 +545,8 @@ func parseLinuxNetDev(output string) ([]NetworkStats, error) {
 func parseLinuxPS(output string) ([]ProcessInfo, error) {
 	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var procs []ProcessInfo
+	seen := make(map[int]struct{}, len(lines))
 	for _, line := range lines {
-		if len(procs) >= 10 {
-			break
-		}
 		fields := strings.Fields(line)
 		if len(fields) < 7 {
 			continue
@@ -554,6 +555,10 @@ func parseLinuxPS(output string) ([]ProcessInfo, error) {
 		if err != nil {
 			continue
 		}
+		if _, exists := seen[pid]; exists {
+			continue
+		}
+		seen[pid] = struct{}{}
 		cpu, _ := strconv.ParseFloat(fields[2], 64)
 		mem, _ := strconv.ParseFloat(fields[3], 64)
 		rss, _ := strconv.ParseInt(fields[4], 10, 64)
@@ -570,6 +575,31 @@ func parseLinuxPS(output string) ([]ProcessInfo, error) {
 		})
 	}
 	return procs, nil
+}
+
+// mergeLinuxProcessIO enriches sampled processes from /proc/<pid>/io. These
+// are cumulative counters, available without installing an agent or package.
+func mergeLinuxProcessIO(procs []ProcessInfo, output string) {
+	byPID := make(map[int]int, len(procs))
+	for i := range procs {
+		byPID[procs[i].PID] = i
+	}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		i, ok := byPID[pid]
+		if !ok {
+			continue
+		}
+		procs[i].DiskReadBytes, _ = strconv.ParseInt(fields[1], 10, 64)
+		procs[i].DiskWriteBytes, _ = strconv.ParseInt(fields[2], 10, 64)
+	}
 }
 
 // parseLinuxFileNr parses /proc/sys/fs/file-nr:

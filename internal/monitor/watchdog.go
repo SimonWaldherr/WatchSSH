@@ -122,14 +122,10 @@ func (m *Monitor) runWatchdog(cfg *config.Config, metrics []ServerMetrics, firin
 		m.watchdogMgr = NewWatchdogManager()
 	}
 	byServer := make(map[string]ServerMetrics, len(metrics))
-	servers := make(map[string]config.Server, len(cfg.Servers))
 	for _, metric := range metrics {
 		byServer[metric.ServerName] = metric
 	}
-	for _, server := range cfg.Servers {
-		servers[server.Name] = server
-	}
-	actions := watchdogActions(*watchdog, cfg.Alerts.Remediations)
+	runbooks := watchdogRunbooks(*watchdog, cfg.Alerts.Remediations)
 
 	for index := range firings {
 		firing := &firings[index]
@@ -149,7 +145,7 @@ func (m *Monitor) runWatchdog(cfg *config.Config, metrics []ServerMetrics, firin
 			continue
 		}
 
-		decision, err := requestWatchdogDecision(*watchdog, metric, *firing, actions)
+		decision, err := requestWatchdogDecision(*watchdog, metric, *firing, runbooks)
 		result.DurationMs = durationMilliseconds(startedAt)
 		if err != nil {
 			result.Status = "failed"
@@ -160,44 +156,40 @@ func (m *Monitor) runWatchdog(cfg *config.Config, metrics []ServerMetrics, firin
 		result.Status = "analyzed"
 		result.Severity = decision.Severity
 		result.Summary = abbreviateWatchdogText(decision.Summary, 1024)
-		result.RequestedRemediations = decision.Remediations
-		if !watchdogSeverityAtLeast(decision.Severity, watchdog.MinRemediationSeverity) {
-			result.DeferredRemediations = append(result.DeferredRemediations, decision.Remediations...)
-			firing.Watchdog = &result
-			continue
-		}
 		seen := make(map[string]struct{}, len(decision.Remediations))
 		for _, name := range decision.Remediations {
 			if _, duplicate := seen[name]; duplicate {
 				continue
 			}
 			seen[name] = struct{}{}
-			remediation, allowed := actions[name]
+			remediation, allowed := runbooks[name]
 			if !allowed {
 				result.RejectedRemediations = append(result.RejectedRemediations, name)
 				continue
 			}
-			result.Remediations = append(result.Remediations, m.executeRemediation(cfg, servers, remediation, firing.Server)...)
+			// AI output is intentionally advisory. A human must review the
+			// recommendation and invoke the runbook through normal operations.
+			result.RecommendedRemediations = append(result.RecommendedRemediations, remediation.Name)
 		}
 		firing.Watchdog = &result
 	}
 }
 
-func watchdogActions(cfg config.WatchdogConfig, remediations []config.RemediationConfig) map[string]config.RemediationConfig {
+func watchdogRunbooks(cfg config.WatchdogConfig, remediations []config.RemediationConfig) map[string]config.RemediationConfig {
 	all := make(map[string]config.RemediationConfig, len(remediations))
 	for _, remediation := range remediations {
 		all[remediation.Name] = remediation
 	}
-	actions := make(map[string]config.RemediationConfig, len(cfg.AllowedRemediations))
+	runbooks := make(map[string]config.RemediationConfig, len(cfg.AllowedRemediations))
 	for _, name := range cfg.AllowedRemediations {
 		if remediation, exists := all[name]; exists && remediation.Enabled && remediation.Mode == "watchdog" {
-			actions[name] = remediation
+			runbooks[name] = remediation
 		}
 	}
-	return actions
+	return runbooks
 }
 
-func requestWatchdogDecision(cfg config.WatchdogConfig, metric ServerMetrics, firing Firing, allowed map[string]config.RemediationConfig) (watchdogDecision, error) {
+func requestWatchdogDecision(cfg config.WatchdogConfig, metric ServerMetrics, firing Firing, runbooks map[string]config.RemediationConfig) (watchdogDecision, error) {
 	input := watchdogInput{
 		SchemaVersion: "1",
 		ObservedAt:    metric.Timestamp,
@@ -206,13 +198,13 @@ func requestWatchdogDecision(cfg config.WatchdogConfig, metric ServerMetrics, fi
 		},
 		Probe: buildWatchdogProbeSnapshot(metric, cfg.IncludeIdentifiers),
 	}
-	actionNames := make([]string, 0, len(allowed))
-	for name := range allowed {
-		actionNames = append(actionNames, name)
+	runbookNames := make([]string, 0, len(runbooks))
+	for name := range runbooks {
+		runbookNames = append(runbookNames, name)
 	}
-	sort.Strings(actionNames)
-	for _, name := range actionNames {
-		remediation := allowed[name]
+	sort.Strings(runbookNames)
+	for _, name := range runbookNames {
+		remediation := runbooks[name]
 		input.AvailableActions = append(input.AvailableActions, watchdogAction{Name: remediation.Name, Description: remediation.Description})
 	}
 	inputJSON, err := json.Marshal(input)
@@ -356,7 +348,7 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 }
 
 func watchdogSystemPrompt(extra string) string {
-	prompt := "You are a conservative WatchSSH operations watchdog. Analyze only the provided telemetry. Return a JSON object with summary (max 500 characters), severity (info, warning, or critical), and remediations (an array of action names). Select an action only when telemetry strongly supports it. The reported severity must reflect the evidence, not the desired action. You may use only names listed in available_actions. Never invent commands, endpoints, or tool calls. An empty remediations array is preferred when uncertain."
+	prompt := "You are a conservative WatchSSH operations advisor. Analyze only the provided telemetry. Return a JSON object with summary (max 500 characters), severity (info, warning, or critical), and remediations (an array of recommended runbook names). Recommendations are advisory and require human approval; never imply that an action was executed. Recommend a runbook only when telemetry strongly supports it. The reported severity must reflect the evidence, not the desired action. You may use only names listed in available_actions. Never invent commands, endpoints, or tool calls. An empty remediations array is preferred when uncertain."
 	if strings.TrimSpace(extra) != "" {
 		prompt += "\nAdditional operator policy:\n" + extra
 	}
@@ -406,14 +398,6 @@ func validateWatchdogDecision(decision watchdogDecision) error {
 		return fmt.Errorf("watchdog decision severity %q is invalid", decision.Severity)
 	}
 	return nil
-}
-
-func watchdogSeverityAtLeast(actual, minimum string) bool {
-	if minimum == "" {
-		minimum = "critical"
-	}
-	levels := map[string]int{"info": 1, "warning": 2, "critical": 3}
-	return levels[actual] >= levels[minimum]
 }
 
 func watchdogIdentifier(value, fallback string, include bool) string {

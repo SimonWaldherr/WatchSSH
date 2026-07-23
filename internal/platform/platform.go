@@ -227,13 +227,15 @@ type LoggedInUser struct {
 
 // ProcessInfo holds resource usage for a single process.
 type ProcessInfo struct {
-	PID        int
-	User       string
-	CPUPercent float64
-	MemPercent float64
-	RSSBytes   int64
-	State      string
-	Command    string
+	PID            int
+	User           string
+	CPUPercent     float64
+	MemPercent     float64
+	RSSBytes       int64
+	DiskReadBytes  int64
+	DiskWriteBytes int64
+	State          string
+	Command        string
 }
 
 // Detect runs `uname -s` and maps the output to a Family constant.

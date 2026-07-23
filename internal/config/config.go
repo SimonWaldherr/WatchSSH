@@ -154,6 +154,14 @@ type DockerConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
+// AuditConfig enables a bounded, read-only inventory of local accounts and
+// installed package names. It is intentionally opt-in because these facts can
+// be sensitive in some environments.
+type AuditConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	MaxEntries int  `yaml:"max_entries"` // default 200 per list
+}
+
 // CustomCheck configures an arbitrary SSH command check.
 type CustomCheck struct {
 	Name string `yaml:"name"`
@@ -208,9 +216,16 @@ type Server struct {
 
 	// Local, when true, runs all monitoring commands locally (no SSH).
 	// Use this to monitor the machine running WatchSSH itself.
-	Local  bool     `yaml:"local"`
-	Tags   []string `yaml:"tags,omitempty"`
-	Checks Checks   `yaml:"checks"`
+	Local bool     `yaml:"local"`
+	Tags  []string `yaml:"tags,omitempty"`
+	// DependsOn lists upstream WatchSSH server names. Alerts for this server
+	// are suppressed while an upstream dependency is unreachable.
+	DependsOn []string `yaml:"depends_on,omitempty"`
+	// ToolInventory checks common standard tools through SSH. It installs
+	// nothing and is disabled by default to avoid an extra remote command.
+	ToolInventory bool        `yaml:"tool_inventory"`
+	Checks        Checks      `yaml:"checks"`
+	Audit         AuditConfig `yaml:"audit"`
 
 	// Docker enables optional Docker container metrics collection.
 	// Only effective on Linux targets; ignored on other platforms.
@@ -267,8 +282,8 @@ type EmailConfig struct {
 // AlertRule defines a threshold-based alert condition.
 type AlertRule struct {
 	Name string `yaml:"name"`
-	// Metric: cpu_usage, mem_usage, swap_usage, load1, load5, load15,
-	//         disk_usage, ping_latency, ping_loss, ping_failed, port_closed,
+	// Metric: cpu_usage, mem_usage, mem_available_bytes, swap_usage, load1, load5, load15,
+	//         disk_usage, disk_free_bytes, ping_latency, ping_loss, ping_failed, port_closed,
 	//         port_latency, banner_failed, banner_latency, http_failed,
 	//         http_latency, dns_failed, dns_latency, traceroute_failed,
 	//         traceroute_hops, tls_failed, tls_latency, ntp_failed,
@@ -374,7 +389,8 @@ type RemediationConfig struct {
 	Name    string `yaml:"name"`
 	Enabled bool   `yaml:"enabled"`
 	// Mode is alert (default) for deterministic rule matches, or watchdog for
-	// actions that the configured AI watchdog may select by name.
+	// runbooks that the configured AI advisor may recommend by name. AI
+	// recommendations always require an operator to perform the action.
 	Mode        string   `yaml:"mode"`
 	Description string   `yaml:"description"`
 	Rules       []string `yaml:"rules"`
@@ -389,28 +405,33 @@ type RemediationConfig struct {
 }
 
 // WatchdogConfig sends a reduced, probe-focused alert snapshot to an
-// OpenAI-compatible Chat Completions API. The model can only select names from
-// AllowedRemediations; it cannot supply or alter shell commands.
+// OpenAI-compatible Chat Completions API. The model can only recommend names
+// from AllowedRemediations; it cannot supply or alter shell commands, and
+// WatchSSH never executes a model recommendation.
 //
 // BaseURL may be an API base URL (for example http://127.0.0.1:1234/v1) or a
 // complete /chat/completions URL. APIKeyEnv is optional for local servers such
 // as LM Studio. The watchdog is disabled unless Enabled is explicitly true.
 type WatchdogConfig struct {
-	Enabled                bool     `yaml:"enabled"`
-	BaseURL                string   `yaml:"base_url"`
-	BaseURLEnv             string   `yaml:"base_url_env"`
-	APIKeyEnv              string   `yaml:"api_key_env"`
-	Model                  string   `yaml:"model"`
-	Timeout                int      `yaml:"timeout"`         // seconds, default 20
-	Cooldown               int      `yaml:"cooldown"`        // seconds, default 300 per source server
-	MaxInputBytes          int      `yaml:"max_input_bytes"` // default 65536
-	MaxTokens              int      `yaml:"max_tokens"`      // default 300
-	Temperature            float64  `yaml:"temperature"`     // default 0 (deterministic)
-	ResponseFormat         string   `yaml:"response_format"` // json_schema (default) or json_object
-	IncludeIdentifiers     bool     `yaml:"include_identifiers"`
-	MinRemediationSeverity string   `yaml:"min_remediation_severity"` // critical (default), warning, or info
-	AllowedRemediations    []string `yaml:"allowed_remediations"`
-	SystemPrompt           string   `yaml:"system_prompt"`
+	Enabled            bool    `yaml:"enabled"`
+	BaseURL            string  `yaml:"base_url"`
+	BaseURLEnv         string  `yaml:"base_url_env"`
+	APIKeyEnv          string  `yaml:"api_key_env"`
+	Model              string  `yaml:"model"`
+	Timeout            int     `yaml:"timeout"`         // seconds, default 20
+	Cooldown           int     `yaml:"cooldown"`        // seconds, default 300 per source server
+	MaxInputBytes      int     `yaml:"max_input_bytes"` // default 65536
+	MaxTokens          int     `yaml:"max_tokens"`      // default 300
+	Temperature        float64 `yaml:"temperature"`     // default 0 (deterministic)
+	ResponseFormat     string  `yaml:"response_format"` // json_schema (default) or json_object
+	IncludeIdentifiers bool    `yaml:"include_identifiers"`
+	// MinRemediationSeverity is retained for configuration compatibility. AI
+	// suggestions are always advisory, so this value is ignored.
+	MinRemediationSeverity string `yaml:"min_remediation_severity"`
+	// AllowedRemediations is the operator-approved runbook catalog that can be
+	// shown to the model as possible recommendations. It never authorizes execution.
+	AllowedRemediations []string `yaml:"allowed_remediations"`
+	SystemPrompt        string   `yaml:"system_prompt"`
 }
 
 // Config is the root configuration structure.
@@ -561,9 +582,6 @@ func applyDefaults(cfg *Config) {
 		if watchdog.ResponseFormat == "" {
 			watchdog.ResponseFormat = "json_schema"
 		}
-		if watchdog.MinRemediationSeverity == "" {
-			watchdog.MinRemediationSeverity = "critical"
-		}
 	}
 	for i := range cfg.Alerts.Routes {
 		if cfg.Alerts.Routes[i].Webhook.Method == "" {
@@ -649,6 +667,9 @@ func applyDefaults(cfg *Config) {
 		if srv.KeepaliveInterval > 0 && srv.KeepaliveCountMax == 0 {
 			srv.KeepaliveCountMax = 3
 		}
+		if srv.Audit.Enabled && srv.Audit.MaxEntries == 0 {
+			srv.Audit.MaxEntries = 200
+		}
 		for j := range srv.Checks.Banner {
 			if srv.Checks.Banner[j].Timeout == 0 {
 				srv.Checks.Banner[j].Timeout = 5
@@ -729,7 +750,15 @@ func validate(cfg *Config) error {
 	if err := validateVaultConfig(cfg.Secrets.Vault); err != nil {
 		return err
 	}
+	serverNames := make(map[string]struct{}, len(cfg.Servers))
 	for i, srv := range cfg.Servers {
+		if strings.TrimSpace(srv.Name) == "" {
+			return fmt.Errorf("server[%d]: name is required", i)
+		}
+		if _, exists := serverNames[srv.Name]; exists {
+			return fmt.Errorf("server[%d] (%q): name is duplicated", i, srv.Name)
+		}
+		serverNames[srv.Name] = struct{}{}
 		if srv.Local {
 			continue // local servers don't need host/username
 		}
@@ -769,6 +798,24 @@ func validate(cfg *Config) error {
 			}
 		}
 	}
+	for _, srv := range cfg.Servers {
+		seen := make(map[string]struct{}, len(srv.DependsOn))
+		for _, dependency := range srv.DependsOn {
+			if dependency == srv.Name {
+				return fmt.Errorf("server %q cannot depend on itself", srv.Name)
+			}
+			if _, duplicate := seen[dependency]; duplicate {
+				return fmt.Errorf("server %q lists dependency %q more than once", srv.Name, dependency)
+			}
+			seen[dependency] = struct{}{}
+			if _, exists := serverNames[dependency]; !exists {
+				return fmt.Errorf("server %q depends_on unknown server %q", srv.Name, dependency)
+			}
+		}
+	}
+	if err := validateDependencyCycles(cfg.Servers); err != nil {
+		return err
+	}
 	if cfg.Alerts.Action != nil {
 		if strings.TrimSpace(cfg.Alerts.Action.Command) == "" {
 			return fmt.Errorf("alerts.action.command is required when alerts.action is set")
@@ -792,6 +839,37 @@ func validate(cfg *Config) error {
 	}
 	if err := validateAlertRoutes(cfg.Alerts.Routes); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateDependencyCycles(servers []Server) error {
+	dependencies := make(map[string][]string, len(servers))
+	for _, server := range servers {
+		dependencies[server.Name] = server.DependsOn
+	}
+	visiting, visited := make(map[string]bool, len(servers)), make(map[string]bool, len(servers))
+	var walk func(string) error
+	walk = func(name string) error {
+		if visiting[name] {
+			return fmt.Errorf("server dependency cycle includes %q", name)
+		}
+		if visited[name] {
+			return nil
+		}
+		visiting[name] = true
+		for _, dependency := range dependencies[name] {
+			if err := walk(dependency); err != nil {
+				return err
+			}
+		}
+		visiting[name], visited[name] = false, true
+		return nil
+	}
+	for _, server := range servers {
+		if err := walk(server.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -852,9 +930,6 @@ func validateWatchdog(watchdog *WatchdogConfig, remediations []RemediationConfig
 	}
 	if watchdog.ResponseFormat != "json_schema" && watchdog.ResponseFormat != "json_object" {
 		return fmt.Errorf("alerts.watchdog.response_format must be json_schema or json_object")
-	}
-	if watchdog.MinRemediationSeverity != "info" && watchdog.MinRemediationSeverity != "warning" && watchdog.MinRemediationSeverity != "critical" {
-		return fmt.Errorf("alerts.watchdog.min_remediation_severity must be info, warning, or critical")
 	}
 	available := make(map[string]RemediationConfig, len(remediations))
 	for _, remediation := range remediations {

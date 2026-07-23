@@ -50,7 +50,7 @@ func NewWithStore(cfg *config.Config, notify NotifyFunc, store history.Store) *M
 	case "json":
 		w = &JSONWriter{file: cfg.Output.File}
 	default:
-		w = &ConsoleWriter{}
+		w = NewConsoleWriter()
 	}
 	return &Monitor{
 		cfg:            cfg,
@@ -158,6 +158,9 @@ func (m *Monitor) collect() {
 
 	// Alert evaluation
 	firings := m.alertMgr.Evaluate(results, cfg)
+	// Upstream outages are a common source of alert storms. Only explicitly
+	// declared dependencies suppress downstream alerts.
+	firings = SuppressDependentFirings(firings, results, *cfg)
 	if len(firings) > 0 {
 		m.runWatchdog(cfg, results, firings)
 		m.runRemediations(cfg, firings)
@@ -435,6 +438,12 @@ func (m *Monitor) collectServer(srv config.Server, cfg *config.Config) ServerMet
 		if err := m.gatherAll(cmdCtx, r, &metrics, srv); err != nil {
 			metrics.Error = err.Error()
 		}
+		if srv.ToolInventory {
+			metrics.StandardTools = discoverStandardTools(cmdCtx, r)
+		}
+		if srv.Audit.Enabled {
+			metrics.Audit = collectAudit(cmdCtx, r, metrics.Platform, srv.Audit.MaxEntries)
+		}
 		return metrics
 	}
 
@@ -453,6 +462,12 @@ func (m *Monitor) collectServer(srv config.Server, cfg *config.Config) ServerMet
 
 	if err := m.gatherAll(cmdCtx, client, &metrics, srv); err != nil {
 		metrics.Error = err.Error()
+	}
+	if srv.ToolInventory {
+		metrics.StandardTools = discoverStandardTools(cmdCtx, client)
+	}
+	if srv.Audit.Enabled {
+		metrics.Audit = collectAudit(cmdCtx, client, metrics.Platform, srv.Audit.MaxEntries)
 	}
 	remoteCtx, remoteCancel := context.WithTimeout(context.Background(), timeout)
 	defer remoteCancel()
@@ -834,13 +849,15 @@ func applySnapshot(snap *platform.Snapshot, m *ServerMetrics) {
 
 	for _, p := range snap.Processes {
 		m.Processes = append(m.Processes, ProcessInfo{
-			PID:        p.PID,
-			User:       p.User,
-			CPUPercent: p.CPUPercent,
-			MemPercent: p.MemPercent,
-			RSSBytes:   p.RSSBytes,
-			State:      p.State,
-			Command:    p.Command,
+			PID:            p.PID,
+			User:           p.User,
+			CPUPercent:     p.CPUPercent,
+			MemPercent:     p.MemPercent,
+			RSSBytes:       p.RSSBytes,
+			DiskReadBytes:  p.DiskReadBytes,
+			DiskWriteBytes: p.DiskWriteBytes,
+			State:          p.State,
+			Command:        p.Command,
 		})
 	}
 

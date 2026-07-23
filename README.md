@@ -166,6 +166,23 @@ cd WatchSSH
 go build -o watchssh .
 ```
 
+### Development Commands
+
+The repository includes a small Makefile for repeatable local work:
+
+```bash
+make check                 # format, test, vet, and build
+make run CONFIG=config.yaml
+make once CONFIG=config.yaml
+```
+
+`make check` does not install dependencies or contact external services. The
+resulting local binary is `./watchssh`; remove it with `make clean`.
+
+When `output.type: console` writes to an interactive terminal, WatchSSH refreshes
+the prior monitoring snapshot in place. Redirected output, pipes, files, and
+JSON output remain append-only and therefore suitable for logs and automation.
+
 ## Quick Start
 
 ```bash
@@ -837,9 +854,9 @@ dedicated least-privilege monitoring account and, when needed, a narrowly
 scoped `sudoers` rule such as `watchssh ALL=(root) NOPASSWD:
 /etc/init.d/storefront restart`; do not grant unrestricted sudo access.
 
-### AI Watchdog
+### AI Advisor
 
-`alerts.watchdog` adds an optional decision layer for new alert firings. It
+`alerts.watchdog` adds an optional advisory layer for new alert firings. It
 sends a reduced, probe-focused snapshot to an OpenAI-compatible Chat
 Completions API, which makes it suitable for a local LM Studio server or a
 compatible hosted endpoint. The snapshot excludes process lists, logged-in
@@ -847,13 +864,13 @@ users, credentials, custom command output, and TCP banners. Server and probe
 identifiers are pseudonymized unless `include_identifiers: true` is explicitly
 set.
 
-The model has no command or tool access. It returns a structured decision with
-a short summary, severity, and remediation *names*. A name is executed only
-when it appears in `allowed_remediations` and refers to an independently
-enabled remediation with `mode: watchdog`. The fixed command, targets,
-cooldown, and rate limit remain local WatchSSH configuration. Invalid API
-responses, unavailable models, or unknown action names fail closed and run no
-watchdog-selected command.
+The model has no command or tool access. It returns a structured assessment
+with a short summary, severity, and recommended runbook *names*. WatchSSH
+never executes a model recommendation. An operator reviews the evidence and
+uses the established operational process to run a selected runbook. The fixed
+command, targets, cooldown, and rate limit remain local WatchSSH configuration
+for deterministic remediations. Invalid API responses, unavailable models, or
+unknown action names fail closed and result in no action.
 
 ```yaml
 alerts:
@@ -881,16 +898,15 @@ alerts:
     max_tokens: 300
     response_format: json_schema # json_object is available for older backends
     include_identifiers: false
-    # Model-selected actions execute only at this severity or higher.
-    # Keep critical for a conservative production default.
-    min_remediation_severity: critical
+    # Runbook names that the model may recommend to an operator. This never
+    # authorizes automatic execution.
     allowed_remediations: [restart-storefront-watchdog]
     system_prompt: "Prefer no action unless the health probe is clearly failing."
 ```
 
-Calls are limited per source server by `watchdog.cooldown`; the selected
-remediation then has its own cooldown and attempt budget. The decision and any
-resulting local action are retained with the firing and shown in the Alert UI.
+Calls are limited per source server by `watchdog.cooldown`. The assessment and
+recommended runbooks are retained with the firing and shown in the Alert UI,
+where they are explicitly marked for operator review.
 For LM Studio, start its local server and load a model before enabling the
 watchdog.
 
@@ -906,18 +922,61 @@ Watchdog configuration reference:
 - `response_format: json_schema` is the default and requires a backend that
   supports structured JSON outputs. Use `json_object` only for older
   compatible servers. A malformed response is recorded as a failed analysis
-  and cannot cause a remediation.
+  and cannot cause an action.
 - `max_input_bytes` caps the serialized probe snapshot before it leaves
   WatchSSH. The watchdog does not follow HTTP redirects, and each request has
   the configured `timeout`. The snapshot includes an aggregate count and type
   list for failed probes, while retaining the individual redacted probe facts.
-- `min_remediation_severity` defaults to `critical`. A model may still analyze
-  and recommend actions at `info` or `warning`, but WatchSSH records those
-  recommendations as deferred and executes no watchdog-selected command. Set
-  it to `warning` or `info` only for explicitly approved, low-risk runbooks.
-- An empty `allowed_remediations` list makes the watchdog advisory-only.
-  Remediations without `mode: watchdog` retain the normal deterministic
-  alert-rule behavior and cannot be chosen by the model.
+- `min_remediation_severity` from older configurations is accepted but ignored.
+  AI recommendations always require human approval, irrespective of severity.
+- An empty `allowed_remediations` list asks the model for analysis only.
+  Remediations without `mode: watchdog` retain normal deterministic alert-rule
+  behavior and cannot be recommended by the model.
+
+### Operations Review, Dependencies, and Inventory
+
+The Alert UI turns AI runbook recommendations into explicit operator review
+items. Acknowledging, declining, or completing a review records the decision
+but never runs a command. Record deployments, maintenance, restarts, and
+configuration changes alongside alerts to provide local change correlation.
+
+Set `depends_on` on a server to name upstream WatchSSH targets. When an
+upstream target is unreachable, WatchSSH suppresses downstream alert routing to
+avoid a cascade; only explicitly declared dependencies have this effect.
+
+The Servers page and `/api/v1/inventory` expose a non-secret inventory of
+observed OS facts, architecture, tags, bastion use, and dependencies. The same
+page and `/api/v1/security/findings` surface SSH posture findings and observed
+TLS probe failures or certificates expiring within 30 days. These checks remain
+agentless and do not expose credentials or command output.
+
+Set `tool_inventory: true` per target to inventory common standard tools with
+the POSIX shell builtin `command -v`. It is a single read-only SSH command,
+does not require `which`, and never installs software. Results are shown in the
+asset inventory as availability facts, not as a requirement for monitoring.
+
+For a bounded automatic audit, enable `audit.enabled: true` per Linux target.
+WatchSSH then records account names/UIDs and installed package names via
+existing `getent`/`/etc/passwd` and `dpkg-query`, `rpm`, or `apk` interfaces.
+It does not collect password hashes, credentials, home-directory data, or
+package metadata. The audit is read-only, opt-in, and capped by
+`audit.max_entries` (default `200`) per list.
+
+The Server Detail page can also run an audit on demand and shows changes from
+the preceding result, including added or removed account and package names.
+The latest 20 audit snapshots per target are retained only in memory and reset
+when WatchSSH restarts.
+
+SSH targets support any TCP port. Use the visible **SSH Port** field in the
+web form or enter a `host:port` shorthand such as `ssh.example.test:50622`;
+the shorthand port takes precedence over the default form value. Bracket IPv6
+addresses when adding a port, for example `[2001:db8::1]:2200`.
+
+Security findings are operational guidance, not a vulnerability scanner. They
+currently flag disabled SSH host-key verification, password or keyboard-
+interactive SSH authentication, failed TLS probes, and TLS certificates with
+30 days or less remaining. Address the findings through the normal change and
+runbook process.
 
 ## Web Dashboard
 
@@ -960,8 +1019,10 @@ All health endpoints return `Cache-Control: no-store` and remain public when
 `web.auth` is enabled. The dashboard, `/openapi.json`, `/api/v1/...`, and
 `/metrics` retain the configured authentication policy.
 
-For deployment contracts, API versioning, Prometheus cardinality, and reverse
-proxy guidance, see [Operations and API reference](docs/operations.md).
+For installation, daily operation, dependencies, runbook review, AI advisory,
+inventory, and security checks, see the [Operator Guide](docs/guide.md). For
+deployment contracts, API versioning, Prometheus cardinality, and reverse proxy
+guidance, see [Operations and API reference](docs/operations.md).
 
 ## Architecture
 

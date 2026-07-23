@@ -94,7 +94,9 @@ func parseSysctlLoadAvg(output string) (*LoadAvg, error) {
 	}
 
 	parse := func(f string) (float64, error) {
-		return strconv.ParseFloat(f, 64)
+		// sysctl honours the target's locale. BSD variants therefore emit
+		// decimal commas on hosts configured for locales such as de_DE.
+		return strconv.ParseFloat(strings.ReplaceAll(f, ",", "."), 64)
 	}
 	l1, err := parse(fields[0])
 	if err != nil {
@@ -317,10 +319,8 @@ func parsePSAux(output string) ([]ProcessInfo, error) {
 	}
 
 	var procs []ProcessInfo
+	seen := make(map[int]struct{}, len(lines))
 	for _, line := range lines[1:] { // skip header
-		if len(procs) >= 10 {
-			break
-		}
 		fields := strings.Fields(line)
 		if len(fields) < 11 {
 			continue
@@ -329,6 +329,10 @@ func parsePSAux(output string) ([]ProcessInfo, error) {
 		if err != nil {
 			continue
 		}
+		if _, exists := seen[pid]; exists {
+			continue
+		}
+		seen[pid] = struct{}{}
 		cpu, _ := strconv.ParseFloat(fields[2], 64)
 		mem, _ := strconv.ParseFloat(fields[3], 64)
 		rss, _ := strconv.ParseInt(fields[5], 10, 64)

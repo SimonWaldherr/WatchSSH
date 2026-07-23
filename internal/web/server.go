@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -50,6 +51,8 @@ var funcMap = template.FuncMap{
 	"hasDockerDiagnostics": hasDockerDiagnostics,
 	"metricCapability":     metricCapability,
 	"metricError":          metricError,
+	"alertLink":            alertLink,
+	"processSortLabel":     processSortLabel,
 	"statusClass":          statusClass,
 	"capabilityRows":       capabilityRows,
 	"not": func(v any) bool {
@@ -181,6 +184,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/test-connection", s.handleTestConnection)
 	s.mux.HandleFunc("/api/metrics", s.handleAPIMetrics)
 	s.mux.HandleFunc("/api/probes", s.handleAPIProbes)
+	s.mux.HandleFunc("/api/inventory", s.handleAPIInventory)
+	s.mux.HandleFunc("/api/security/findings", s.handleAPISecurityFindings)
 	s.mux.HandleFunc("/api/history/metrics", s.handleAPIHistoryMetrics)
 	s.mux.HandleFunc("/api/history/alerts", s.handleAPIHistoryAlerts)
 	s.mux.HandleFunc("/api/history/summary", s.handleAPIHistorySummary)
@@ -189,11 +194,14 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/api/v1/test-connection", s.handleTestConnection)
 	s.mux.HandleFunc("/api/v1/metrics", s.handleAPIMetrics)
 	s.mux.HandleFunc("/api/v1/probes", s.handleAPIProbes)
+	s.mux.HandleFunc("/api/v1/inventory", s.handleAPIInventory)
+	s.mux.HandleFunc("/api/v1/security/findings", s.handleAPISecurityFindings)
 	s.mux.HandleFunc("/api/v1/history/metrics", s.handleAPIHistoryMetrics)
 	s.mux.HandleFunc("/api/v1/history/alerts", s.handleAPIHistoryAlerts)
 	s.mux.HandleFunc("/api/v1/history/summary", s.handleAPIHistorySummary)
 	s.mux.HandleFunc("/metrics", s.handlePrometheusMetrics)
 	s.mux.HandleFunc("/server/", s.handleServerDetail)
+	s.mux.HandleFunc("/audit/run", s.handleRunAudit)
 	s.mux.HandleFunc("/history", s.handleHistory)
 	s.mux.HandleFunc("/servers/add", s.handleAddServer)
 	s.mux.HandleFunc("/servers/remove", s.handleRemoveServer)
@@ -204,6 +212,8 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/servers", s.handleServers)
 	s.mux.HandleFunc("/alerts/add", s.handleAddAlert)
 	s.mux.HandleFunc("/alerts/remove", s.handleRemoveAlert)
+	s.mux.HandleFunc("/runbooks/review", s.handleReviewRunbook)
+	s.mux.HandleFunc("/changes/add", s.handleAddChange)
 	s.mux.HandleFunc("/alerts", s.handleAlerts)
 	s.mux.HandleFunc("/config", s.handleConfig)
 	s.mux.HandleFunc("/", s.handleDashboard)
@@ -329,10 +339,15 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 // ── Server detail ─────────────────────────────────────────────────────────────
 
 type serverDetailData struct {
-	Title   string
-	Page    string
-	Refresh bool
-	Metrics monitor.ServerMetrics
+	Title                  string
+	Page                   string
+	Refresh                bool
+	Metrics                monitor.ServerMetrics
+	Audits                 []AuditSnapshot
+	ProcessSort            string
+	ProcessDiskIOSupported bool
+	Flash                  string
+	FlashErr               bool
 }
 
 func (s *Server) handleServerDetail(w http.ResponseWriter, r *http.Request) {
@@ -346,12 +361,98 @@ func (s *Server) handleServerDetail(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "server not found", http.StatusNotFound)
 		return
 	}
+	flash, flashErr := flashFromQuery(r)
+	processSort := normalizeProcessSort(r.URL.Query().Get("process_sort"))
+	// MetricsByName returns a value copy, but its process slice still shares
+	// backing storage with State. Sort a private copy for this request.
+	m.Processes = append([]monitor.ProcessInfo(nil), m.Processes...)
+	sortProcesses(m.Processes, processSort)
 	s.render(w, "server-detail", serverDetailData{
-		Title:   m.ServerName,
-		Page:    "dashboard",
-		Refresh: true,
-		Metrics: m,
+		Title:                  m.ServerName,
+		Page:                   "dashboard",
+		Refresh:                true,
+		Metrics:                m,
+		Audits:                 s.state.AuditHistory(name),
+		ProcessSort:            processSort,
+		ProcessDiskIOSupported: strings.EqualFold(m.Platform, "linux"),
+		Flash:                  flash,
+		FlashErr:               flashErr,
 	})
+}
+
+func normalizeProcessSort(value string) string {
+	switch value {
+	case "memory", "disk":
+		return value
+	default:
+		return "cpu"
+	}
+}
+
+func processSortLabel(value string) string {
+	switch normalizeProcessSort(value) {
+	case "memory":
+		return "memory"
+	case "disk":
+		return "disk I/O"
+	default:
+		return "CPU"
+	}
+}
+
+func sortProcesses(processes []monitor.ProcessInfo, value string) {
+	sort.SliceStable(processes, func(i, j int) bool {
+		switch normalizeProcessSort(value) {
+		case "memory":
+			return processes[i].RSSBytes > processes[j].RSSBytes
+		case "disk":
+			return processes[i].DiskReadBytes+processes[i].DiskWriteBytes > processes[j].DiskReadBytes+processes[j].DiskWriteBytes
+		default:
+			return processes[i].CPUPercent > processes[j].CPUPercent
+		}
+	})
+}
+
+func alertLink(name, metric, operator string, threshold float64, server, mountPoint string) string {
+	query := url.Values{
+		"name":      {name},
+		"metric":    {metric},
+		"operator":  {operator},
+		"threshold": {strconv.FormatFloat(threshold, 'f', -1, 64)},
+		"servers":   {server},
+	}
+	if mountPoint != "" {
+		query.Set("mount_point", mountPoint)
+	}
+	return "/alerts?" + query.Encode()
+}
+
+func (s *Server) handleRunAudit(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("server"))
+	cfg := s.state.Config()
+	var target *config.Server
+	for i := range cfg.Servers {
+		if cfg.Servers[i].Name == name {
+			target = &cfg.Servers[i]
+			break
+		}
+	}
+	if target == nil {
+		redirectWithFlash(w, r, "/servers", "Audit target was not found.", true)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(cfg.Timeout)*time.Second)
+	defer cancel()
+	result, err := monitor.AuditTarget(ctx, *target, &cfg, time.Duration(cfg.Timeout)*time.Second)
+	if err != nil {
+		redirectWithFlash(w, r, "/server/"+url.PathEscape(name), "Audit failed: "+err.Error(), true)
+		return
+	}
+	s.state.RecordAudit(name, *result)
+	redirectWithFlash(w, r, "/server/"+url.PathEscape(name), "Read-only audit completed. Compare the changes below.", false)
 }
 
 // ── Server management ─────────────────────────────────────────────────────────
@@ -365,6 +466,8 @@ type serversData struct {
 	Servers     []serverRow
 	ServerNames []string
 	Probes      []probeRow
+	Inventory   []monitor.AssetRecord
+	Security    []monitor.SecurityFinding
 }
 
 type probeRow struct {
@@ -425,6 +528,8 @@ func (s *Server) handleServers(w http.ResponseWriter, r *http.Request) {
 		Servers:     rows,
 		ServerNames: serverNames,
 		Probes:      probeRows(cfg.Servers),
+		Inventory:   monitor.BuildInventory(cfg, metrics),
+		Security:    monitor.BuildSecurityFindings(cfg, metrics),
 	})
 }
 
@@ -455,6 +560,14 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 	if port == 0 {
 		port = 22
 	}
+	if !isLocal {
+		var parseErr error
+		host, port, parseErr = parseSSHAddress(host, port)
+		if parseErr != nil {
+			redirectWithFlash(w, r, "/servers", "Invalid SSH host or port: "+parseErr.Error(), true)
+			return
+		}
+	}
 
 	authType := r.FormValue("auth_type")
 	cred := r.FormValue("auth_credential")
@@ -478,15 +591,18 @@ func (s *Server) handleAddServer(w http.ResponseWriter, r *http.Request) {
 		applyServerProfile(profile, host, &tags, &checks, &isLocal)
 	}
 	srv := config.Server{
-		Name:     name,
-		Host:     host,
-		Port:     port,
-		Username: r.FormValue("username"),
-		Auth:     auth,
-		Local:    isLocal,
-		Tags:     tags,
-		Checks:   checks,
-		Docker:   config.DockerConfig{Enabled: r.FormValue("docker_enabled") == "1"},
+		Name:          name,
+		Host:          host,
+		Port:          port,
+		Username:      r.FormValue("username"),
+		Auth:          auth,
+		Local:         isLocal,
+		Tags:          tags,
+		DependsOn:     splitList(r.FormValue("depends_on")),
+		ToolInventory: r.FormValue("tool_inventory") == "1",
+		Audit:         config.AuditConfig{Enabled: r.FormValue("audit_enabled") == "1"},
+		Checks:        checks,
+		Docker:        config.DockerConfig{Enabled: r.FormValue("docker_enabled") == "1"},
 	}
 	if srv.Local {
 		srv.Host = ""
@@ -1156,6 +1272,8 @@ type alertsData struct {
 	Watchdog     *config.WatchdogConfig
 	EmailCfg     *config.EmailConfig
 	ServerNames  []string
+	Reviews      []RunbookReview
+	Changes      []ChangeEvent
 }
 
 func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
@@ -1181,7 +1299,38 @@ func (s *Server) handleAlerts(w http.ResponseWriter, r *http.Request) {
 		Watchdog:     cfg.Alerts.Watchdog,
 		EmailCfg:     cfg.Alerts.Email,
 		ServerNames:  serverNames,
+		Reviews:      s.state.RunbookReviews(),
+		Changes:      s.state.Changes(),
 	})
+}
+
+func (s *Server) handleReviewRunbook(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	status := strings.TrimSpace(r.FormValue("status"))
+	if status != "acknowledged" && status != "declined" && status != "completed" {
+		redirectWithFlash(w, r, "/alerts", "Invalid review status.", true)
+		return
+	}
+	if !s.state.UpdateRunbookReview(strings.TrimSpace(r.FormValue("id")), status, strings.TrimSpace(r.FormValue("actor")), strings.TrimSpace(r.FormValue("note"))) {
+		redirectWithFlash(w, r, "/alerts", "Runbook review was not found.", true)
+		return
+	}
+	redirectWithFlash(w, r, "/alerts", "Runbook review updated. No command was executed.", false)
+}
+
+func (s *Server) handleAddChange(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	server, kind, summary := strings.TrimSpace(r.FormValue("server")), strings.TrimSpace(r.FormValue("kind")), strings.TrimSpace(r.FormValue("summary"))
+	if server == "" || kind == "" || summary == "" {
+		redirectWithFlash(w, r, "/alerts", "Server, change type, and summary are required.", true)
+		return
+	}
+	s.state.RecordChange(server, kind, summary, strings.TrimSpace(r.FormValue("actor")))
+	redirectWithFlash(w, r, "/alerts", "Change event recorded for alert correlation.", false)
 }
 
 func (s *Server) handleAddAlert(w http.ResponseWriter, r *http.Request) {
@@ -1301,6 +1450,12 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	if req.Port == 0 {
 		req.Port = 22
 	}
+	var addressErr error
+	req.Host, req.Port, addressErr = parseSSHAddress(strings.TrimSpace(req.Host), req.Port)
+	if addressErr != nil {
+		writeJSON(false, "Invalid SSH host or port: "+addressErr.Error())
+		return
+	}
 
 	auth := config.Auth{Type: config.AuthType(req.AuthType)}
 	switch config.AuthType(req.AuthType) {
@@ -1329,6 +1484,35 @@ func (s *Server) handleTestConnection(w http.ResponseWriter, r *http.Request) {
 	}
 	cl.Close()
 	writeJSON(true, fmt.Sprintf("Successfully connected to %s:%d as %s.", req.Host, req.Port, req.Username))
+}
+
+// parseSSHAddress accepts a normal hostname, a bracketed IPv6 address, or a
+// host:port shorthand. A port embedded in the host takes precedence over the
+// form's default port of 22.
+func parseSSHAddress(address string, defaultPort int) (string, int, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return "", 0, fmt.Errorf("host is required")
+	}
+	if host, portText, err := net.SplitHostPort(address); err == nil {
+		port, parseErr := strconv.Atoi(portText)
+		if parseErr != nil || port < 1 || port > 65535 {
+			return "", 0, fmt.Errorf("port must be between 1 and 65535")
+		}
+		return host, port, nil
+	}
+	if strings.Count(address, ":") == 1 {
+		host, portText, _ := strings.Cut(address, ":")
+		port, err := strconv.Atoi(portText)
+		if err != nil || host == "" || port < 1 || port > 65535 {
+			return "", 0, fmt.Errorf("port must be between 1 and 65535")
+		}
+		return host, port, nil
+	}
+	if defaultPort < 1 || defaultPort > 65535 {
+		return "", 0, fmt.Errorf("port must be between 1 and 65535")
+	}
+	return strings.Trim(address, "[]"), defaultPort, nil
 }
 
 // ── Global configuration editor ───────────────────────────────────────────────
@@ -1447,6 +1631,20 @@ func (s *Server) handleAPIProbes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, results)
+}
+
+func (s *Server) handleAPIInventory(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	writeJSON(w, http.StatusOK, monitor.BuildInventory(s.state.Config(), s.state.Metrics()))
+}
+
+func (s *Server) handleAPISecurityFindings(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	writeJSON(w, http.StatusOK, monitor.BuildSecurityFindings(s.state.Config(), s.state.Metrics()))
 }
 
 func (s *Server) handleAPIHistoryMetrics(w http.ResponseWriter, r *http.Request) {

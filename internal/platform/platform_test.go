@@ -102,6 +102,16 @@ func TestParseSysctlLoadAvg(t *testing.T) {
 	}
 }
 
+func TestParseSysctlLoadAvgWithDecimalComma(t *testing.T) {
+	la, err := parseSysctlLoadAvg("{ 2,51 1,75 1,20 }")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if la.Load1 != 2.51 || la.Load5 != 1.75 || la.Load15 != 1.20 {
+		t.Fatalf("load = %#v, want 2.51/1.75/1.20", la)
+	}
+}
+
 func TestParseSysctlLoadAvg_Invalid(t *testing.T) {
 	_, err := parseSysctlLoadAvg("{ 0.52 }")
 	if err == nil {

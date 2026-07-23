@@ -111,7 +111,7 @@ func (c *genericUnixCollector) Collect(ctx context.Context, r Runner) (*Snapshot
 		s.setOK("network")
 	}
 
-	psOut, err := r.Run(ctx, "ps aux 2>/dev/null | head -11")
+	psOut, err := r.Run(ctx, "{ ps aux 2>/dev/null | head -1; ps aux 2>/dev/null | tail -n +2 | sort -rk3,3 | head -10; ps aux 2>/dev/null | tail -n +2 | sort -rk4,4 | head -10; }")
 	if err != nil {
 		s.setErr("processes", err.Error())
 	} else if procs, err := parsePSAux(psOut); err != nil {

@@ -116,6 +116,17 @@ servers:
     host: 192.0.2.10
     port: 22             # Default: 22
     username: monitor    # Use a dedicated monitoring user with minimal privileges
+    # Optional upstream target names. When an upstream target is unreachable,
+    # downstream alerts are suppressed to avoid a cascade.
+    # depends_on: [router-01, database-01]
+    # Optional: record available standard tools such as df, ps, awk, ss, and
+    # systemctl. This runs one read-only POSIX-shell command and installs nothing.
+    # tool_inventory: true
+    # Optional bounded audit of account names/UIDs and installed package names.
+    # It is read-only, excludes credentials and package metadata, and is Linux-only.
+    # audit:
+    #   enabled: true
+    #   max_entries: 200
 
     auth:
       type: key          # "key" (default), "agent", "password", or "keyboard-interactive"
@@ -566,10 +577,11 @@ alerts:
   #     targets: [harp-proxy]
   #     command: "sudo -n systemctl restart harp"
 
-  # Optional AI watchdog. It is called only for new alert firings and sends a
+  # Optional AI advisor. It is called only for new alert firings and sends a
   # reduced probe snapshot to an OpenAI-compatible Chat Completions endpoint.
-  # Without approved actions it is advisory only. The model can request only
-  # listed remediation names, never arbitrary SSH commands.
+  # It always remains advisory: the model can recommend only listed runbook
+  # names, never arbitrary SSH commands, and WatchSSH never executes a
+  # model recommendation. An operator must review and run a recommendation.
   # watchdog:
   #   enabled: false
   #   # LM Studio default OpenAI-compatible server:
@@ -587,16 +599,15 @@ alerts:
   #   response_format: json_schema  # or json_object for older compatible APIs
   #   # Keep server and endpoint names redacted by default.
   #   include_identifiers: false
-  #   # Run model-selected actions only at this severity or higher.
-  #   # Valid values: info, warning, critical (default: critical).
-  #   min_remediation_severity: critical
+  #   # Existing min_remediation_severity settings are accepted for backwards
+  #   # compatibility but ignored: AI output is always human-in-the-loop.
   #   allowed_remediations:
   #     - restart-nginx-watchdog
   #   system_prompt: "Prefer no action unless a health check is clearly failing."
   #
-  # The action remains independently enabled and targets a fixed host. Add it
-  # to the remediations list above with mode: watchdog so it cannot also run
-  # through deterministic alert matching.
+  # The runbook remains independently enabled and targets a fixed host. Add it
+  # to the catalog above with mode: watchdog so the AI can recommend its name.
+  # The operator invokes it via the normal operational process.
   #   - name: restart-nginx-watchdog
   #     description: Restart the Nginx service after a confirmed health failure.
   #     enabled: true

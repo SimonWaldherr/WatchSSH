@@ -414,8 +414,23 @@ alerts:
 		t.Fatalf("Load() error = %v", err)
 	}
 	watchdog := cfg.Alerts.Watchdog
-	if watchdog == nil || watchdog.Timeout != 20 || watchdog.Cooldown != 300 || watchdog.MaxInputBytes != 65536 || watchdog.MaxTokens != 300 || watchdog.ResponseFormat != "json_schema" || watchdog.MinRemediationSeverity != "critical" {
+	if watchdog == nil || watchdog.Timeout != 20 || watchdog.Cooldown != 300 || watchdog.MaxInputBytes != 65536 || watchdog.MaxTokens != 300 || watchdog.ResponseFormat != "json_schema" {
 		t.Fatalf("watchdog defaults = %#v", watchdog)
+	}
+}
+
+func TestLoad_RejectsDependencyCycle(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: api
+    local: true
+    depends_on: [database]
+  - name: database
+    local: true
+    depends_on: [api]
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected dependency cycle to be rejected")
 	}
 }
 

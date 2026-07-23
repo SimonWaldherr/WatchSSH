@@ -3,8 +3,11 @@ package monitor
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,19 +20,86 @@ type OutputWriter interface {
 // ConsoleWriter
 // ---------------------------------------------------------------------------
 
-// ConsoleWriter renders metrics as a human-readable box-drawn table on stdout.
-type ConsoleWriter struct{}
+// ConsoleWriter renders metrics as a human-readable box-drawn table. On an
+// interactive terminal it refreshes the preceding snapshot in place; pipes and
+// files keep conventional append-only output for logs and automation.
+type ConsoleWriter struct {
+	out          io.Writer
+	interactive  bool
+	previousRows int
+	width        int
+	mu           sync.Mutex
+}
 
-const boxWidth = 70
+// NewConsoleWriter uses stdout and detects whether it is an interactive
+// terminal. Tests and embedding callers may construct ConsoleWriter directly.
+func NewConsoleWriter() *ConsoleWriter {
+	interactive := stdoutIsTerminal()
+	return &ConsoleWriter{out: os.Stdout, interactive: interactive, width: consoleWidth(interactive)}
+}
+
+const (
+	minimumConsoleWidth = 70
+	defaultConsoleWidth = 100
+	maximumConsoleWidth = 180
+)
 
 func (w *ConsoleWriter) Write(metrics []ServerMetrics) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.out == nil {
+		w.out = os.Stdout
+		w.interactive = stdoutIsTerminal()
+	}
+	if w.width == 0 || w.interactive {
+		w.width = consoleWidth(w.interactive)
+	}
+	var snapshot strings.Builder
 	for _, m := range metrics {
-		fmt.Print(renderServerMetrics(m))
+		snapshot.WriteString(renderServerMetrics(m, w.width))
+	}
+	output := snapshot.String()
+	if w.interactive && w.previousRows > 0 {
+		// Move to the first row of the previous snapshot and erase only the
+		// display region below it, leaving earlier shell output intact.
+		fmt.Fprintf(w.out, "\x1b[%dA\x1b[J", w.previousRows)
+	}
+	if _, err := io.WriteString(w.out, output); err != nil {
+		return err
+	}
+	if w.interactive {
+		w.previousRows = strings.Count(output, "\n")
 	}
 	return nil
 }
 
-func renderServerMetrics(m ServerMetrics) string {
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// consoleWidth uses COLUMNS when the shell exposes it. This works across the
+// supported platforms without adding a terminal-specific dependency. Keep a
+// sensible bounded fallback for serial terminals and redirected output.
+func consoleWidth(interactive bool) int {
+	if !interactive {
+		return defaultConsoleWidth
+	}
+	columns, err := strconv.Atoi(os.Getenv("COLUMNS"))
+	if err != nil || columns <= 0 {
+		return defaultConsoleWidth
+	}
+	width := columns - 4 // leave a small terminal margin
+	if width < minimumConsoleWidth {
+		return minimumConsoleWidth
+	}
+	if width > maximumConsoleWidth {
+		return maximumConsoleWidth
+	}
+	return width
+}
+
+func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 	var sb strings.Builder
 	sep := strings.Repeat("─", boxWidth)
 
@@ -122,15 +192,19 @@ func renderServerMetrics(m ServerMetrics) string {
 	// Disks
 	if len(m.Disks) > 0 {
 		line("Disks  :")
+		barWidth := 20
+		if boxWidth >= 120 {
+			barWidth = 30
+		}
 		for _, d := range m.Disks {
-			bar := usageBar(d.UsagePercent, 20)
-			line(fmt.Sprintf("  %-16s %-12s %s %s / %s (%.0f%%)",
-				truncate(d.Device, 16), truncate(d.MountPoint, 12),
+			bar := usageBar(d.UsagePercent, barWidth)
+			line(fmt.Sprintf("  %-20s %-20s %s %s / %s (%.0f%%)",
+				truncate(d.Device, 20), truncate(d.MountPoint, 20),
 				bar,
 				formatBytes(d.UsedBytes), formatBytes(d.TotalBytes),
 				d.UsagePercent))
 			if d.InodesTotal > 0 {
-				line(fmt.Sprintf("  %-16s %-12s inodes %d / %d (%.0f%%)",
+				line(fmt.Sprintf("  %-20s %-20s inodes %d / %d (%.0f%%)",
 					"", "", d.InodesUsed, d.InodesTotal, d.InodesUsagePercent))
 			}
 		}
@@ -151,6 +225,7 @@ func renderServerMetrics(m ServerMetrics) string {
 	// Network
 	if len(m.Network) > 0 {
 		line("Network:")
+		entries := make([]string, 0, len(m.Network))
 		for _, n := range m.Network {
 			if n.BytesRecv == 0 && n.BytesSent == 0 {
 				continue
@@ -161,9 +236,18 @@ func renderServerMetrics(m ServerMetrics) string {
 			if errs > 0 || drops > 0 {
 				extras = fmt.Sprintf("  err %d  drop %d", errs, drops)
 			}
-			line(fmt.Sprintf("  %-10s  rx %s  tx %s%s",
+			entries = append(entries, fmt.Sprintf("%-10s rx %-9s tx %-9s%s",
 				truncate(n.Interface, 10),
 				formatBytes(n.BytesRecv), formatBytes(n.BytesSent), extras))
+		}
+		for len(entries) > 0 {
+			if boxWidth >= 120 && len(entries) > 1 {
+				line("  " + entries[0] + "    " + entries[1])
+				entries = entries[2:]
+			} else {
+				line("  " + entries[0])
+				entries = entries[1:]
+			}
 		}
 		divider()
 	}

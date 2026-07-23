@@ -152,7 +152,7 @@ func (c *darwinCollector) Collect(ctx context.Context, r Runner) (*Snapshot, err
 	}
 
 	// 9. Processes
-	psOut, err := r.Run(ctx, "ps -eo pid,user,%cpu,%mem,rss,stat,comm 2>/dev/null | sort -k3 -rn | head -10")
+	psOut, err := r.Run(ctx, "{ ps -eo pid,user,%cpu,%mem,rss,stat,comm 2>/dev/null | head -1; ps -eo pid,user,%cpu,%mem,rss,stat,comm 2>/dev/null | tail -n +2 | sort -k3 -rn | head -10; ps -eo pid,user,%cpu,%mem,rss,stat,comm 2>/dev/null | tail -n +2 | sort -k4 -rn | head -10; }")
 	if err != nil {
 		s.setErr("processes", err.Error())
 	} else {
@@ -453,10 +453,8 @@ func parsePSEO(output string) ([]ProcessInfo, error) {
 	}
 
 	var procs []ProcessInfo
+	seen := make(map[int]struct{}, len(lines))
 	for _, line := range lines[1:] { // skip header
-		if len(procs) >= 10 {
-			break
-		}
 		fields := strings.Fields(line)
 		if len(fields) < 7 {
 			continue
@@ -465,6 +463,10 @@ func parsePSEO(output string) ([]ProcessInfo, error) {
 		if err != nil {
 			continue
 		}
+		if _, exists := seen[pid]; exists {
+			continue
+		}
+		seen[pid] = struct{}{}
 		cpu, _ := strconv.ParseFloat(fields[2], 64)
 		mem, _ := strconv.ParseFloat(fields[3], 64)
 		rss, _ := strconv.ParseInt(fields[4], 10, 64)

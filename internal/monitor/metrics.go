@@ -37,12 +37,33 @@ type ServerMetrics struct {
 	Board        *BoardInfo          `json:"board,omitempty"`
 	Connectivity ConnectivityStats   `json:"connectivity"`
 	CustomChecks []CustomCheckResult `json:"custom_checks,omitempty"`
+	// StandardTools contains non-sensitive availability facts for common POSIX,
+	// Linux, and operational tools. It is populated only when tool_inventory is enabled.
+	StandardTools map[string]bool `json:"standard_tools,omitempty"`
+	// Audit is an optional, bounded inventory of accounts and installed packages.
+	Audit *AuditResult `json:"audit,omitempty"`
 
 	// Capabilities maps each metric name to its availability status:
 	// "ok", "unsupported", "unavailable", or "error".
 	Capabilities map[string]string `json:"capabilities,omitempty"`
 	// MetricErrors maps metric names to human-readable error messages.
 	MetricErrors map[string]string `json:"metric_errors,omitempty"`
+}
+
+// AuditResult is collected only after explicit per-server opt-in. It never
+// includes credentials, hashes, home directory contents, or package metadata.
+type AuditResult struct {
+	Users        []AuditUser       `json:"users,omitempty"`
+	Packages     []string          `json:"packages,omitempty"`
+	PackageTool  string            `json:"package_tool,omitempty"`
+	UsersCut     bool              `json:"users_truncated,omitempty"`
+	PackagesCut  bool              `json:"packages_truncated,omitempty"`
+	Capabilities map[string]string `json:"capabilities,omitempty"`
+}
+
+type AuditUser struct {
+	Name string `json:"name"`
+	UID  int    `json:"uid"`
 }
 
 // SystemInfo contains static system information.
@@ -140,13 +161,15 @@ type LoggedInUser struct {
 
 // ProcessInfo represents a single running process.
 type ProcessInfo struct {
-	PID        int     `json:"pid"`
-	User       string  `json:"user"`
-	CPUPercent float64 `json:"cpu_percent"`
-	MemPercent float64 `json:"mem_percent"`
-	RSSBytes   int64   `json:"rss_bytes"`
-	State      string  `json:"state"`
-	Command    string  `json:"command"`
+	PID            int     `json:"pid"`
+	User           string  `json:"user"`
+	CPUPercent     float64 `json:"cpu_percent"`
+	MemPercent     float64 `json:"mem_percent"`
+	RSSBytes       int64   `json:"rss_bytes"`
+	DiskReadBytes  int64   `json:"disk_read_bytes,omitempty"`
+	DiskWriteBytes int64   `json:"disk_write_bytes,omitempty"`
+	State          string  `json:"state"`
+	Command        string  `json:"command"`
 }
 
 // ConnectivityStats contains results of external connectivity checks.
@@ -302,7 +325,7 @@ type Firing struct {
 	FiredAt  time.Time `json:"fired_at"`
 	// Remediations records automatic actions attempted for this firing.
 	Remediations []RemediationResult `json:"remediations,omitempty"`
-	// Watchdog contains the optional AI watchdog analysis for this firing.
+	// Watchdog contains the optional AI advisor analysis for this firing.
 	Watchdog *WatchdogResult `json:"watchdog,omitempty"`
 }
 
@@ -318,18 +341,17 @@ type RemediationResult struct {
 	Error      string    `json:"error,omitempty"`
 }
 
-// WatchdogResult records a bounded OpenAI-compatible watchdog analysis. Model
-// suggestions can only select configured remediation names, never commands.
+// WatchdogResult records a bounded OpenAI-compatible advisor analysis. Model
+// suggestions can only name configured runbooks and always require an operator
+// to review and perform the corresponding action.
 type WatchdogResult struct {
-	Model                 string              `json:"model"`
-	StartedAt             time.Time           `json:"started_at"`
-	DurationMs            float64             `json:"duration_ms"`
-	Status                string              `json:"status"` // analyzed, failed, skipped_cooldown
-	Severity              string              `json:"severity,omitempty"`
-	Summary               string              `json:"summary,omitempty"`
-	RequestedRemediations []string            `json:"requested_remediations,omitempty"`
-	DeferredRemediations  []string            `json:"deferred_remediations,omitempty"`
-	RejectedRemediations  []string            `json:"rejected_remediations,omitempty"`
-	Remediations          []RemediationResult `json:"remediations,omitempty"`
-	Error                 string              `json:"error,omitempty"`
+	Model                   string    `json:"model"`
+	StartedAt               time.Time `json:"started_at"`
+	DurationMs              float64   `json:"duration_ms"`
+	Status                  string    `json:"status"` // analyzed, failed, skipped_cooldown
+	Severity                string    `json:"severity,omitempty"`
+	Summary                 string    `json:"summary,omitempty"`
+	RecommendedRemediations []string  `json:"recommended_remediations,omitempty"`
+	RejectedRemediations    []string  `json:"rejected_remediations,omitempty"`
+	Error                   string    `json:"error,omitempty"`
 }

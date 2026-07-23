@@ -210,6 +210,22 @@ func TestAlertManager_DiskUsage(t *testing.T) {
 	}
 }
 
+func TestAlertManager_AvailableMemoryAndDiskSpace(t *testing.T) {
+	metrics := []ServerMetrics{{
+		ServerName: "srv1",
+		Timestamp:  time.Now(),
+		Memory:     &MemoryStats{AvailableBytes: 512 * 1024 * 1024},
+		Disks:      []DiskStats{{MountPoint: "/data", FreeBytes: 256 * 1024 * 1024}},
+	}}
+	cfg := &config.Config{Alerts: config.AlertsConfig{Cooldown: 0, Rules: []config.AlertRule{
+		{Name: "LowMemory", Metric: "mem_available_bytes", Operator: "<=", Threshold: 1024 * 1024 * 1024, Servers: []string{"srv1"}},
+		{Name: "LowData", Metric: "disk_free_bytes", Operator: "<", Threshold: 512 * 1024 * 1024, MountPoint: "/data", Servers: []string{"srv1"}},
+	}}}
+	if firings := NewAlertManager().Evaluate(metrics, cfg); len(firings) != 2 {
+		t.Fatalf("expected available-space alerts to fire, got %#v", firings)
+	}
+}
+
 func TestAlertManager_DiskInodeUsage(t *testing.T) {
 	am := NewAlertManager()
 	cfg := &config.Config{
@@ -621,7 +637,7 @@ func TestRemediationManagerRateLimit(t *testing.T) {
 	}
 }
 
-func TestRunWatchdogSelectsOnlyAllowlistedRemediations(t *testing.T) {
+func TestRunWatchdogRecommendsOnlyAllowlistedRunbooksWithoutExecution(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -668,20 +684,19 @@ func TestRunWatchdogSelectsOnlyAllowlistedRemediations(t *testing.T) {
 	if result == nil || result.Status != "analyzed" || result.Severity != "critical" || result.Summary != "HTTP health check failed" {
 		t.Fatalf("watchdog result = %#v", result)
 	}
-	if len(result.Remediations) != 1 || result.Remediations[0].Status != "succeeded" || result.Remediations[0].Output != "restarted" {
-		t.Fatalf("watchdog remediations = %#v", result.Remediations)
+	if got := result.RecommendedRemediations; len(got) != 1 || got[0] != "restart-web" {
+		t.Fatalf("watchdog recommendations = %#v", got)
 	}
 	if len(result.RejectedRemediations) != 1 || result.RejectedRemediations[0] != "not-allowed" {
 		t.Fatalf("rejected remediations = %#v", result.RejectedRemediations)
 	}
 
-	monitor.runRemediations(cfg, firings)
 	if len(firings[0].Remediations) != 0 {
-		t.Fatalf("watchdog-only remediation ran through deterministic alert path: %#v", firings[0].Remediations)
+		t.Fatalf("AI recommendation executed a remediation: %#v", firings[0].Remediations)
 	}
 }
 
-func TestRunWatchdogDefersActionsBelowMinimumSeverity(t *testing.T) {
+func TestRunWatchdogRecommendsRegardlessOfLegacySeverityGate(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"summary\":\"Transient latency increase\",\"severity\":\"warning\",\"remediations\":[\"restart-web\"]}"}}]}`))
 	}))
@@ -708,7 +723,7 @@ func TestRunWatchdogDefersActionsBelowMinimumSeverity(t *testing.T) {
 	if result == nil || result.Status != "analyzed" || result.Severity != "warning" {
 		t.Fatalf("watchdog result = %#v", result)
 	}
-	if len(result.Remediations) != 0 || len(result.DeferredRemediations) != 1 || result.DeferredRemediations[0] != "restart-web" {
-		t.Fatalf("watchdog action gate = %#v", result)
+	if len(result.RecommendedRemediations) != 1 || result.RecommendedRemediations[0] != "restart-web" {
+		t.Fatalf("watchdog recommendation = %#v", result)
 	}
 }

@@ -473,6 +473,12 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 			return 0, false
 		}
 		return srv.Memory.UsagePercent, cmp(srv.Memory.UsagePercent, rule.Operator, rule.Threshold)
+	case "mem_available_bytes":
+		if srv.Memory == nil {
+			return 0, false
+		}
+		value := float64(srv.Memory.AvailableBytes)
+		return value, cmp(value, rule.Operator, rule.Threshold)
 	case "swap_usage":
 		if srv.Swap == nil {
 			return 0, false
@@ -500,6 +506,16 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 			}
 			if cmp(d.UsagePercent, rule.Operator, rule.Threshold) {
 				return d.UsagePercent, true
+			}
+		}
+	case "disk_free_bytes":
+		for _, d := range srv.Disks {
+			if rule.MountPoint != "" && d.MountPoint != rule.MountPoint {
+				continue
+			}
+			value := float64(d.FreeBytes)
+			if cmp(value, rule.Operator, rule.Threshold) {
+				return value, true
 			}
 		}
 	case "disk_inode_usage":

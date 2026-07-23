@@ -468,6 +468,54 @@ func TestAddAlertWithHTTPURL(t *testing.T) {
 	}
 }
 
+func TestProcessSortingAndAlertLink(t *testing.T) {
+	processes := []monitor.ProcessInfo{
+		{PID: 1, CPUPercent: 10, RSSBytes: 100, DiskReadBytes: 1},
+		{PID: 2, CPUPercent: 5, RSSBytes: 300, DiskWriteBytes: 20},
+	}
+	sortProcesses(processes, "memory")
+	if processes[0].PID != 2 {
+		t.Fatalf("memory sort selected PID %d, want 2", processes[0].PID)
+	}
+	sortProcesses(processes, "disk")
+	if processes[0].PID != 2 {
+		t.Fatalf("disk sort selected PID %d, want 2", processes[0].PID)
+	}
+	link := alertLink("Low disk space", "disk_free_bytes", "<=", 1024, "app-01", "/data")
+	parsed, err := url.Parse(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query(); got.Get("servers") != "app-01" || got.Get("mount_point") != "/data" || got.Get("metric") != "disk_free_bytes" {
+		t.Fatalf("alert link query = %#v", got)
+	}
+}
+
+func TestServerDetailSupportsMemoryProcessSort(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	state.Update([]monitor.ServerMetrics{{
+		ServerName: "localhost",
+		Processes: []monitor.ProcessInfo{
+			{PID: 1, CPUPercent: 10, RSSBytes: 100},
+			{PID: 2, CPUPercent: 1, RSSBytes: 300},
+		},
+	}}, nil)
+	srv := NewServer(state, ":0")
+	req := httptest.NewRequest(http.MethodGet, "/server/localhost?process_sort=memory", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Top Processes (by memory)") || !strings.Contains(body, "process_sort=memory\" class=\"active\"") {
+		t.Fatalf("memory process sort not rendered: %s", body)
+	}
+	if strings.Index(body, ">2</td>") > strings.Index(body, ">1</td>") {
+		t.Fatalf("processes were not sorted by RAM: %s", body)
+	}
+}
+
 func TestAlertsPageShowsRemediations(t *testing.T) {
 	state := NewState(&config.Config{
 		Servers: []config.Server{{Name: "web-01", Local: true}},
@@ -481,7 +529,7 @@ func TestAlertsPageShowsRemediations(t *testing.T) {
 	state.Update(nil, []monitor.Firing{{
 		Message:      "health check failed",
 		Remediations: []monitor.RemediationResult{{Name: "restart-web", Target: "web-01", Status: "succeeded"}},
-		Watchdog:     &monitor.WatchdogResult{Model: "local-model", Status: "analyzed", Severity: "critical", Summary: "Restart selected"},
+		Watchdog:     &monitor.WatchdogResult{Model: "local-model", Status: "analyzed", Severity: "critical", Summary: "Restart selected", RecommendedRemediations: []string{"restart-web"}},
 	}})
 	srv := NewServer(state, ":0")
 
@@ -492,10 +540,50 @@ func TestAlertsPageShowsRemediations(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"AI Watchdog", "local-model", "Automatic Remediations", "restart-web", "Watchdog local-model: analyzed (critical) - Restart selected", "Remediation restart-web on web-01: succeeded", `id="alert-template"`, "TLS certificate expires soon", "HTTP health check failed"} {
+	for _, want := range []string{"AI Advisor", "Human approval required", "local-model", "Automatic Remediations", "restart-web", "AI advisor local-model: analyzed (critical) - Restart selected", "Operator review required for recommended runbooks: restart-web", "Remediation restart-web on web-01: succeeded", `id="alert-template"`, "TLS certificate expires soon", "HTTP health check failed"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}
+	}
+}
+
+func TestStateRecordsAuditDiff(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	state.RecordAudit("app-01", monitor.AuditResult{Users: []monitor.AuditUser{{Name: "alice", UID: 1000}}, Packages: []string{"nginx"}})
+	state.RecordAudit("app-01", monitor.AuditResult{Users: []monitor.AuditUser{{Name: "bob", UID: 1001}}, Packages: []string{"nginx", "curl"}})
+	history := state.AuditHistory("app-01")
+	if len(history) != 2 {
+		t.Fatalf("history = %#v", history)
+	}
+	latest := history[0]
+	if len(latest.AddedUsers) != 1 || latest.AddedUsers[0] != "bob (1001)" || len(latest.RemovedUsers) != 1 || latest.RemovedUsers[0] != "alice (1000)" {
+		t.Fatalf("user diff = %#v", latest)
+	}
+	if len(latest.AddedPackages) != 1 || latest.AddedPackages[0] != "curl" {
+		t.Fatalf("package diff = %#v", latest)
+	}
+}
+
+func TestParseSSHAddress(t *testing.T) {
+	tests := []struct {
+		input string
+		port  int
+		host  string
+		want  int
+	}{
+		{input: "ssh.example.test", port: 2222, host: "ssh.example.test", want: 2222},
+		{input: "ssh.example.test:50622", port: 22, host: "ssh.example.test", want: 50622},
+		{input: "[2001:db8::1]:2200", port: 22, host: "2001:db8::1", want: 2200},
+		{input: "2001:db8::1", port: 22, host: "2001:db8::1", want: 22},
+	}
+	for _, test := range tests {
+		host, port, err := parseSSHAddress(test.input, test.port)
+		if err != nil || host != test.host || port != test.want {
+			t.Fatalf("parseSSHAddress(%q, %d) = %q, %d, %v", test.input, test.port, host, port, err)
+		}
+	}
+	if _, _, err := parseSSHAddress("ssh.example.test:70000", 22); err == nil {
+		t.Fatal("expected invalid port error")
 	}
 }
 
