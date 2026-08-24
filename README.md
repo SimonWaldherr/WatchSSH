@@ -641,6 +641,48 @@ and `/metrics`. WatchSSH does not try to become a distributed RIPE Atlas
 replacement; it keeps the single-monitoring-host model and makes probe results
 consistent enough for alerts and exports.
 
+### Standard-Tool Probes (systemctl, pgrep, ss, journalctl)
+
+Beyond the monitoring-host probes above, WatchSSH can run structured, read-only
+probes over SSH using standard Linux tools that are already inventoried by
+`tool_inventory` — `systemctl`, `pgrep`, `ss`, and `journalctl`. Each probe
+degrades to a clear "tool not available" result instead of failing the whole
+collection when the target lacks the binary, and none of them start, stop, or
+modify anything on the target.
+
+```yaml
+checks:
+  service:
+    - name: nginx-active
+      unit: nginx.service # verified with `systemctl is-active`
+      timeout: 5
+  process:
+    - name: nginx-workers
+      pattern: "nginx: worker process" # matched with `pgrep -f`
+      min_count: 2
+      timeout: 5
+  listening:
+    - name: https-bound
+      port: 443
+      protocol: tcp # tcp (default) or udp, checked with `ss`
+      timeout: 5
+  journal:
+    - name: sshd-errors
+      unit: sshd.service # optional; omit to search the whole journal
+      priority: err # syslog priority understood by `journalctl -p`
+      since_minutes: 10
+      max_count: 0 # fail once more than this many entries are found
+      timeout: 5
+```
+
+Unlike `checks.ports` (which dials a socket from the monitoring host or
+target network), `checks.listening` asks the target's own kernel whether a
+process is bound to a port — useful for confirming a service is up
+independent of firewalling between hosts. Corresponding alert metrics
+(`service_failed`, `process_failed`, `listening_failed`, `journal_failed`,
+`journal_count`) work like the other probe metrics described in
+[Alerting](#alerting).
+
 ## HARP Integration
 
 For [HARP](https://github.com/SimonWaldherr/HARP), WatchSSH should start with
@@ -686,7 +728,8 @@ Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
 `banner_failed`, `banner_latency`, `http_failed`, `http_latency`, `dns_failed`,
 `dns_latency`, `traceroute_failed`, `traceroute_hops`, `tls_failed`,
 `tls_latency`, `ntp_failed`, `ntp_latency`, `ntp_offset`,
-`custom_failed`, `cert_expires_days`, `tls_cert_expires_days`,
+`custom_failed`, `service_failed`, `process_failed`, `listening_failed`,
+`journal_failed`, `journal_count`, `cert_expires_days`, `tls_cert_expires_days`,
 `board_temperature`, `board_under_voltage`, `board_throttled`,
 `board_wifi_rssi`.
 

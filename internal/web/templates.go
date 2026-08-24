@@ -813,7 +813,7 @@ const allTemplates = `
   <form method="post" action="/probes/add" class="probe-builder">
     <div class="form-row w3">
       <div><label for="probe-server">Target</label><select id="probe-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
-      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="custom">Remote command</option></select></div>
+      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="custom">Remote command</option><option value="service">Systemd service (systemctl)</option><option value="process">Process running (pgrep)</option><option value="listening">Listening port (ss)</option><option value="journal">Journal errors (journalctl)</option></select></div>
       <div><label for="probe-timeout">Timeout (seconds)</label><input id="probe-timeout" type="number" name="timeout" value="5" min="1"></div>
     </div>
     <div class="form-row w3">
@@ -833,8 +833,21 @@ const allTemplates = `
         <div><label>NTP max offset (ms)</label><input type="number" name="max_offset_ms" min="0" step="0.1"></div>
       </div>
       <div class="form-row">
-        <div><label>Remote command name</label><input type="text" name="probe_name" placeholder="service-running"></div>
-        <div><label>Remote command</label><input type="text" name="command" placeholder="pgrep -x nginx && echo OK"></div>
+        <div><label>Probe name (custom / service / process / listening / journal)</label><input type="text" name="probe_name" placeholder="service-running"></div>
+        <div><label>Remote command (custom only)</label><input type="text" name="command" placeholder="pgrep -x nginx && echo OK"></div>
+      </div>
+      <div class="form-row w3">
+        <div><label>Systemd unit (service / journal)</label><input type="text" name="unit" placeholder="nginx.service"></div>
+        <div><label>Process pattern (pgrep -f)</label><input type="text" name="pattern" placeholder="nginx: worker process"></div>
+        <div><label>Process min count</label><input type="number" name="min_count" min="1" value="1"></div>
+      </div>
+      <div class="form-row w3">
+        <div><label>Listening protocol</label><select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select></div>
+        <div><label>Journal priority</label><input type="text" name="priority" value="err" placeholder="emerg, crit, err, warning"></div>
+        <div><label>Journal window (minutes)</label><input type="number" name="since_minutes" min="1" value="10"></div>
+      </div>
+      <div class="form-row">
+        <div><label>Journal max allowed entries</label><input type="number" name="max_count" min="0" value="0"></div>
       </div>
     </details>
     <div class="form-actions"><button type="submit" class="btn btn-primary">Add probe</button><span class="restart-note">Target-network TCP probes use SSH direct-tcpip and do not need netcat.</span></div>
@@ -1120,12 +1133,17 @@ const allTemplates = `
       ping:{placeholder:'uses the target host when blank',port:'',source:false},
       ntp:{placeholder:'time.cloudflare.com',port:'123',source:false},
       trace:{placeholder:'example.com',port:'',source:false},
-      custom:{placeholder:'not required',port:'',source:false}
+      custom:{placeholder:'not required',port:'',source:false},
+      service:{placeholder:'not required — set the systemd unit below',port:'',source:false},
+      process:{placeholder:'not required — set the process pattern below',port:'',source:false},
+      listening:{placeholder:'not required — set the port below',port:'',source:false},
+      journal:{placeholder:'not required — set the unit and priority below',port:'',source:false}
     };
+    var noPortKinds = ['ping','dns','trace','custom','service','process','journal'];
     var preset = presets[probeKind.value] || presets.http;
     probeTarget.placeholder = preset.placeholder;
     probePort.value = preset.port;
-    probePort.disabled = probeKind.value === 'ping' || probeKind.value === 'dns' || probeKind.value === 'trace' || probeKind.value === 'custom';
+    probePort.disabled = noPortKinds.indexOf(probeKind.value) !== -1;
     probeSource.disabled = !preset.source;
   }
   if(probeKind){ probeKind.addEventListener('change', updateProbePreset); updateProbePreset(); }

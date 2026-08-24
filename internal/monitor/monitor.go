@@ -739,6 +739,16 @@ func (m *Monitor) gatherAll(ctx context.Context, c runner, metrics *ServerMetric
 		}
 		metrics.CustomChecks = append(metrics.CustomChecks, result)
 	}
+
+	// Standard-Linux-tool-based SSH probes (systemctl, pgrep, ss, journalctl).
+	// These commands are Linux-specific, so other platforms are skipped
+	// rather than guessed at.
+	if metrics.Platform == "Linux" {
+		metrics.ServiceChecks = runServiceChecks(ctx, c, srv.Checks.Service)
+		metrics.ProcessChecks = runProcessChecks(ctx, c, srv.Checks.Process)
+		metrics.ListeningChecks = runListeningChecks(ctx, c, srv.Checks.Listening)
+		metrics.JournalChecks = runJournalChecks(ctx, c, srv.Checks.Journal)
+	}
 	return nil
 }
 

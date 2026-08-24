@@ -505,3 +505,76 @@ servers:
 		t.Fatal("expected invalid port probe source to be rejected")
 	}
 }
+
+func TestLoad_StandardToolProbeDefaults(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      service:
+        - unit: nginx.service
+      process:
+        - pattern: "nginx: worker"
+      listening:
+        - port: 443
+      journal:
+        - unit: sshd.service
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	srv := cfg.Servers[0]
+	if srv.Checks.Service[0].Timeout != 5 {
+		t.Fatalf("service check timeout = %d, want 5", srv.Checks.Service[0].Timeout)
+	}
+	if srv.Checks.Process[0].MinCount != 1 || srv.Checks.Process[0].Timeout != 5 {
+		t.Fatalf("process check defaults = %#v", srv.Checks.Process[0])
+	}
+	if srv.Checks.Listening[0].Protocol != "tcp" || srv.Checks.Listening[0].Timeout != 5 {
+		t.Fatalf("listening check defaults = %#v", srv.Checks.Listening[0])
+	}
+	if srv.Checks.Journal[0].Priority != "err" || srv.Checks.Journal[0].SinceMinutes != 10 || srv.Checks.Journal[0].Timeout != 5 {
+		t.Fatalf("journal check defaults = %#v", srv.Checks.Journal[0])
+	}
+}
+
+func TestLoad_RejectsStandardToolProbesMissingRequiredFields(t *testing.T) {
+	cases := []string{
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      service:
+        - timeout: 5
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      process:
+        - min_count: 1
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      listening:
+        - port: 0
+`,
+	}
+	for i, yamlDoc := range cases {
+		path := writeConfig(t, yamlDoc)
+		if _, err := config.Load(path); err == nil {
+			t.Fatalf("case %d: expected invalid probe config to be rejected", i)
+		}
+	}
+}

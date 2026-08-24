@@ -171,17 +171,64 @@ type CustomCheck struct {
 	ExpectedOutput string `yaml:"expected_output"`
 }
 
+// ServiceCheck verifies a systemd unit is active using `systemctl is-active`.
+// It is read-only: WatchSSH never starts, stops, or restarts services.
+type ServiceCheck struct {
+	Name    string `yaml:"name"`
+	Unit    string `yaml:"unit"`
+	Timeout int    `yaml:"timeout"` // seconds (default 5)
+}
+
+// ProcessCheck verifies at least MinCount running processes match Pattern
+// using `pgrep -f`.
+type ProcessCheck struct {
+	Name string `yaml:"name"`
+	// Pattern is matched against the full command line, like `pgrep -f`.
+	Pattern  string `yaml:"pattern"`
+	MinCount int    `yaml:"min_count"` // default 1
+	Timeout  int    `yaml:"timeout"`   // seconds (default 5)
+}
+
+// ListeningCheck verifies a local socket is in LISTEN state on the target
+// using `ss`. Unlike PortCheck (which dials the socket), this confirms the
+// target process itself is bound and listening, independent of firewalling.
+type ListeningCheck struct {
+	Name     string `yaml:"name"`
+	Port     int    `yaml:"port"`
+	Protocol string `yaml:"protocol"` // tcp (default) or udp
+	Timeout  int    `yaml:"timeout"`  // seconds (default 5)
+}
+
+// JournalCheck counts recent systemd journal entries at or above Priority
+// using `journalctl`. The probe fails when the count exceeds MaxCount.
+type JournalCheck struct {
+	Name string `yaml:"name"`
+	// Unit optionally restricts the search to one systemd unit.
+	Unit string `yaml:"unit"`
+	// Priority is a syslog level name understood by journalctl -p (default "err").
+	Priority string `yaml:"priority"`
+	// SinceMinutes is the lookback window (default 10).
+	SinceMinutes int `yaml:"since_minutes"`
+	// MaxCount is the highest matching-entry count considered healthy (default 0).
+	MaxCount int `yaml:"max_count"`
+	Timeout  int `yaml:"timeout"` // seconds (default 5)
+}
+
 // Checks holds all optional connectivity and custom checks for a server.
 type Checks struct {
-	Ping   PingCheck         `yaml:"ping"`
-	Ports  []PortCheck       `yaml:"ports"`
-	Banner []BannerCheck     `yaml:"banner"`
-	HTTP   []HTTPCheck       `yaml:"http"`
-	DNS    []DNSCheck        `yaml:"dns"`
-	Trace  []TracerouteCheck `yaml:"traceroute"`
-	TLS    []TLSCheck        `yaml:"tls"`
-	NTP    []NTPCheck        `yaml:"ntp"`
-	Custom []CustomCheck     `yaml:"custom"`
+	Ping      PingCheck         `yaml:"ping"`
+	Ports     []PortCheck       `yaml:"ports"`
+	Banner    []BannerCheck     `yaml:"banner"`
+	HTTP      []HTTPCheck       `yaml:"http"`
+	DNS       []DNSCheck        `yaml:"dns"`
+	Trace     []TracerouteCheck `yaml:"traceroute"`
+	TLS       []TLSCheck        `yaml:"tls"`
+	NTP       []NTPCheck        `yaml:"ntp"`
+	Custom    []CustomCheck     `yaml:"custom"`
+	Service   []ServiceCheck    `yaml:"service"`
+	Process   []ProcessCheck    `yaml:"process"`
+	Listening []ListeningCheck  `yaml:"listening"`
+	Journal   []JournalCheck    `yaml:"journal"`
 }
 
 // JumpHost describes one explicit SSH bastion. WatchSSH authenticates to the
@@ -287,7 +334,8 @@ type AlertRule struct {
 	//         port_latency, banner_failed, banner_latency, http_failed,
 	//         http_latency, dns_failed, dns_latency, traceroute_failed,
 	//         traceroute_hops, tls_failed, tls_latency, ntp_failed,
-	//         ntp_latency, ntp_offset, custom_failed.
+	//         ntp_latency, ntp_offset, custom_failed, service_failed,
+	//         process_failed, listening_failed, journal_failed, journal_count.
 	//         cert_expires_days, tls_cert_expires_days,
 	//         board_temperature, board_under_voltage, board_throttled,
 	//         board_wifi_rssi.
@@ -718,6 +766,38 @@ func applyDefaults(cfg *Config) {
 				srv.Checks.NTP[j].Timeout = 5
 			}
 		}
+		for j := range srv.Checks.Service {
+			if srv.Checks.Service[j].Timeout == 0 {
+				srv.Checks.Service[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Process {
+			if srv.Checks.Process[j].MinCount == 0 {
+				srv.Checks.Process[j].MinCount = 1
+			}
+			if srv.Checks.Process[j].Timeout == 0 {
+				srv.Checks.Process[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Listening {
+			if srv.Checks.Listening[j].Protocol == "" {
+				srv.Checks.Listening[j].Protocol = "tcp"
+			}
+			if srv.Checks.Listening[j].Timeout == 0 {
+				srv.Checks.Listening[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Journal {
+			if srv.Checks.Journal[j].Priority == "" {
+				srv.Checks.Journal[j].Priority = "err"
+			}
+			if srv.Checks.Journal[j].SinceMinutes == 0 {
+				srv.Checks.Journal[j].SinceMinutes = 10
+			}
+			if srv.Checks.Journal[j].Timeout == 0 {
+				srv.Checks.Journal[j].Timeout = 5
+			}
+		}
 	}
 }
 
@@ -795,6 +875,24 @@ func validate(cfg *Config) error {
 			}
 			if strings.TrimSpace(port.Host) == "" {
 				return fmt.Errorf("server[%d] (%q): checks.ports[%d].host is required", i, srv.Name, j)
+			}
+		}
+		for j, sc := range srv.Checks.Service {
+			if strings.TrimSpace(sc.Unit) == "" {
+				return fmt.Errorf("server[%d] (%q): checks.service[%d].unit is required", i, srv.Name, j)
+			}
+		}
+		for j, pc := range srv.Checks.Process {
+			if strings.TrimSpace(pc.Pattern) == "" {
+				return fmt.Errorf("server[%d] (%q): checks.process[%d].pattern is required", i, srv.Name, j)
+			}
+		}
+		for j, lc := range srv.Checks.Listening {
+			if lc.Port < 1 || lc.Port > 65535 {
+				return fmt.Errorf("server[%d] (%q): checks.listening[%d].port must be between 1 and 65535", i, srv.Name, j)
+			}
+			if lc.Protocol != "tcp" && lc.Protocol != "udp" {
+				return fmt.Errorf("server[%d] (%q): checks.listening[%d].protocol must be tcp or udp", i, srv.Name, j)
 			}
 		}
 	}

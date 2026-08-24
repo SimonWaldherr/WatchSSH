@@ -26,6 +26,8 @@ New integrations must use `/api/v1`. The available endpoints are:
 ```text
 GET  /api/v1/metrics
 GET  /api/v1/probes?server=<name>
+GET  /api/v1/inventory
+GET  /api/v1/security/findings
 GET  /api/v1/history/metrics?server=<name>&limit=100
 GET  /api/v1/history/alerts?limit=100
 GET  /api/v1/history/summary?server=<name>&limit=500

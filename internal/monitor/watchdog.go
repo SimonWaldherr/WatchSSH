@@ -331,6 +331,18 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 	for index, probe := range metric.CustomChecks {
 		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "custom", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("custom-%d", index+1), includeIdentifiers), OK: probe.OK})
 	}
+	for index, probe := range metric.ServiceChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "service", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("service-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.ProcessChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "process", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("process-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.ListeningChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "listening", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("listening-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.JournalChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "journal", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("journal-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
 	snapshot.ProbeCount = len(snapshot.Probes)
 	failedTypes := make(map[string]struct{})
 	for _, probe := range snapshot.Probes {

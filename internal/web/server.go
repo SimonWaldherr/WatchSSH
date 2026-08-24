@@ -751,6 +751,18 @@ func serverCheckSummary(srv config.Server) string {
 	if len(srv.Checks.Custom) > 0 {
 		parts = append(parts, fmt.Sprintf("%d custom", len(srv.Checks.Custom)))
 	}
+	if len(srv.Checks.Service) > 0 {
+		parts = append(parts, fmt.Sprintf("%d service", len(srv.Checks.Service)))
+	}
+	if len(srv.Checks.Process) > 0 {
+		parts = append(parts, fmt.Sprintf("%d process", len(srv.Checks.Process)))
+	}
+	if len(srv.Checks.Listening) > 0 {
+		parts = append(parts, fmt.Sprintf("%d listening", len(srv.Checks.Listening)))
+	}
+	if len(srv.Checks.Journal) > 0 {
+		parts = append(parts, fmt.Sprintf("%d journal", len(srv.Checks.Journal)))
+	}
 	if srv.Docker.Enabled {
 		parts = append(parts, "docker")
 	}
@@ -790,6 +802,22 @@ func probeRows(servers []config.Server) []probeRow {
 		}
 		for i, probe := range checks.Custom {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "custom", Index: i, Name: "Custom", Detail: probe.Name})
+		}
+		for i, probe := range checks.Service {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "service", Index: i, Name: "Service", Detail: probe.Unit})
+		}
+		for i, probe := range checks.Process {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "process", Index: i, Name: "Process", Detail: fmt.Sprintf("%q, min %d", probe.Pattern, probe.MinCount)})
+		}
+		for i, probe := range checks.Listening {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "listening", Index: i, Name: "Listening", Detail: fmt.Sprintf("%s/%d", probe.Protocol, probe.Port)})
+		}
+		for i, probe := range checks.Journal {
+			detail := fmt.Sprintf("priority %s, last %dm", probe.Priority, probe.SinceMinutes)
+			if probe.Unit != "" {
+				detail = probe.Unit + ", " + detail
+			}
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "journal", Index: i, Name: "Journal", Detail: detail})
 		}
 	}
 	return rows
@@ -843,6 +871,26 @@ func removeProbe(checks *config.Checks, kind string, index int) bool {
 			return false
 		}
 		checks.Custom = append(checks.Custom[:index], checks.Custom[index+1:]...)
+	case "service":
+		if index >= len(checks.Service) {
+			return false
+		}
+		checks.Service = append(checks.Service[:index], checks.Service[index+1:]...)
+	case "process":
+		if index >= len(checks.Process) {
+			return false
+		}
+		checks.Process = append(checks.Process[:index], checks.Process[index+1:]...)
+	case "listening":
+		if index >= len(checks.Listening) {
+			return false
+		}
+		checks.Listening = append(checks.Listening[:index], checks.Listening[index+1:]...)
+	case "journal":
+		if index >= len(checks.Journal) {
+			return false
+		}
+		checks.Journal = append(checks.Journal[:index], checks.Journal[index+1:]...)
 	default:
 		return false
 	}
@@ -861,6 +909,10 @@ func mergeChecks(destination *config.Checks, imported config.Checks) {
 	destination.TLS = append(destination.TLS, imported.TLS...)
 	destination.NTP = append(destination.NTP, imported.NTP...)
 	destination.Custom = append(destination.Custom, imported.Custom...)
+	destination.Service = append(destination.Service, imported.Service...)
+	destination.Process = append(destination.Process, imported.Process...)
+	destination.Listening = append(destination.Listening, imported.Listening...)
+	destination.Journal = append(destination.Journal, imported.Journal...)
 }
 
 func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
@@ -892,6 +944,38 @@ func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
 		}
 		if checks.HTTP[i].Timeout == 0 {
 			checks.HTTP[i].Timeout = 10
+		}
+	}
+	for i := range checks.Service {
+		if checks.Service[i].Timeout == 0 {
+			checks.Service[i].Timeout = 5
+		}
+	}
+	for i := range checks.Process {
+		if checks.Process[i].MinCount == 0 {
+			checks.Process[i].MinCount = 1
+		}
+		if checks.Process[i].Timeout == 0 {
+			checks.Process[i].Timeout = 5
+		}
+	}
+	for i := range checks.Listening {
+		if checks.Listening[i].Protocol == "" {
+			checks.Listening[i].Protocol = "tcp"
+		}
+		if checks.Listening[i].Timeout == 0 {
+			checks.Listening[i].Timeout = 5
+		}
+	}
+	for i := range checks.Journal {
+		if checks.Journal[i].Priority == "" {
+			checks.Journal[i].Priority = "err"
+		}
+		if checks.Journal[i].SinceMinutes == 0 {
+			checks.Journal[i].SinceMinutes = 10
+		}
+		if checks.Journal[i].Timeout == 0 {
+			checks.Journal[i].Timeout = 5
 		}
 	}
 }
@@ -1132,6 +1216,39 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			srv.Checks.Custom = append(srv.Checks.Custom, config.CustomCheck{Name: name, Command: command, ExpectedOutput: strings.TrimSpace(r.FormValue("expected_body"))})
+		case "service":
+			unit := strings.TrimSpace(r.FormValue("unit"))
+			if unit == "" {
+				buildErr = fmt.Errorf("service probes need a systemd unit")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), unit)
+			srv.Checks.Service = append(srv.Checks.Service, config.ServiceCheck{Name: name, Unit: unit, Timeout: timeout})
+		case "process":
+			pattern := strings.TrimSpace(r.FormValue("pattern"))
+			if pattern == "" {
+				buildErr = fmt.Errorf("process probes need a pattern")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), pattern)
+			srv.Checks.Process = append(srv.Checks.Process, config.ProcessCheck{Name: name, Pattern: pattern, MinCount: formInt(r, "min_count", 1), Timeout: timeout})
+		case "listening":
+			if port == 0 {
+				buildErr = fmt.Errorf("listening probes need a port")
+				return
+			}
+			protocol := defaultString(strings.ToLower(strings.TrimSpace(r.FormValue("protocol"))), "tcp")
+			if protocol != "tcp" && protocol != "udp" {
+				buildErr = fmt.Errorf("listening probe protocol must be tcp or udp")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), fmt.Sprintf("%s/%d", protocol, port))
+			srv.Checks.Listening = append(srv.Checks.Listening, config.ListeningCheck{Name: name, Port: port, Protocol: protocol, Timeout: timeout})
+		case "journal":
+			priority := defaultString(strings.TrimSpace(r.FormValue("priority")), "err")
+			unit := strings.TrimSpace(r.FormValue("unit"))
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), defaultString(unit, "journal"))
+			srv.Checks.Journal = append(srv.Checks.Journal, config.JournalCheck{Name: name, Unit: unit, Priority: priority, SinceMinutes: formInt(r, "since_minutes", 10), MaxCount: formInt(r, "max_count", 0), Timeout: timeout})
 		default:
 			buildErr = fmt.Errorf("unsupported probe type %q", kind)
 		}

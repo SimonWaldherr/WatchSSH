@@ -442,6 +442,57 @@ func TestProbeWorkspaceAddExportImportAndRemove(t *testing.T) {
 	}
 }
 
+func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	state := NewState(&config.Config{Servers: []config.Server{{Name: "app-01", Host: "app.internal", Username: "monitor"}}}, cfgPath)
+	srv := NewServer(state, ":0")
+
+	add := func(form url.Values) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/probes/add", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("add probe %v status = %d, want %d (flash: %s)", form, rec.Code, http.StatusSeeOther, rec.Header().Get("Location"))
+		}
+	}
+
+	add(url.Values{"server": {"app-01"}, "kind": {"service"}, "unit": {"nginx.service"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"process"}, "pattern": {"nginx: worker"}, "min_count": {"2"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"listening"}, "probe_port": {"443"}, "protocol": {"tcp"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"journal"}, "unit": {"sshd.service"}, "priority": {"crit"}, "since_minutes": {"15"}, "max_count": {"2"}})
+
+	checks := state.Config().Servers[0].Checks
+	if len(checks.Service) != 1 || checks.Service[0].Unit != "nginx.service" {
+		t.Fatalf("service checks = %#v", checks.Service)
+	}
+	if len(checks.Process) != 1 || checks.Process[0].Pattern != "nginx: worker" || checks.Process[0].MinCount != 2 {
+		t.Fatalf("process checks = %#v", checks.Process)
+	}
+	if len(checks.Listening) != 1 || checks.Listening[0].Port != 443 || checks.Listening[0].Protocol != "tcp" {
+		t.Fatalf("listening checks = %#v", checks.Listening)
+	}
+	if len(checks.Journal) != 1 || checks.Journal[0].Unit != "sshd.service" || checks.Journal[0].Priority != "crit" || checks.Journal[0].SinceMinutes != 15 || checks.Journal[0].MaxCount != 2 {
+		t.Fatalf("journal checks = %#v", checks.Journal)
+	}
+
+	for _, kind := range []string{"service", "process", "listening", "journal"} {
+		remove := url.Values{"server": {"app-01"}, "kind": {kind}, "index": {"0"}}
+		req := httptest.NewRequest(http.MethodPost, "/probes/remove", strings.NewReader(remove.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		srv.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("remove %s status = %d, want %d", kind, rec.Code, http.StatusSeeOther)
+		}
+	}
+	checks = state.Config().Servers[0].Checks
+	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 {
+		t.Fatalf("checks after removal = %#v", checks)
+	}
+}
+
 func TestAddAlertWithHTTPURL(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	state := NewState(&config.Config{Servers: []config.Server{{Name: "web-01", Local: true}}}, cfgPath)

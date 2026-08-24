@@ -37,6 +37,13 @@ type ServerMetrics struct {
 	Board        *BoardInfo          `json:"board,omitempty"`
 	Connectivity ConnectivityStats   `json:"connectivity"`
 	CustomChecks []CustomCheckResult `json:"custom_checks,omitempty"`
+	// ServiceChecks, ProcessChecks, ListeningChecks, and JournalChecks are
+	// populated by SSH probes built on standard Linux tools (systemctl,
+	// pgrep, ss, journalctl). They are only run when the target is Linux.
+	ServiceChecks   []ServiceResult      `json:"service_checks,omitempty"`
+	ProcessChecks   []ProcessCheckResult `json:"process_checks,omitempty"`
+	ListeningChecks []ListeningResult    `json:"listening_checks,omitempty"`
+	JournalChecks   []JournalResult      `json:"journal_checks,omitempty"`
 	// StandardTools contains non-sensitive availability facts for common POSIX,
 	// Linux, and operational tools. It is populated only when tool_inventory is enabled.
 	StandardTools map[string]bool `json:"standard_tools,omitempty"`
@@ -273,6 +280,45 @@ type CustomCheckResult struct {
 	Name   string `json:"name"`
 	Output string `json:"output"`
 	OK     bool   `json:"ok"`
+}
+
+// ServiceResult holds the outcome of a systemd unit state probe (systemctl).
+type ServiceResult struct {
+	Name  string `json:"name,omitempty"`
+	Unit  string `json:"unit"`
+	State string `json:"state,omitempty"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// ProcessCheckResult holds the outcome of a running-process probe (pgrep).
+type ProcessCheckResult struct {
+	Name     string `json:"name,omitempty"`
+	Pattern  string `json:"pattern"`
+	Count    int    `json:"count"`
+	MinCount int    `json:"min_count"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
+}
+
+// ListeningResult holds the outcome of a local listening-socket probe (ss).
+type ListeningResult struct {
+	Name     string `json:"name,omitempty"`
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
+}
+
+// JournalResult holds the outcome of a systemd journal error-count probe (journalctl).
+type JournalResult struct {
+	Name     string `json:"name,omitempty"`
+	Unit     string `json:"unit,omitempty"`
+	Priority string `json:"priority"`
+	Count    int    `json:"count"`
+	MaxCount int    `json:"max_count"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
 }
 
 // ContainerInfo represents a single running Docker container and its resource usage.

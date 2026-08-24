@@ -710,6 +710,36 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return 1, true
 			}
 		}
+	case "service_failed":
+		for _, c := range srv.ServiceChecks {
+			if !c.OK {
+				return 1, true
+			}
+		}
+	case "process_failed":
+		for _, c := range srv.ProcessChecks {
+			if !c.OK {
+				return 1, true
+			}
+		}
+	case "listening_failed":
+		for _, c := range srv.ListeningChecks {
+			if !c.OK {
+				return 1, true
+			}
+		}
+	case "journal_failed":
+		for _, c := range srv.JournalChecks {
+			if !c.OK {
+				return 1, true
+			}
+		}
+	case "journal_count":
+		for _, c := range srv.JournalChecks {
+			if cmp(float64(c.Count), rule.Operator, rule.Threshold) {
+				return float64(c.Count), true
+			}
+		}
 	}
 	return 0, false
 }

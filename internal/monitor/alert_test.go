@@ -365,6 +365,33 @@ func TestAlertManager_NetworkProbeMetrics(t *testing.T) {
 	}
 }
 
+func TestAlertManager_ToolProbeMetrics(t *testing.T) {
+	metrics := []ServerMetrics{{
+		ServerName:      "web-01",
+		ServiceChecks:   []ServiceResult{{Name: "nginx", Unit: "nginx.service", OK: false}},
+		ProcessChecks:   []ProcessCheckResult{{Name: "workers", OK: false}},
+		ListeningChecks: []ListeningResult{{Name: "https", Port: 443, OK: false}},
+		JournalChecks:   []JournalResult{{Name: "sshd", OK: false, Count: 12}},
+	}}
+	cfg := &config.Config{
+		Alerts: config.AlertsConfig{
+			Cooldown: 1,
+			Rules: []config.AlertRule{
+				{Name: "ServiceDown", Metric: "service_failed", Operator: "==", Threshold: 1},
+				{Name: "ProcessMissing", Metric: "process_failed", Operator: "==", Threshold: 1},
+				{Name: "PortNotListening", Metric: "listening_failed", Operator: "==", Threshold: 1},
+				{Name: "JournalErrors", Metric: "journal_failed", Operator: "==", Threshold: 1},
+				{Name: "JournalErrorCount", Metric: "journal_count", Operator: ">", Threshold: 10},
+			},
+		},
+	}
+
+	firings := NewAlertManager().Evaluate(metrics, cfg)
+	if len(firings) != 5 {
+		t.Fatalf("firings len = %d, want 5: %#v", len(firings), firings)
+	}
+}
+
 func TestAlertManager_BoardMetrics(t *testing.T) {
 	temp := 82.5
 	rssi := -78.0
