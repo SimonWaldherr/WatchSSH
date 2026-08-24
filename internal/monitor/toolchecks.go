@@ -55,8 +55,9 @@ func runServiceChecks(ctx context.Context, r runner, checks []config.ServiceChec
 	return results
 }
 
-// runProcessChecks counts processes whose command line matches Pattern using
-// `pgrep -c -f`.
+// runProcessChecks counts processes using pidof for an exact executable name,
+// then pgrep -f or ps + grep as portable fallbacks. This permits checks for
+// classic daemons without requiring systemd or a WatchSSH agent.
 func runProcessChecks(ctx context.Context, r runner, checks []config.ProcessCheck) []ProcessCheckResult {
 	results := make([]ProcessCheckResult, 0, len(checks))
 	for _, pc := range checks {
@@ -64,15 +65,19 @@ func runProcessChecks(ctx context.Context, r runner, checks []config.ProcessChec
 		if minCount <= 0 {
 			minCount = 1
 		}
+		pattern := pc.Pattern
+		if pattern == "" {
+			pattern = pc.PIDOf
+		}
 		command := fmt.Sprintf(
-			"if command -v pgrep >/dev/null 2>&1; then pgrep -c -f %s 2>/dev/null; true; elif command -v ps >/dev/null 2>&1 && command -v grep >/dev/null 2>&1; then ps ax -o command= 2>/dev/null | grep -E -c -e %s || true; else printf unsupported; fi",
-			shellSingleQuote(pc.Pattern), shellSingleQuote(pc.Pattern),
+			"if [ -n %s ] && command -v pidof >/dev/null 2>&1; then set -- $(pidof %s 2>/dev/null || true); printf '%%s' \"$#\"; elif command -v pgrep >/dev/null 2>&1; then pgrep -c -f %s 2>/dev/null; true; elif command -v ps >/dev/null 2>&1 && command -v grep >/dev/null 2>&1; then ps ax -o command= 2>/dev/null | grep -E -c -e %s || true; else printf unsupported; fi",
+			shellSingleQuote(pc.PIDOf), shellSingleQuote(pc.PIDOf), shellSingleQuote(pattern), shellSingleQuote(pattern),
 		)
 		out, err := runToolProbe(ctx, r, pc.Timeout, command)
 		trimmed := strings.TrimSpace(out)
-		result := ProcessCheckResult{Name: pc.Name, Pattern: pc.Pattern, MinCount: minCount}
+		result := ProcessCheckResult{Name: pc.Name, Pattern: pattern, PIDOf: pc.PIDOf, MinCount: minCount}
 		if trimmed == "unsupported" {
-			result.Error = "pgrep is not available on the target"
+			result.Error = "neither pidof, pgrep nor ps + grep is available on the target"
 			results = append(results, result)
 			continue
 		}
@@ -89,11 +94,18 @@ func runProcessChecks(ctx context.Context, r runner, checks []config.ProcessChec
 		result.Count = count
 		result.OK = count >= minCount
 		if !result.OK {
-			result.Error = fmt.Sprintf("%d process(es) matched %q, want >= %d", count, pc.Pattern, minCount)
+			result.Error = fmt.Sprintf("%d process(es) matched %s, want >= %d", count, processCheckReference(result), minCount)
 		}
 		results = append(results, result)
 	}
 	return results
+}
+
+func processCheckReference(result ProcessCheckResult) string {
+	if result.PIDOf != "" {
+		return "pidof " + strconv.Quote(result.PIDOf)
+	}
+	return strconv.Quote(result.Pattern)
 }
 
 // runListeningChecks confirms a local socket is in LISTEN state on the

@@ -83,6 +83,7 @@ func main() {
 		log.Fatalf("Failed to initialize history store: %v", err)
 	}
 	m := monitor.NewWithStore(cfg, notifyFunc, historyStore)
+	m.SetJobNotify(state.UpdateJobs)
 
 	if *once {
 		// Single-poll mode: collect once, write output, exit.

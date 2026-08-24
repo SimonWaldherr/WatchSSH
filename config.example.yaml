@@ -364,6 +364,29 @@ servers:
 
 
 # -----------------------------------------------------------------------------
+# Scheduled local jobs and SFTP artifact uploads
+# -----------------------------------------------------------------------------
+
+# Jobs run on the WatchSSH host, not on a target. Use this for recurring local
+# preparation work, then upload explicit resulting files through the target's
+# existing SSH/SFTP connection, authentication, bastion, and host-key policy.
+# A transfer is uploaded to a sibling .partial file and renamed only after it
+# finishes successfully, so readers never see a truncated published artifact.
+# jobs:
+#   - name: update-bavaria-osm
+#     enabled: true
+#     schedule: "15 3 * * 1" # five-field cron or @daily; local WatchSSH time
+#     timeout: 7200
+#     working_directory: /Users/watchssh/osm
+#     command: ./refresh-bavaria.sh
+#     uploads:
+#       - server: hetzner-osm # must name a configured non-local SSH target
+#         source: /Users/watchssh/osm/out/bavaria.osm.pbf
+#         destination: /srv/www/osm/bavaria.osm.pbf
+#         create_directories: true
+
+
+# -----------------------------------------------------------------------------
 # Alerts
 # -----------------------------------------------------------------------------
 
@@ -600,6 +623,22 @@ alerts:
   #     rules: [HARPHealthDown]
   #     targets: [harp-proxy]
   #     command: "sudo -n systemctl restart harp"
+  #     verify_command: "systemctl is-active --quiet harp"
+  #     verify_delay: 2
+  #
+  #   # Agentless process recovery for classic init-based Apache. The matching
+  #   # alert rule must use metric: process_failed and probe: apache-running.
+  #   # Use httpd instead of apache2 on distributions that use that executable.
+  #   - name: restart-apache-if-missing
+  #     enabled: true
+  #     rules: [ApacheNotRunning]
+  #     command: "/etc/init.d/apache2 restart"
+  #     verify_command: "pidof apache2 >/dev/null"
+  #     verify_delay: 2
+  #     timeout: 30
+  #     cooldown: 300
+  #     max_attempts: 3
+  #     window: 3600
 
   # Optional AI advisor. It is called only for new alert firings and sends a
   # reduced probe snapshot to an OpenAI-compatible Chat Completions endpoint.

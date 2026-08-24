@@ -572,6 +572,127 @@ servers:
 	}
 }
 
+func TestLoad_PIDOfProcessProbeAndRecoveryVerification(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: web-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      process:
+        - pidof: apache2
+alerts:
+  remediations:
+    - name: restart-apache
+      enabled: true
+      command: /etc/init.d/apache2 restart
+      verify_command: pidof apache2 >/dev/null
+      verify_delay: 2
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	process := cfg.Servers[0].Checks.Process[0]
+	if process.Name != "apache2" || process.PIDOf != "apache2" || process.Timeout != 5 {
+		t.Fatalf("pidof process = %#v", process)
+	}
+	recovery := cfg.Alerts.Remediations[0]
+	if recovery.VerifyTimeout != recovery.Timeout || recovery.VerifyDelay != 2 {
+		t.Fatalf("recovery verification defaults = %#v", recovery)
+	}
+}
+
+func TestLoad_RejectsInvalidRecoveryVerification(t *testing.T) {
+	cases := []string{
+		`
+servers:
+  - host: 10.20.0.10
+    username: monitor
+alerts:
+  remediations:
+    - name: restart-app
+      command: service app restart
+      verify_timeout: 5
+`,
+		`
+servers:
+  - host: 10.20.0.10
+    username: monitor
+alerts:
+  remediations:
+    - name: restart-app
+      command: service app restart
+      verify_command: pidof app
+      verify_delay: -1
+`,
+	}
+	for i, yamlDoc := range cases {
+		if _, err := config.Load(writeConfig(t, yamlDoc)); err == nil {
+			t.Fatalf("case %d: expected invalid recovery verification configuration", i)
+		}
+	}
+}
+
+func TestLoad_ScheduledArtifactJob(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: hetzner-osm
+    host: 192.0.2.10
+    username: uploader
+jobs:
+  - name: update-bavaria-osm
+    enabled: true
+    schedule: "15 3 * * 1"
+    working_directory: /Users/ops/osm
+    command: ./refresh-osm.sh
+    uploads:
+      - server: hetzner-osm
+        source: /Users/ops/osm/out/bavaria.osm.pbf
+        destination: /srv/osm/bavaria.osm.pbf
+        create_directories: true
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	job := cfg.Jobs[0]
+	if job.Timeout != 3600 || !job.Enabled || job.Uploads[0].Server != "hetzner-osm" || !job.Uploads[0].CreateDirectories {
+		t.Fatalf("scheduled job = %#v", job)
+	}
+}
+
+func TestLoad_RejectsInvalidScheduledArtifactJob(t *testing.T) {
+	cases := []string{
+		`
+servers:
+  - name: local
+    local: true
+jobs:
+  - name: upload
+    schedule: bad schedule
+    command: true
+`,
+		`
+servers:
+  - name: local
+    local: true
+jobs:
+  - name: upload
+    schedule: "0 3 * * *"
+    uploads:
+      - server: local
+        source: result.osm.pbf
+        destination: /srv/result.osm.pbf
+`,
+	}
+	for i, yamlDoc := range cases {
+		if _, err := config.Load(writeConfig(t, yamlDoc)); err == nil {
+			t.Fatalf("case %d: expected invalid scheduled job", i)
+		}
+	}
+}
+
 func TestLoad_RejectsRelativeUnixProbePaths(t *testing.T) {
 	path := writeConfig(t, `
 servers:
@@ -584,6 +705,48 @@ servers:
 `)
 	if _, err := config.Load(path); err == nil {
 		t.Fatal("expected relative Unix probe path to be rejected")
+	}
+}
+
+func TestLoad_RejectsInvalidPortableUnixProbeLimits(t *testing.T) {
+	cases := []string{
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      file:
+        - path: /run/app.pid
+          timeout: -1
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      directory:
+        - path: /var/cache/app
+          timeout: -1
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      log:
+        - path: /var/log/app.log
+          pattern: ERROR
+          timeout: -1
+`,
+	}
+	for i, yamlDoc := range cases {
+		path := writeConfig(t, yamlDoc)
+		if _, err := config.Load(path); err == nil {
+			t.Fatalf("case %d: expected invalid portable Unix probe limits to be rejected", i)
+		}
 	}
 }
 

@@ -93,6 +93,19 @@ func TestRunProcessChecks(t *testing.T) {
 	}
 }
 
+func TestRunProcessChecksUsesPIDOfBeforePortableFallbacks(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		if !strings.Contains(cmd, "pidof 'apache2'") {
+			t.Fatalf("pidof command = %q", cmd)
+		}
+		return "2\n", nil
+	}}
+	results := runProcessChecks(context.Background(), r, []config.ProcessCheck{{Name: "apache", PIDOf: "apache2", MinCount: 1}})
+	if len(results) != 1 || !results[0].OK || results[0].Count != 2 || results[0].PIDOf != "apache2" {
+		t.Fatalf("pidof result = %+v", results)
+	}
+}
+
 func TestRunListeningChecks(t *testing.T) {
 	r := stubRunner{fn: func(cmd string) (string, error) {
 		switch {

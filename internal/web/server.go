@@ -211,6 +211,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("/probes/export", s.handleExportProbes)
 	s.mux.HandleFunc("/probes/import", s.handleImportProbes)
 	s.mux.HandleFunc("/servers", s.handleServers)
+	s.mux.HandleFunc("/jobs", s.handleJobs)
 	s.mux.HandleFunc("/alerts/add", s.handleAddAlert)
 	s.mux.HandleFunc("/alerts/remove", s.handleRemoveAlert)
 	s.mux.HandleFunc("/runbooks/review", s.handleReviewRunbook)
@@ -298,6 +299,32 @@ type historyData struct {
 	ServerFilter   string
 	ServerNames    []string
 	Error          string
+}
+
+// jobsData provides an operational view of configuration-owned local jobs.
+// Commands and output are deliberately excluded: the dashboard is a status
+// surface, not a shell or a place to expose potentially sensitive data.
+type jobsData struct {
+	Title   string
+	Page    string
+	Refresh bool
+	Jobs    []config.ScheduledJobConfig
+	Results []monitor.JobResult
+}
+
+func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Redirect(w, r, "/jobs", http.StatusSeeOther)
+		return
+	}
+	cfg := s.state.Config()
+	s.render(w, "jobs-page", jobsData{
+		Title:   "Scheduled Jobs",
+		Page:    "jobs",
+		Refresh: true,
+		Jobs:    cfg.Jobs,
+		Results: s.state.JobResults(),
+	})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -829,7 +856,11 @@ func probeRows(servers []config.Server) []probeRow {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "service", Index: i, Name: "Service", Detail: probe.Unit})
 		}
 		for i, probe := range checks.Process {
-			rows = append(rows, probeRow{Server: srv.Name, Kind: "process", Index: i, Name: "Process", Detail: fmt.Sprintf("%q, min %d", probe.Pattern, probe.MinCount)})
+			detail := fmt.Sprintf("%q, min %d", probe.Pattern, probe.MinCount)
+			if probe.PIDOf != "" {
+				detail = fmt.Sprintf("pidof %q, min %d", probe.PIDOf, probe.MinCount)
+			}
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "process", Index: i, Name: "Process", Detail: detail})
 		}
 		for i, probe := range checks.Listening {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "listening", Index: i, Name: "Listening", Detail: fmt.Sprintf("%s/%d", probe.Protocol, probe.Port)})
@@ -1012,6 +1043,9 @@ func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
 		}
 	}
 	for i := range checks.Process {
+		if checks.Process[i].Name == "" {
+			checks.Process[i].Name = defaultString(checks.Process[i].PIDOf, checks.Process[i].Pattern)
+		}
 		if checks.Process[i].MinCount == 0 {
 			checks.Process[i].MinCount = 1
 		}
@@ -1332,13 +1366,13 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), unit)
 			srv.Checks.Service = append(srv.Checks.Service, config.ServiceCheck{Name: name, Unit: unit, Timeout: timeout})
 		case "process":
-			pattern := strings.TrimSpace(r.FormValue("pattern"))
-			if pattern == "" {
-				buildErr = fmt.Errorf("process probes need a pattern")
+			pattern, pidof := strings.TrimSpace(r.FormValue("pattern")), strings.TrimSpace(r.FormValue("pidof"))
+			if pattern == "" && pidof == "" {
+				buildErr = fmt.Errorf("process probes need a pattern or pidof executable")
 				return
 			}
-			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), pattern)
-			srv.Checks.Process = append(srv.Checks.Process, config.ProcessCheck{Name: name, Pattern: pattern, MinCount: formInt(r, "min_count", 1), Timeout: timeout})
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), defaultString(pidof, pattern))
+			srv.Checks.Process = append(srv.Checks.Process, config.ProcessCheck{Name: name, Pattern: pattern, PIDOf: pidof, MinCount: formInt(r, "min_count", 1), Timeout: timeout})
 		case "listening":
 			if port == 0 {
 				buildErr = fmt.Errorf("listening probes need a port")
@@ -1362,8 +1396,13 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 				buildErr = fmt.Errorf("file probes need an absolute path")
 				return
 			}
+			minSize, maxSize := formNonNegativeInt64(r, "min_size_bytes"), formNonNegativeInt64(r, "max_size_bytes")
+			if maxSize > 0 && minSize > maxSize {
+				buildErr = fmt.Errorf("file minimum size cannot exceed maximum size")
+				return
+			}
 			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
-			srv.Checks.File = append(srv.Checks.File, config.FileCheck{Name: name, Path: path, MaxAgeSeconds: formNonNegativeInt(r, "max_age_seconds"), MinSizeBytes: formNonNegativeInt64(r, "min_size_bytes"), MaxSizeBytes: formNonNegativeInt64(r, "max_size_bytes"), Timeout: timeout})
+			srv.Checks.File = append(srv.Checks.File, config.FileCheck{Name: name, Path: path, MaxAgeSeconds: formNonNegativeInt(r, "max_age_seconds"), MinSizeBytes: minSize, MaxSizeBytes: maxSize, Timeout: timeout})
 		case "directory":
 			path := strings.TrimSpace(r.FormValue("path"))
 			if !isAbsoluteRemotePath(path) {

@@ -106,38 +106,96 @@ func (rm *RemediationManager) allow(remediation config.RemediationConfig, target
 func runRemediation(cfg *config.Config, target config.Server, remediation config.RemediationConfig) RemediationResult {
 	startedAt := time.Now()
 	result := RemediationResult{Name: remediation.Name, Target: target.Name, StartedAt: startedAt}
-	timeout := time.Duration(remediation.Timeout) * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	var (
-		output string
-		err    error
-	)
+	var commandRunner runner
+	closeRunner := func() {}
 	if target.Local {
-		output, err = (&localRunner{}).Run(ctx, remediation.Command)
+		commandRunner = &localRunner{}
 	} else {
-		client, connectErr := sshclient.New(ctx, target, cfg, timeout)
+		connectTimeout := time.Duration(remediation.Timeout) * time.Second
+		connectCtx, cancelConnect := context.WithTimeout(context.Background(), connectTimeout)
+		client, connectErr := sshclient.New(connectCtx, target, cfg, connectTimeout)
+		cancelConnect()
 		if connectErr != nil {
-			err = fmt.Errorf("connecting over SSH: %w", connectErr)
-		} else {
-			output, err = client.Run(ctx, remediation.Command)
-			_ = client.Close()
+			result.DurationMs = durationMilliseconds(startedAt)
+			result.Error = fmt.Sprintf("connecting over SSH: %v", connectErr)
+			result.Status = "failed"
+			return result
 		}
+		commandRunner = client
+		closeRunner = func() { _ = client.Close() }
 	}
-	result.DurationMs = float64(time.Since(startedAt).Microseconds()) / 1000
-	result.Output = abbreviatedRemediationOutput(output)
+	defer closeRunner()
+
+	recoveryOutput, err := runRemediationCommand(commandRunner, remediation.Command, remediation.Timeout)
+	result.Output = abbreviatedRemediationOutput(recoveryOutput)
 	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			result.Error = fmt.Sprintf("remediation timed out after %s", timeout)
-		} else {
-			result.Error = err.Error()
-		}
+		result.DurationMs = durationMilliseconds(startedAt)
+		result.Error = remediationCommandError("recovery", err, remediation.Timeout)
 		result.Status = "failed"
 		return result
 	}
+
+	if strings.TrimSpace(remediation.VerifyCommand) != "" {
+		if err := waitForRemediationVerification(remediation.VerifyDelay); err != nil {
+			result.DurationMs = durationMilliseconds(startedAt)
+			result.Error = err.Error()
+			result.Status = "failed"
+			return result
+		}
+		verificationOutput, verifyErr := runRemediationCommand(commandRunner, remediation.VerifyCommand, remediation.VerifyTimeout)
+		result.Output = combinedRemediationOutput(recoveryOutput, verificationOutput)
+		if verifyErr != nil {
+			result.DurationMs = durationMilliseconds(startedAt)
+			result.Error = remediationCommandError("verification", verifyErr, remediation.VerifyTimeout)
+			result.Status = "failed"
+			return result
+		}
+		result.Verified = true
+	}
+
+	result.DurationMs = durationMilliseconds(startedAt)
 	result.Status = "succeeded"
 	return result
+}
+
+func runRemediationCommand(r runner, command string, timeoutSeconds int) (string, error) {
+	timeout := time.Duration(timeoutSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	output, err := r.Run(ctx, command)
+	if ctx.Err() == context.DeadlineExceeded {
+		return output, context.DeadlineExceeded
+	}
+	return output, err
+}
+
+func waitForRemediationVerification(delaySeconds int) error {
+	if delaySeconds <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(time.Duration(delaySeconds) * time.Second)
+	defer timer.Stop()
+	<-timer.C
+	return nil
+}
+
+func remediationCommandError(step string, err error, timeoutSeconds int) string {
+	if err == context.DeadlineExceeded {
+		return fmt.Sprintf("%s timed out after %ds", step, timeoutSeconds)
+	}
+	return fmt.Sprintf("%s command failed: %v", step, err)
+}
+
+func combinedRemediationOutput(recoveryOutput, verificationOutput string) string {
+	recoveryOutput = strings.TrimSpace(recoveryOutput)
+	verificationOutput = strings.TrimSpace(verificationOutput)
+	if verificationOutput == "" {
+		return abbreviatedRemediationOutput(recoveryOutput)
+	}
+	if recoveryOutput == "" {
+		return abbreviatedRemediationOutput("verification:\n" + verificationOutput)
+	}
+	return abbreviatedRemediationOutput("recovery:\n" + recoveryOutput + "\nverification:\n" + verificationOutput)
 }
 
 func abbreviatedRemediationOutput(output string) string {

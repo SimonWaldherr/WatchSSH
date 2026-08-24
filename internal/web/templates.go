@@ -103,6 +103,7 @@ const allTemplates = `
   <nav aria-label="Primary navigation" data-i18n-aria-label="primary_navigation">
     <a href="/" {{if eq .Page "dashboard"}}class="active" aria-current="page"{{end}} data-i18n="dashboard">Dashboard</a>
     <a href="/servers" {{if eq .Page "servers"}}class="active" aria-current="page"{{end}} data-i18n="servers">Servers</a>
+    <a href="/jobs" {{if eq .Page "jobs"}}class="active" aria-current="page"{{end}}>Jobs</a>
     <a href="/alerts" {{if eq .Page "alerts"}}class="active" aria-current="page"{{end}} data-i18n="alerts">Alerts</a>
     <a href="/history" {{if eq .Page "history"}}class="active" aria-current="page"{{end}} data-i18n="history">History</a>
     <a href="/config" {{if eq .Page "config"}}class="active" aria-current="page"{{end}} data-i18n="configuration">Configuration</a>
@@ -305,10 +306,55 @@ const allTemplates = `
   <div class="msg">{{.Message}}</div>
   <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}}</div>
   {{with .Watchdog}}<div class="ts">AI advisor {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .RecommendedRemediations}}<div class="ts">Operator review required for recommended runbooks: {{range .RecommendedRemediations}}{{.}} {{end}}</div>{{end}}{{if .RejectedRemediations}}<div class="ts">Unapproved AI recommendations ignored: {{range .RejectedRemediations}}{{.}} {{end}}</div>{{end}}{{end}}
-  {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
+  {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Verified}} (verified){{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
 </div>
 {{end}}
 {{end}}
+{{template "ftr" .}}
+{{end}}
+
+{{define "jobs-page"}}
+{{template "hdr" .}}
+<div class="page-intro">
+  <div><h2>Scheduled Jobs</h2><p>Local preparation jobs and declared SFTP artifact transfers.</p></div>
+  <span style="font-size:.8rem;color:var(--text-faint)">Updated every 30 seconds</span>
+</div>
+
+<div class="section">
+  <div class="form-section-title"><h3>Configured Jobs</h3><span>{{len .Jobs}} configured</span></div>
+  {{if .Jobs}}
+  <div class="table-scroll"><table>
+    <thead><tr><th>Name</th><th>Schedule</th><th>State</th><th>Timeout</th><th>Artifacts</th></tr></thead>
+    <tbody>{{range .Jobs}}
+      <tr>
+        <td><code>{{.Name}}</code>{{if .RunOnStart}} <span class="pill">run on start</span>{{end}}</td>
+        <td><code>{{.Schedule}}</code></td>
+        <td>{{if .Enabled}}<span class="dot dot-ok"></span>Enabled{{else}}<span class="dot dot-unk"></span>Disabled{{end}}</td>
+        <td>{{.Timeout}}s</td>
+        <td>{{if .Uploads}}{{range .Uploads}}<span class="pill"><code>{{.Server}}:{{.Destination}}</code></span>{{end}}{{else}}<span class="text-faint">none</span>{{end}}</td>
+      </tr>
+    {{end}}</tbody>
+  </table></div>
+  {{else}}<p class="empty">No scheduled jobs are configured.</p>{{end}}
+</div>
+
+<div class="section">
+  <div class="form-section-title"><h3>Recent Runs</h3><span>Newest first; command output is not retained.</span></div>
+  {{if .Results}}
+  <div class="table-scroll"><table>
+    <thead><tr><th>Started</th><th>Job</th><th>Outcome</th><th>Duration</th><th>Transfers</th></tr></thead>
+    <tbody>{{range .Results}}
+      <tr>
+        <td>{{.StartedAt.Format "2006-01-02 15:04:05 MST"}}</td>
+        <td><code>{{.Name}}</code></td>
+        <td>{{if eq .Status "succeeded"}}<span class="dot dot-ok"></span><span class="text-ok">Succeeded</span>{{else if eq .Status "cancelled"}}<span class="dot dot-unk"></span>Cancelled{{else}}<span class="dot dot-err"></span><span class="text-error">Failed</span>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td>
+        <td>{{printf "%.0f" .DurationMs}} ms</td>
+        <td>{{if .Uploads}}{{range .Uploads}}<div><code>{{.Server}}:{{.Destination}}</code>{{if .Error}}<div class="m-error">{{.Error}}</div>{{else}} <span class="text-faint">{{fmtBytes .Bytes}}</span>{{end}}</div>{{end}}{{else}}<span class="text-faint">none</span>{{end}}</td>
+      </tr>
+    {{end}}</tbody>
+  </table></div>
+  {{else}}<p class="empty">No scheduled job has completed in this WatchSSH process yet.</p>{{end}}
+</div>
 {{template "ftr" .}}
 {{end}}
 
@@ -700,7 +746,7 @@ const allTemplates = `
     <thead><tr><th>Tool</th><th>Probe</th><th>Target</th><th>Measurement</th><th>Status</th></tr></thead>
     <tbody>
     {{range .Metrics.ServiceChecks}}<tr><td><code>systemctl / service</code></td><td>{{.Name}}</td><td>{{.Unit}}</td><td>{{.State}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Service probe failed" "service_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for service probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
-    {{range .Metrics.ProcessChecks}}<tr><td><code>pgrep / ps + grep</code></td><td>{{.Name}}</td><td>{{.Pattern}}</td><td>{{.Count}} matching process(es), want >= {{.MinCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Process probe failed" "process_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for process probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.ProcessChecks}}<tr><td><code>pidof / pgrep / ps</code></td><td>{{.Name}}</td><td>{{if .PIDOf}}pidof {{.PIDOf}}{{else}}{{.Pattern}}{{end}}</td><td>{{.Count}} matching process(es), want >= {{.MinCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Process probe failed" "process_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for process probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.ListeningChecks}}<tr><td><code>ss / netstat</code></td><td>{{.Name}}</td><td>{{.Protocol}}/{{.Port}}</td><td>local listener</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Listening port probe failed" "listening_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for listener probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.JournalChecks}}<tr><td><code>journalctl</code></td><td>{{.Name}}</td><td>{{if .Unit}}{{.Unit}}{{else}}system journal{{end}}</td><td>{{.Count}} entries, max {{.MaxCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Journal probe failed" "journal_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for journal probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.FileChecks}}<tr><td><code>test + stat</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{fmtBytes .SizeBytes}}, age {{.AgeSeconds}}s</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "File probe failed" "file_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for file probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
@@ -866,9 +912,10 @@ const allTemplates = `
 	  </div>
       <div class="form-row w3">
         <div><label>Systemd unit (service / journal)</label><input type="text" name="unit" placeholder="nginx.service"></div>
-        <div><label>Process pattern (pgrep -f)</label><input type="text" name="pattern" placeholder="nginx: worker process"></div>
+        <div><label>Process pattern (pgrep -f fallback)</label><input type="text" name="pattern" placeholder="nginx: worker process"></div>
         <div><label>Process min count</label><input type="number" name="min_count" min="1" value="1"></div>
       </div>
+      <div class="form-row mode-advanced"><div><label>Process executable (pidof first)</label><input type="text" name="pidof" placeholder="apache2 or httpd"></div><div></div></div>
       <div class="form-row w3">
         <div><label>Listening protocol</label><select name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select></div>
         <div><label>Journal priority</label><input type="text" name="priority" value="err" placeholder="emerg, crit, err, warning"></div>
@@ -1217,7 +1264,7 @@ const allTemplates = `
     <div class="msg">{{.Message}}</div>
     <div class="ts">{{.FiredAt.Format "2006-01-02 15:04:05 MST"}} — server: {{.Server}}</div>
     {{with .Watchdog}}<div class="ts">AI advisor {{.Model}}: {{.Status}}{{if .Severity}} ({{.Severity}}){{end}}{{if .Summary}} - {{.Summary}}{{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{if .RecommendedRemediations}}<div class="ts">Operator review required for recommended runbooks: {{range .RecommendedRemediations}}{{.}} {{end}}</div>{{end}}{{if .RejectedRemediations}}<div class="ts">Unapproved AI recommendations ignored: {{range .RejectedRemediations}}{{.}} {{end}}</div>{{end}}{{end}}
-    {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
+    {{range .Remediations}}<div class="ts">Remediation {{.Name}} on {{.Target}}: {{.Status}}{{if .Verified}} (verified){{end}}{{if .Error}} ({{.Error}}){{end}}</div>{{end}}
   </div>
   {{end}}
   {{else}}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/robfig/cron/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
@@ -179,12 +180,17 @@ type ServiceCheck struct {
 	Timeout int    `yaml:"timeout"` // seconds (default 5)
 }
 
-// ProcessCheck verifies at least MinCount running processes match Pattern
-// using `pgrep -f`.
+// ProcessCheck verifies at least MinCount processes are running. Pattern is
+// matched against the full command line with pgrep -f (or ps + grep as a
+// fallback). PIDOf optionally selects one executable name through pidof,
+// which is useful for classic daemons such as apache2 or httpd.
 type ProcessCheck struct {
 	Name string `yaml:"name"`
 	// Pattern is matched against the full command line, like `pgrep -f`.
-	Pattern  string `yaml:"pattern"`
+	Pattern string `yaml:"pattern"`
+	// PIDOf is an optional process executable name passed to pidof first.
+	// WatchSSH falls back to Pattern when pidof is unavailable.
+	PIDOf    string `yaml:"pidof"`
 	MinCount int    `yaml:"min_count"` // default 1
 	Timeout  int    `yaml:"timeout"`   // seconds (default 5)
 }
@@ -487,10 +493,16 @@ type RemediationConfig struct {
 	Servers     []string `yaml:"servers"`
 	Targets     []string `yaml:"targets"`
 	Command     string   `yaml:"command"`
-	Timeout     int      `yaml:"timeout"`      // seconds, default 30
-	Cooldown    int      `yaml:"cooldown"`     // seconds, default 300
-	MaxAttempts int      `yaml:"max_attempts"` // default 3
-	Window      int      `yaml:"window"`       // seconds, default 3600
+	Timeout     int      `yaml:"timeout"` // seconds, default 30
+	// VerifyCommand runs after Command exits successfully. It should return
+	// zero only when the original condition has recovered, for example
+	// `pidof apache2 >/dev/null` or `systemctl is-active --quiet nginx`.
+	VerifyCommand string `yaml:"verify_command"`
+	VerifyDelay   int    `yaml:"verify_delay"`   // seconds, default 0
+	VerifyTimeout int    `yaml:"verify_timeout"` // seconds, defaults to Timeout
+	Cooldown      int    `yaml:"cooldown"`       // seconds, default 300
+	MaxAttempts   int    `yaml:"max_attempts"`   // default 3
+	Window        int    `yaml:"window"`         // seconds, default 3600
 }
 
 // WatchdogConfig sends a reduced, probe-focused alert snapshot to an
@@ -523,6 +535,30 @@ type WatchdogConfig struct {
 	SystemPrompt        string   `yaml:"system_prompt"`
 }
 
+// JobUploadConfig describes one local artifact uploaded to a configured SSH
+// target via SFTP after a scheduled job has completed successfully.
+type JobUploadConfig struct {
+	Server            string `yaml:"server"`
+	Source            string `yaml:"source"`
+	Destination       string `yaml:"destination"`
+	CreateDirectories bool   `yaml:"create_directories"`
+}
+
+// ScheduledJobConfig runs a bounded shell command on the WatchSSH host and
+// optionally uploads resulting artifacts through configured SSH targets.
+// Schedule accepts a standard five-field cron expression or descriptors such
+// as @daily. Jobs are disabled unless Enabled is explicitly true.
+type ScheduledJobConfig struct {
+	Name             string            `yaml:"name"`
+	Enabled          bool              `yaml:"enabled"`
+	Schedule         string            `yaml:"schedule"`
+	RunOnStart       bool              `yaml:"run_on_start"`
+	Command          string            `yaml:"command"`
+	WorkingDirectory string            `yaml:"working_directory"`
+	Timeout          int               `yaml:"timeout"` // seconds, default 3600
+	Uploads          []JobUploadConfig `yaml:"uploads"`
+}
+
 // Config is the root configuration structure.
 type Config struct {
 	// KnownHostsPath overrides the default ~/.ssh/known_hosts file.
@@ -543,12 +579,13 @@ type Config struct {
 	// Workers is the maximum number of servers polled concurrently.
 	// Default: 0, which means one worker per server (unbounded).
 	// Set to a positive integer to cap concurrency (e.g. 10).
-	Workers int           `yaml:"workers"`
-	Output  Output        `yaml:"output"`
-	Storage StorageConfig `yaml:"storage"`
-	Web     WebConfig     `yaml:"web"`
-	Secrets SecretsConfig `yaml:"secrets"`
-	Alerts  AlertsConfig  `yaml:"alerts"`
+	Workers int                  `yaml:"workers"`
+	Output  Output               `yaml:"output"`
+	Storage StorageConfig        `yaml:"storage"`
+	Web     WebConfig            `yaml:"web"`
+	Secrets SecretsConfig        `yaml:"secrets"`
+	Alerts  AlertsConfig         `yaml:"alerts"`
+	Jobs    []ScheduledJobConfig `yaml:"jobs"`
 }
 
 // IsStrictHostKeyChecking returns true unless explicitly set to false.
@@ -644,6 +681,9 @@ func applyDefaults(cfg *Config) {
 		if remediation.Timeout == 0 {
 			remediation.Timeout = 30
 		}
+		if remediation.VerifyCommand != "" && remediation.VerifyTimeout == 0 {
+			remediation.VerifyTimeout = remediation.Timeout
+		}
 		if remediation.Cooldown == 0 {
 			remediation.Cooldown = 300
 		}
@@ -652,6 +692,11 @@ func applyDefaults(cfg *Config) {
 		}
 		if remediation.Window == 0 {
 			remediation.Window = 3600
+		}
+	}
+	for i := range cfg.Jobs {
+		if cfg.Jobs[i].Timeout == 0 {
+			cfg.Jobs[i].Timeout = 3600
 		}
 	}
 	if cfg.Alerts.Watchdog != nil {
@@ -813,6 +858,12 @@ func applyDefaults(cfg *Config) {
 			}
 		}
 		for j := range srv.Checks.Process {
+			if srv.Checks.Process[j].Name == "" {
+				srv.Checks.Process[j].Name = srv.Checks.Process[j].PIDOf
+				if srv.Checks.Process[j].Name == "" {
+					srv.Checks.Process[j].Name = srv.Checks.Process[j].Pattern
+				}
+			}
 			if srv.Checks.Process[j].MinCount == 0 {
 				srv.Checks.Process[j].MinCount = 1
 			}
@@ -951,8 +1002,11 @@ func validate(cfg *Config) error {
 			}
 		}
 		for j, pc := range srv.Checks.Process {
-			if strings.TrimSpace(pc.Pattern) == "" {
-				return fmt.Errorf("server[%d] (%q): checks.process[%d].pattern is required", i, srv.Name, j)
+			if strings.TrimSpace(pc.Pattern) == "" && strings.TrimSpace(pc.PIDOf) == "" {
+				return fmt.Errorf("server[%d] (%q): checks.process[%d] requires pattern or pidof", i, srv.Name, j)
+			}
+			if pc.MinCount < 1 || pc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.process[%d] min_count and timeout must be greater than zero", i, srv.Name, j)
 			}
 		}
 		for j, lc := range srv.Checks.Listening {
@@ -967,7 +1021,7 @@ func validate(cfg *Config) error {
 			if !isAbsoluteProbePath(fc.Path) {
 				return fmt.Errorf("server[%d] (%q): checks.file[%d].path must be an absolute path", i, srv.Name, j)
 			}
-			if fc.MaxAgeSeconds < 0 || fc.MinSizeBytes < 0 || fc.MaxSizeBytes < 0 || (fc.MaxSizeBytes > 0 && fc.MinSizeBytes > fc.MaxSizeBytes) {
+			if fc.Timeout < 1 || fc.MaxAgeSeconds < 0 || fc.MinSizeBytes < 0 || fc.MaxSizeBytes < 0 || (fc.MaxSizeBytes > 0 && fc.MinSizeBytes > fc.MaxSizeBytes) {
 				return fmt.Errorf("server[%d] (%q): checks.file[%d] has invalid limits", i, srv.Name, j)
 			}
 		}
@@ -975,7 +1029,7 @@ func validate(cfg *Config) error {
 			if !isAbsoluteProbePath(dc.Path) {
 				return fmt.Errorf("server[%d] (%q): checks.directory[%d].path must be an absolute path", i, srv.Name, j)
 			}
-			if dc.MaxUsageBytes < 0 || dc.MaxFileCount < 0 {
+			if dc.Timeout < 1 || dc.MaxUsageBytes < 0 || dc.MaxFileCount < 0 {
 				return fmt.Errorf("server[%d] (%q): checks.directory[%d] has invalid limits", i, srv.Name, j)
 			}
 		}
@@ -983,7 +1037,7 @@ func validate(cfg *Config) error {
 			if !isAbsoluteProbePath(lc.Path) || strings.TrimSpace(lc.Pattern) == "" {
 				return fmt.Errorf("server[%d] (%q): checks.log[%d] requires an absolute path and pattern", i, srv.Name, j)
 			}
-			if lc.Lines < 1 || lc.MaxCount < 0 {
+			if lc.Timeout < 1 || lc.Lines < 1 || lc.MaxCount < 0 {
 				return fmt.Errorf("server[%d] (%q): checks.log[%d] has invalid limits", i, srv.Name, j)
 			}
 		}
@@ -1022,6 +1076,9 @@ func validate(cfg *Config) error {
 		}
 	}
 	if err := validateRemediations(cfg.Alerts.Remediations, cfg.Servers); err != nil {
+		return err
+	}
+	if err := validateScheduledJobs(cfg.Jobs, cfg.Servers); err != nil {
 		return err
 	}
 	if err := validateWatchdog(cfg.Alerts.Watchdog, cfg.Alerts.Remediations); err != nil {
@@ -1088,6 +1145,15 @@ func validateRemediations(remediations []RemediationConfig, servers []Server) er
 		if remediation.Timeout <= 0 || remediation.Cooldown <= 0 || remediation.MaxAttempts <= 0 || remediation.Window <= 0 {
 			return fmt.Errorf("alerts.remediations[%d] timeout, cooldown, max_attempts, and window must be greater than zero", i)
 		}
+		if remediation.VerifyDelay < 0 {
+			return fmt.Errorf("alerts.remediations[%d].verify_delay must not be negative", i)
+		}
+		if strings.TrimSpace(remediation.VerifyCommand) == "" && remediation.VerifyTimeout != 0 {
+			return fmt.Errorf("alerts.remediations[%d].verify_timeout requires verify_command", i)
+		}
+		if strings.TrimSpace(remediation.VerifyCommand) != "" && remediation.VerifyTimeout <= 0 {
+			return fmt.Errorf("alerts.remediations[%d].verify_timeout must be greater than zero", i)
+		}
 		for _, target := range remediation.Targets {
 			if _, exists := serverNames[target]; !exists {
 				return fmt.Errorf("alerts.remediations[%d].targets contains unknown server %q", i, target)
@@ -1097,6 +1163,63 @@ func validateRemediations(remediations []RemediationConfig, servers []Server) er
 			if _, exists := serverNames[source]; !exists {
 				return fmt.Errorf("alerts.remediations[%d].servers contains unknown server %q", i, source)
 			}
+		}
+	}
+	return nil
+}
+
+var jobCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
+
+func validateScheduledJobs(jobs []ScheduledJobConfig, servers []Server) error {
+	serverByName := make(map[string]Server, len(servers))
+	for _, server := range servers {
+		serverByName[server.Name] = server
+	}
+	names := make(map[string]struct{}, len(jobs))
+	for i, job := range jobs {
+		name := strings.TrimSpace(job.Name)
+		if name == "" {
+			return fmt.Errorf("jobs[%d].name is required", i)
+		}
+		if _, exists := names[name]; exists {
+			return fmt.Errorf("jobs[%d].name %q is duplicated", i, name)
+		}
+		names[name] = struct{}{}
+		if strings.TrimSpace(job.Schedule) == "" {
+			return fmt.Errorf("jobs[%d] (%q).schedule is required", i, name)
+		}
+		if _, err := jobCronParser.Parse(job.Schedule); err != nil {
+			return fmt.Errorf("jobs[%d] (%q).schedule is invalid: %w", i, name, err)
+		}
+		if job.Timeout <= 0 {
+			return fmt.Errorf("jobs[%d] (%q).timeout must be greater than zero", i, name)
+		}
+		if strings.TrimSpace(job.Command) == "" && len(job.Uploads) == 0 {
+			return fmt.Errorf("jobs[%d] (%q) requires command or uploads", i, name)
+		}
+		if job.WorkingDirectory != "" && !filepath.IsAbs(job.WorkingDirectory) {
+			return fmt.Errorf("jobs[%d] (%q).working_directory must be absolute", i, name)
+		}
+		destinations := make(map[string]struct{}, len(job.Uploads))
+		for j, upload := range job.Uploads {
+			target, exists := serverByName[upload.Server]
+			if !exists {
+				return fmt.Errorf("jobs[%d] (%q).uploads[%d].server %q is not configured", i, name, j, upload.Server)
+			}
+			if target.Local {
+				return fmt.Errorf("jobs[%d] (%q).uploads[%d].server %q must be an SSH target", i, name, j, upload.Server)
+			}
+			if !filepath.IsAbs(upload.Source) {
+				return fmt.Errorf("jobs[%d] (%q).uploads[%d].source must be an absolute local path", i, name, j)
+			}
+			if !isAbsoluteProbePath(upload.Destination) {
+				return fmt.Errorf("jobs[%d] (%q).uploads[%d].destination must be an absolute remote path", i, name, j)
+			}
+			key := upload.Server + "\x00" + upload.Destination
+			if _, exists := destinations[key]; exists {
+				return fmt.Errorf("jobs[%d] (%q) uploads duplicate destination %q on %q", i, name, upload.Destination, upload.Server)
+			}
+			destinations[key] = struct{}{}
 		}
 	}
 	return nil

@@ -667,6 +667,35 @@ func TestRunRemediationsLocalAndCooldown(t *testing.T) {
 	}
 }
 
+func TestRunRemediationRequiresConfiguredVerificationToPass(t *testing.T) {
+	base := config.RemediationConfig{
+		Name: "restart-web", Enabled: true, Rules: []string{"WebUnavailable"},
+		Command: "printf restarted", Timeout: 1, Cooldown: 60, MaxAttempts: 3, Window: 3600,
+		VerifyCommand: "printf healthy", VerifyTimeout: 1,
+	}
+	cfg := &config.Config{
+		Servers: []config.Server{{Name: "web-01", Local: true}},
+		Alerts:  config.AlertsConfig{Remediations: []config.RemediationConfig{base}},
+	}
+	monitor := &Monitor{remediationMgr: NewRemediationManager()}
+	firings := []Firing{{RuleName: "WebUnavailable", Metric: "process_failed", Server: "web-01"}}
+	monitor.runRemediations(cfg, firings)
+	result := firings[0].Remediations[0]
+	if result.Status != "succeeded" || !result.Verified || !strings.Contains(result.Output, "verification:\nhealthy") {
+		t.Fatalf("verified remediation = %#v", result)
+	}
+
+	cfg.Alerts.Remediations[0].Name = "restart-web-fails-verification"
+	cfg.Alerts.Remediations[0].VerifyCommand = "false"
+	monitor = &Monitor{remediationMgr: NewRemediationManager()}
+	firings = []Firing{{RuleName: "WebUnavailable", Metric: "process_failed", Server: "web-01"}}
+	monitor.runRemediations(cfg, firings)
+	result = firings[0].Remediations[0]
+	if result.Status != "failed" || result.Verified || !strings.Contains(result.Error, "verification command failed") {
+		t.Fatalf("failed verification remediation = %#v", result)
+	}
+}
+
 func TestRemediationManagerRateLimit(t *testing.T) {
 	manager := NewRemediationManager()
 	remediation := config.RemediationConfig{Name: "restart-web", Cooldown: 1, MaxAttempts: 2, Window: 60}

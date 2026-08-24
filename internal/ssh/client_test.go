@@ -1,7 +1,9 @@
 package ssh
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,5 +65,28 @@ func TestVaultEndpoint(t *testing.T) {
 	}
 	if endpoint != "https://vault.example.test/v1/kv/data/production/app" {
 		t.Fatalf("endpoint = %q", endpoint)
+	}
+}
+
+func TestCopyWithContext(t *testing.T) {
+	var destination bytes.Buffer
+	written, err := copyWithContext(context.Background(), &destination, bytes.NewBufferString("artifact"))
+	if err != nil || written != 8 || destination.String() != "artifact" {
+		t.Fatalf("copy = %d, %q, %v", written, destination.String(), err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = copyWithContext(ctx, &destination, bytes.NewBufferString("ignored"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled copy error = %v", err)
+	}
+}
+
+func TestUploadTemporaryPathKeepsDestinationAsPrefix(t *testing.T) {
+	destination := "/srv/osm/bavaria.osm.pbf"
+	temporary := uploadTemporaryPath(destination)
+	if len(temporary) <= len(destination) || temporary[:len(destination)] != destination || temporary[len(temporary)-8:] != ".partial" {
+		t.Fatalf("temporary upload path = %q", temporary)
 	}
 }

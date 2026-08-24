@@ -682,6 +682,10 @@ checks:
       pattern: "nginx: worker process"
       min_count: 2
       timeout: 5
+    - name: apache-running # pidof first, then pgrep / ps + grep
+      pidof: apache2 # use httpd on distributions that name the executable that way
+      min_count: 1
+      timeout: 5
   listening:
     - name: https-bound
       port: 443
@@ -873,6 +877,54 @@ and start fresh when WatchSSH restarts; do not use automatic remediation for
 irreversible operations. Commands should not print secrets because their
 output is retained with the alert, capped at 4 KiB.
 
+`verify_command` is optional but recommended for state-changing operations.
+It runs only after `command` exits successfully; the remediation is reported
+as successful only when it exits with status zero as well. `verify_delay`
+allows a daemon time to start, while `verify_timeout` defaults to `timeout`.
+This is a deterministic probe-action-verify loop, not an AI action.
+
+For example, this verifies Apache through agentless `pidof`, restarts it only
+when the named process probe fails, and confirms that Apache returned:
+
+```yaml
+alerts:
+  cooldown: 60
+  rules:
+    - name: apache-not-running
+      metric: process_failed
+      operator: "=="
+      threshold: 1
+      probe: apache-running
+      servers: [web-01]
+  remediations:
+    - name: restart-apache
+      enabled: true
+      rules: [apache-not-running]
+      command: "/etc/init.d/apache2 restart"
+      verify_command: "pidof apache2 >/dev/null"
+      verify_delay: 2
+      timeout: 30
+      cooldown: 300
+      max_attempts: 3
+      window: 3600
+
+servers:
+  - name: web-01
+    host: web-01.example.internal
+    username: watchssh
+    checks:
+      process:
+        - name: apache-running
+          pidof: apache2
+```
+
+Use the same shape with `systemctl restart nginx.service` plus
+`systemctl is-active --quiet nginx.service`, `docker restart api` plus
+`docker inspect -f '{{.State.Running}}' api | grep -qx true`, or an
+application-specific command and health check. Prefer one recovery policy per
+clear failure condition and a least-privilege `sudoers` entry for exactly the
+restart and verification commands it needs.
+
 ```yaml
 interval: 30
 alerts:
@@ -920,6 +972,57 @@ notification-only because it is not selected by the remediation. Use a
 dedicated least-privilege monitoring account and, when needed, a narrowly
 scoped `sudoers` rule such as `watchssh ALL=(root) NOPASSWD:
 /etc/init.d/storefront restart`; do not grant unrestricted sudo access.
+
+### Scheduled Local Jobs and SFTP Uploads
+
+WatchSSH can also prepare and publish artifacts from its own host. This fits a
+Mac mini that downloads a Geofabrik extract, transforms it locally, and
+publishes the finished file to a Hetzner server. A job is configuration-owned:
+it runs a bounded local POSIX-shell command at a standard five-field cron
+schedule (or a descriptor such as `@daily`) and uploads only the explicitly
+listed local files through SFTP. Jobs do not run in `--once` mode.
+
+Transfers reuse the target's normal SSH configuration, including key, password
+or Vault-backed authentication, bastion, non-default port, and strict host-key
+verification. When requested, the remote directory is created. Each artifact
+is first uploaded next to its final name as a random `.partial` file, then
+renamed only after the upload completes. A failed transfer therefore leaves an
+existing published artifact untouched. Job command output is intentionally
+discarded rather than stored in logs or shown in the dashboard.
+
+```yaml
+servers:
+  - name: hetzner-osm
+    host: osm.example.net
+    port: 50622
+    username: watchssh
+    auth:
+      type: key
+      key_file: /Users/watchssh/.ssh/hetzner_osm_ed25519
+
+jobs:
+  - name: update-bavaria-osm
+    enabled: true
+    schedule: "15 3 * * 1" # Mondays at 03:15 on the WatchSSH host
+    timeout: 7200
+    working_directory: /Users/watchssh/osm
+    command: ./refresh-bavaria.sh
+    uploads:
+      - server: hetzner-osm
+        source: /Users/watchssh/osm/out/bavaria.osm.pbf
+        destination: /srv/www/osm/bavaria.osm.pbf
+        create_directories: true
+```
+
+`source` is always an absolute regular file on the WatchSSH host;
+`destination` is always an absolute path on a configured non-local SSH target.
+Jobs with `run_on_start: true` execute once after WatchSSH starts. Other jobs
+wait for their next schedule, and a running job is never overlapped with a
+second instance. The dashboard's **Jobs** page reports configuration and the
+last 100 in-memory outcomes, including transfer sizes and errors, but never
+offers ad-hoc execution or exposes command text. Keep scripts versioned,
+idempotent, and non-interactive; use the job timeout to bound downloads and
+transformations.
 
 ### AI Advisor
 

@@ -76,6 +76,28 @@ type AuditUser struct {
 	UID  int    `json:"uid"`
 }
 
+// JobResult records one local scheduled job run on the WatchSSH host. Job
+// output is intentionally not retained because preparation commands may handle
+// sensitive data; artifact names, transfer sizes, and failures remain visible.
+type JobResult struct {
+	Name       string            `json:"name"`
+	StartedAt  time.Time         `json:"started_at"`
+	FinishedAt time.Time         `json:"finished_at"`
+	DurationMs float64           `json:"duration_ms"`
+	Status     string            `json:"status"` // succeeded, failed, cancelled
+	Error      string            `json:"error,omitempty"`
+	Uploads    []JobUploadResult `json:"uploads,omitempty"`
+}
+
+// JobUploadResult records one SFTP artifact transfer attempted by a job.
+type JobUploadResult struct {
+	Server      string `json:"server"`
+	Source      string `json:"source"`
+	Destination string `json:"destination"`
+	Bytes       int64  `json:"bytes"`
+	Error       string `json:"error,omitempty"`
+}
+
 // SystemInfo contains static system information.
 type SystemInfo struct {
 	Hostname string `json:"hostname"`
@@ -294,10 +316,11 @@ type ServiceResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// ProcessCheckResult holds the outcome of a running-process probe (pgrep).
+// ProcessCheckResult holds the outcome of a running-process probe.
 type ProcessCheckResult struct {
 	Name     string `json:"name,omitempty"`
 	Pattern  string `json:"pattern"`
+	PIDOf    string `json:"pidof,omitempty"`
 	Count    int    `json:"count"`
 	MinCount int    `json:"min_count"`
 	OK       bool   `json:"ok"`
@@ -423,8 +446,10 @@ type RemediationResult struct {
 	StartedAt  time.Time `json:"started_at"`
 	DurationMs float64   `json:"duration_ms"`
 	Status     string    `json:"status"` // succeeded, failed, skipped_cooldown, skipped_rate_limit
-	Output     string    `json:"output,omitempty"`
-	Error      string    `json:"error,omitempty"`
+	// Verified is true only when an optional post-recovery verification command succeeded.
+	Verified bool   `json:"verified,omitempty"`
+	Output   string `json:"output,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // WatchdogResult records a bounded OpenAI-compatible advisor analysis. Model

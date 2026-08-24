@@ -337,7 +337,7 @@ func TestServerDetailShowsAgentlessUnixToolProbes(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "file_failed", "directory_failed", "log_failed"} {
+	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "/run/app.pid", "/var/cache/app", "/var/log/app.log"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}
@@ -631,7 +631,7 @@ func TestAlertsPageShowsRemediations(t *testing.T) {
 	}, "")
 	state.Update(nil, []monitor.Firing{{
 		Message:      "health check failed",
-		Remediations: []monitor.RemediationResult{{Name: "restart-web", Target: "web-01", Status: "succeeded"}},
+		Remediations: []monitor.RemediationResult{{Name: "restart-web", Target: "web-01", Status: "succeeded", Verified: true}},
 		Watchdog:     &monitor.WatchdogResult{Model: "local-model", Status: "analyzed", Severity: "critical", Summary: "Restart selected", RecommendedRemediations: []string{"restart-web"}},
 	}})
 	srv := NewServer(state, ":0")
@@ -643,7 +643,32 @@ func TestAlertsPageShowsRemediations(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"AI Advisor", "Human approval required", "local-model", "Automatic Remediations", "restart-web", "AI advisor local-model: analyzed (critical) - Restart selected", "Operator review required for recommended runbooks: restart-web", "Remediation restart-web on web-01: succeeded", `id="alert-template"`, "TLS certificate expires soon", "HTTP health check failed"} {
+	for _, want := range []string{"AI Advisor", "Human approval required", "local-model", "Automatic Remediations", "restart-web", "AI advisor local-model: analyzed (critical) - Restart selected", "Operator review required for recommended runbooks: restart-web", "Remediation restart-web on web-01: succeeded (verified)", `id="alert-template"`, "TLS certificate expires soon", "HTTP health check failed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body missing %q", want)
+		}
+	}
+}
+
+func TestJobsPageShowsConfigurationAndRecentRuns(t *testing.T) {
+	state := NewState(&config.Config{Jobs: []config.ScheduledJobConfig{{
+		Name: "update-bavaria-osm", Enabled: true, Schedule: "15 3 * * 1", Timeout: 7200,
+		Uploads: []config.JobUploadConfig{{Server: "hetzner-osm", Source: "/srv/osm/bavaria.osm.pbf", Destination: "/srv/www/bavaria.osm.pbf"}},
+	}}}, "")
+	state.UpdateJobs([]monitor.JobResult{{
+		Name: "update-bavaria-osm", StartedAt: time.Date(2026, time.July, 24, 3, 15, 0, 0, time.UTC), DurationMs: 1234, Status: "succeeded",
+		Uploads: []monitor.JobUploadResult{{Server: "hetzner-osm", Destination: "/srv/www/bavaria.osm.pbf", Bytes: 2048}},
+	}})
+	srv := NewServer(state, ":0")
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Scheduled Jobs", "update-bavaria-osm", "15 3 * * 1", "hetzner-osm:/srv/www/bavaria.osm.pbf", "Succeeded", "2.0 KiB"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}

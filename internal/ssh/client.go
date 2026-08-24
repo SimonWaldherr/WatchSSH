@@ -3,6 +3,8 @@ package ssh
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,11 +12,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -31,6 +35,10 @@ type Client interface {
 	// DialTCP opens a TCP connection from the SSH target with direct-tcpip.
 	// It does not invoke a remote shell or require netcat on the target.
 	DialTCP(ctx context.Context, host string, port int) (time.Duration, error)
+	// Upload copies an artifact to an absolute target path through SFTP. The
+	// transfer uses the same SSH connection, authentication, bastion, and host
+	// key policy as Run. A temporary sibling file prevents partial replacements.
+	Upload(ctx context.Context, source io.Reader, destination string, createDirectories bool) (int64, error)
 	// Close releases the underlying connection.
 	Close() error
 }
@@ -193,6 +201,84 @@ func (c *sshClient) DialTCP(ctx context.Context, host string, port int) (time.Du
 	}
 	_ = conn.Close()
 	return time.Since(startedAt), nil
+}
+
+// Upload copies source into destination with SFTP. The final target path is
+// replaced only after the complete temporary upload succeeds, so scheduled
+// artifact jobs never leave a truncated published file behind.
+func (c *sshClient) Upload(ctx context.Context, source io.Reader, destination string, createDirectories bool) (int64, error) {
+	if !strings.HasPrefix(destination, "/") {
+		return 0, fmt.Errorf("SFTP destination must be absolute")
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	client, err := sftp.NewClient(c.conn)
+	if err != nil {
+		return 0, fmt.Errorf("starting SFTP subsystem: %w", err)
+	}
+	defer client.Close()
+
+	if createDirectories {
+		if err := client.MkdirAll(path.Dir(destination)); err != nil {
+			return 0, fmt.Errorf("creating remote directory for %s: %w", destination, err)
+		}
+	}
+	temporary := uploadTemporaryPath(destination)
+	remote, err := client.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return 0, fmt.Errorf("opening temporary remote file %s: %w", temporary, err)
+	}
+	bytesWritten, copyErr := copyWithContext(ctx, remote, source)
+	closeErr := remote.Close()
+	if copyErr != nil {
+		_ = client.Remove(temporary)
+		return bytesWritten, fmt.Errorf("uploading %s: %w", destination, copyErr)
+	}
+	if closeErr != nil {
+		_ = client.Remove(temporary)
+		return bytesWritten, fmt.Errorf("closing temporary remote file %s: %w", temporary, closeErr)
+	}
+	if err := client.Rename(temporary, destination); err != nil {
+		_ = client.Remove(temporary)
+		return bytesWritten, fmt.Errorf("publishing remote file %s: %w", destination, err)
+	}
+	return bytesWritten, nil
+}
+
+func copyWithContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {
+	buffer := make([]byte, 32*1024)
+	var total int64
+	for {
+		if err := ctx.Err(); err != nil {
+			return total, err
+		}
+		read, readErr := source.Read(buffer)
+		if read > 0 {
+			written, writeErr := destination.Write(buffer[:read])
+			total += int64(written)
+			if writeErr != nil {
+				return total, writeErr
+			}
+			if written != read {
+				return total, io.ErrShortWrite
+			}
+		}
+		if readErr == io.EOF {
+			return total, nil
+		}
+		if readErr != nil {
+			return total, readErr
+		}
+	}
+}
+
+func uploadTemporaryPath(destination string) string {
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return fmt.Sprintf("%s.watchssh-%d.partial", destination, time.Now().UnixNano())
+	}
+	return destination + ".watchssh-" + hex.EncodeToString(suffix[:]) + ".partial"
 }
 
 // Close releases the underlying SSH connection.

@@ -28,6 +28,7 @@ type Monitor struct {
 	alertMgr       *AlertManager
 	remediationMgr *RemediationManager
 	watchdogMgr    *WatchdogManager
+	jobMgr         *JobManager
 	store          history.Store
 	notify         NotifyFunc
 	done           chan struct{}
@@ -58,6 +59,7 @@ func NewWithStore(cfg *config.Config, notify NotifyFunc, store history.Store) *M
 		alertMgr:       NewAlertManager(),
 		remediationMgr: NewRemediationManager(),
 		watchdogMgr:    NewWatchdogManager(),
+		jobMgr:         NewJobManager(),
 		store:          store,
 		notify:         notify,
 		done:           make(chan struct{}),
@@ -71,9 +73,24 @@ func (m *Monitor) UpdateConfig(cfg *config.Config) {
 	m.cfgMu.Unlock()
 }
 
+// SetJobNotify receives completed scheduled-job results. It is separate from
+// metric notifications because jobs run independently of the polling cycle.
+func (m *Monitor) SetJobNotify(notify func([]JobResult)) {
+	if m.jobMgr != nil {
+		m.jobMgr.SetNotify(notify)
+	}
+}
+
 // Start begins the polling loop. It runs the first collection immediately and
 // then repeats every cfg.Interval seconds. Call Stop() to terminate.
 func (m *Monitor) Start() {
+	if m.jobMgr != nil {
+		m.wg.Add(1)
+		go func() {
+			defer m.wg.Done()
+			m.runJobLoop()
+		}()
+	}
 	m.wg.Add(1)
 	defer m.wg.Done()
 
@@ -104,6 +121,9 @@ func (m *Monitor) RunOnce() {
 // Stop signals the polling loop to exit and waits for it to finish.
 func (m *Monitor) Stop() {
 	close(m.done)
+	if m.jobMgr != nil {
+		m.jobMgr.Stop()
+	}
 	m.wg.Wait()
 	if err := m.Close(); err != nil {
 		log.Printf("history store close: %v", err)

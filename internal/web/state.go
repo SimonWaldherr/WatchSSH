@@ -17,6 +17,7 @@ type State struct {
 	mu         sync.RWMutex
 	metrics    map[string]monitor.ServerMetrics // keyed by ServerName
 	firings    []monitor.Firing
+	jobs       []monitor.JobResult
 	reviews    []RunbookReview
 	changes    []ChangeEvent
 	audits     map[string][]AuditSnapshot
@@ -98,6 +99,21 @@ func (s *State) Update(batch []monitor.ServerMetrics, firings []monitor.Firing) 
 			s.reviews = s.reviews[len(s.reviews)-200:]
 		}
 	}
+}
+
+// UpdateJobs stores the bounded, newest-first scheduled-job history supplied
+// by the monitor. Job output is never retained in web state.
+func (s *State) UpdateJobs(results []monitor.JobResult) {
+	s.mu.Lock()
+	s.jobs = append([]monitor.JobResult(nil), results...)
+	s.mu.Unlock()
+}
+
+// JobResults returns a snapshot of recent scheduled-job outcomes.
+func (s *State) JobResults() []monitor.JobResult {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]monitor.JobResult(nil), s.jobs...)
 }
 
 // RecordAudit saves an on-demand audit result and exposes it as the target's
