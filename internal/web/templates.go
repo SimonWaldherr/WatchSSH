@@ -693,6 +693,24 @@ const allTemplates = `
 </div>
 {{end}}
 
+{{if or .Metrics.ServiceChecks .Metrics.ProcessChecks .Metrics.ListeningChecks .Metrics.JournalChecks .Metrics.FileChecks .Metrics.DirectoryChecks .Metrics.LogChecks}}
+<div class="section">
+  <div class="form-section-title"><h3>Agentless Unix Tool Probes</h3><span>Read-only commands executed over SSH on this target.</span></div>
+  <div class="table-scroll"><table>
+    <thead><tr><th>Tool</th><th>Probe</th><th>Target</th><th>Measurement</th><th>Status</th></tr></thead>
+    <tbody>
+    {{range .Metrics.ServiceChecks}}<tr><td><code>systemctl / service</code></td><td>{{.Name}}</td><td>{{.Unit}}</td><td>{{.State}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Service probe failed" "service_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for service probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.ProcessChecks}}<tr><td><code>pgrep / ps + grep</code></td><td>{{.Name}}</td><td>{{.Pattern}}</td><td>{{.Count}} matching process(es), want >= {{.MinCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Process probe failed" "process_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for process probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.ListeningChecks}}<tr><td><code>ss / netstat</code></td><td>{{.Name}}</td><td>{{.Protocol}}/{{.Port}}</td><td>local listener</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Listening port probe failed" "listening_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for listener probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.JournalChecks}}<tr><td><code>journalctl</code></td><td>{{.Name}}</td><td>{{if .Unit}}{{.Unit}}{{else}}system journal{{end}}</td><td>{{.Count}} entries, max {{.MaxCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Journal probe failed" "journal_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for journal probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.FileChecks}}<tr><td><code>test + stat</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{fmtBytes .SizeBytes}}, age {{.AgeSeconds}}s</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "File probe failed" "file_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for file probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.DirectoryChecks}}<tr><td><code>du{{if .MaxFileCount}} + find{{end}}</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{fmtBytes .UsedBytes}}{{if .MaxFileCount}}, {{.FileCount}}{{if .FileCountCapped}}+{{end}} files (max {{.MaxFileCount}}){{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Directory probe failed" "directory_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for directory probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.LogChecks}}<tr><td><code>tail + grep</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{.Count}} matches in last {{.Lines}} lines, max {{.MaxCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Log probe failed" "log_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for log probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    </tbody>
+  </table></div>
+</div>
+{{end}}
+
 {{if .Metrics.CustomChecks}}
 <div class="section">
   <h3>Custom Checks</h3>
@@ -813,7 +831,7 @@ const allTemplates = `
   <form method="post" action="/probes/add" class="probe-builder">
     <div class="form-row w3">
       <div><label for="probe-server">Target</label><select id="probe-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
-      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="custom">Remote command</option><option value="service">Systemd service (systemctl)</option><option value="process">Process running (pgrep)</option><option value="listening">Listening port (ss)</option><option value="journal">Journal errors (journalctl)</option></select></div>
+      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="file">File metadata (test + stat)</option><option value="directory">Directory usage (du + find)</option><option value="log">Log pattern (tail + grep)</option><option value="custom">Remote command</option><option value="service">Service state (systemctl / service)</option><option value="process">Process running (pgrep / ps)</option><option value="listening">Listening port (ss / netstat)</option><option value="journal">Journal errors (journalctl)</option></select></div>
       <div><label for="probe-timeout">Timeout (seconds)</label><input id="probe-timeout" type="number" name="timeout" value="5" min="1"></div>
     </div>
     <div class="form-row w3">
@@ -833,9 +851,19 @@ const allTemplates = `
         <div><label>NTP max offset (ms)</label><input type="number" name="max_offset_ms" min="0" step="0.1"></div>
       </div>
       <div class="form-row">
-        <div><label>Probe name (custom / service / process / listening / journal)</label><input type="text" name="probe_name" placeholder="service-running"></div>
+        <div><label>Probe name (target-side probes)</label><input type="text" name="probe_name" placeholder="service-running"></div>
         <div><label>Remote command (custom only)</label><input type="text" name="command" placeholder="pgrep -x nginx && echo OK"></div>
       </div>
+	  <div class="form-row w3">
+		<div><label>Absolute target path (file / directory / log)</label><input type="text" name="path" placeholder="/var/run/app.pid"></div>
+		<div><label>File maximum age (seconds)</label><input type="number" name="max_age_seconds" min="0" placeholder="3600"></div>
+		<div><label>File size range (bytes)</label><div class="form-row" style="margin:0"><input type="number" name="min_size_bytes" min="0" placeholder="min"><input type="number" name="max_size_bytes" min="0" placeholder="max"></div></div>
+	  </div>
+	  <div class="form-row w3">
+		<div><label>Directory maximum size (bytes)</label><input type="number" name="max_usage_bytes" min="0" placeholder="10737418240"></div>
+		<div><label>Directory maximum files</label><input type="number" name="max_file_count" min="0" placeholder="100000"></div>
+		<div><label>Log tail lines</label><input type="number" name="log_lines" min="1" value="200"></div>
+	  </div>
       <div class="form-row w3">
         <div><label>Systemd unit (service / journal)</label><input type="text" name="unit" placeholder="nginx.service"></div>
         <div><label>Process pattern (pgrep -f)</label><input type="text" name="pattern" placeholder="nginx: worker process"></div>
@@ -1260,7 +1288,7 @@ const allTemplates = `
       <td><code>{{.Metric}}</code></td>
       <td>{{.Operator}}</td>
       <td>{{.Threshold}}</td>
-      <td>{{if .URL}}<code>{{.URL}}</code>{{else if .MountPoint}}<code>{{.MountPoint}}</code>{{else if .Port}}port {{.Port}}{{else}}<em>any</em>{{end}}</td>
+      <td>{{if .Probe}}probe <code>{{.Probe}}</code>{{else if .URL}}<code>{{.URL}}</code>{{else if .MountPoint}}<code>{{.MountPoint}}</code>{{else if .Port}}port {{.Port}}{{else}}<em>any</em>{{end}}</td>
       <td>{{if .Servers}}{{range .Servers}}{{.}} {{end}}{{else}}<em>all</em>{{end}}</td>
       <td>
         <form method="post" action="/alerts/remove" style="display:inline">
@@ -1322,6 +1350,21 @@ const allTemplates = `
           <option value="network_errors">network_errors</option>
           <option value="network_drops">network_drops</option>
           </optgroup>
+		  <optgroup label="Agentless Unix tools">
+		  <option value="service_failed">service_failed</option>
+		  <option value="process_failed">process_failed</option>
+		  <option value="listening_failed">listening_failed</option>
+		  <option value="journal_failed">journal_failed</option>
+		  <option value="journal_count">journal_count</option>
+		  <option value="file_failed">file_failed</option>
+		  <option value="file_age">file_age (seconds)</option>
+		  <option value="file_size">file_size (bytes)</option>
+		  <option value="directory_failed">directory_failed</option>
+		  <option value="directory_usage_bytes">directory_usage_bytes</option>
+		  <option value="directory_file_count">directory_file_count</option>
+		  <option value="log_failed">log_failed</option>
+		  <option value="log_match_count">log_match_count</option>
+		  </optgroup>
           <optgroup label="Connectivity">
           <option value="ping_failed">ping_failed</option>
           <option value="ping_latency">ping_latency (ms)</option>
@@ -1383,6 +1426,7 @@ const allTemplates = `
       <div><label>Port (port_closed only)</label><input type="number" name="port" placeholder="80" min="1" max="65535"></div>
       <div><label>HTTP URL (HTTP only)</label><input type="url" name="url" placeholder="https://example.com/health"></div>
     </div>
+	<div class="form-row mode-advanced"><div><label>Probe name (target-side probes)</label><input type="text" name="probe" placeholder="app-log-errors"></div><div></div></div>
     <div class="form-actions">
       <button type="submit" class="btn btn-primary" data-i18n="add_rule">Add Rule</button>
     </div>
@@ -1422,7 +1466,7 @@ const allTemplates = `
   });
   var draft = new URLSearchParams(window.location.search);
   if(draft.has('metric')){
-    ['name','metric','operator','threshold','mount_point'].forEach(function(name){
+    ['name','metric','operator','threshold','mount_point','probe'].forEach(function(name){
       if(draft.has(name)) setValue(name, draft.get(name));
     });
     var scoped = draft.get('servers');

@@ -706,42 +706,94 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 		return *srv.Board.WiFiRSSIDbm, cmp(*srv.Board.WiFiRSSIDbm, rule.Operator, rule.Threshold)
 	case "custom_failed":
 		for _, c := range srv.CustomChecks {
-			if !c.OK {
+			if matchesProbe(rule, c.Name) && !c.OK {
 				return 1, true
 			}
 		}
 	case "service_failed":
 		for _, c := range srv.ServiceChecks {
-			if !c.OK {
+			if matchesProbe(rule, c.Name) && !c.OK {
 				return 1, true
 			}
 		}
 	case "process_failed":
 		for _, c := range srv.ProcessChecks {
-			if !c.OK {
+			if matchesProbe(rule, c.Name) && !c.OK {
 				return 1, true
 			}
 		}
 	case "listening_failed":
 		for _, c := range srv.ListeningChecks {
-			if !c.OK {
+			if matchesProbe(rule, c.Name) && !c.OK {
 				return 1, true
 			}
 		}
 	case "journal_failed":
 		for _, c := range srv.JournalChecks {
-			if !c.OK {
+			if matchesProbe(rule, c.Name) && !c.OK {
 				return 1, true
 			}
 		}
 	case "journal_count":
 		for _, c := range srv.JournalChecks {
-			if cmp(float64(c.Count), rule.Operator, rule.Threshold) {
+			if matchesProbe(rule, c.Name) && cmp(float64(c.Count), rule.Operator, rule.Threshold) {
+				return float64(c.Count), true
+			}
+		}
+	case "file_failed":
+		for _, c := range srv.FileChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "file_age":
+		for _, c := range srv.FileChecks {
+			if matchesProbe(rule, c.Name) && cmp(float64(c.AgeSeconds), rule.Operator, rule.Threshold) {
+				return float64(c.AgeSeconds), true
+			}
+		}
+	case "file_size":
+		for _, c := range srv.FileChecks {
+			if matchesProbe(rule, c.Name) && cmp(float64(c.SizeBytes), rule.Operator, rule.Threshold) {
+				return float64(c.SizeBytes), true
+			}
+		}
+	case "directory_failed":
+		for _, c := range srv.DirectoryChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "directory_usage_bytes":
+		for _, c := range srv.DirectoryChecks {
+			if matchesProbe(rule, c.Name) && cmp(float64(c.UsedBytes), rule.Operator, rule.Threshold) {
+				return float64(c.UsedBytes), true
+			}
+		}
+	case "directory_file_count":
+		for _, c := range srv.DirectoryChecks {
+			if matchesProbe(rule, c.Name) && cmp(float64(c.FileCount), rule.Operator, rule.Threshold) {
+				return float64(c.FileCount), true
+			}
+		}
+	case "log_failed":
+		for _, c := range srv.LogChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "log_match_count":
+		for _, c := range srv.LogChecks {
+			if matchesProbe(rule, c.Name) && cmp(float64(c.Count), rule.Operator, rule.Threshold) {
 				return float64(c.Count), true
 			}
 		}
 	}
 	return 0, false
+}
+
+func matchesProbe(rule config.AlertRule, name string) bool {
+	return rule.Probe == "" || rule.Probe == name
 }
 
 func totalNetworkErrors(network []NetworkStats) int64 {

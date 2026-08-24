@@ -214,6 +214,40 @@ type JournalCheck struct {
 	Timeout  int `yaml:"timeout"` // seconds (default 5)
 }
 
+// FileCheck verifies an absolute path using the POSIX test builtin and stat.
+// MaxAgeSeconds, MinSizeBytes, and MaxSizeBytes are optional limits; zero
+// disables the respective limit. WatchSSH reads metadata only, never content.
+type FileCheck struct {
+	Name          string `yaml:"name"`
+	Path          string `yaml:"path"`
+	MaxAgeSeconds int    `yaml:"max_age_seconds"`
+	MinSizeBytes  int64  `yaml:"min_size_bytes"`
+	MaxSizeBytes  int64  `yaml:"max_size_bytes"`
+	Timeout       int    `yaml:"timeout"` // seconds (default 5)
+}
+
+// DirectoryCheck measures an absolute directory with du. MaxFileCount is
+// optional and uses find with an early stop, so WatchSSH does not enumerate a
+// complete large tree merely to determine that the configured limit is passed.
+type DirectoryCheck struct {
+	Name          string `yaml:"name"`
+	Path          string `yaml:"path"`
+	MaxUsageBytes int64  `yaml:"max_usage_bytes"`
+	MaxFileCount  int    `yaml:"max_file_count"`
+	Timeout       int    `yaml:"timeout"` // seconds (default 10)
+}
+
+// LogCheck counts a regular-expression pattern in the newest Lines of an
+// absolute file using tail and grep. Log content never leaves the target.
+type LogCheck struct {
+	Name     string `yaml:"name"`
+	Path     string `yaml:"path"`
+	Pattern  string `yaml:"pattern"`
+	Lines    int    `yaml:"lines"`     // default 200
+	MaxCount int    `yaml:"max_count"` // default 0
+	Timeout  int    `yaml:"timeout"`   // seconds (default 5)
+}
+
 // Checks holds all optional connectivity and custom checks for a server.
 type Checks struct {
 	Ping      PingCheck         `yaml:"ping"`
@@ -229,6 +263,9 @@ type Checks struct {
 	Process   []ProcessCheck    `yaml:"process"`
 	Listening []ListeningCheck  `yaml:"listening"`
 	Journal   []JournalCheck    `yaml:"journal"`
+	File      []FileCheck       `yaml:"file"`
+	Directory []DirectoryCheck  `yaml:"directory"`
+	Log       []LogCheck        `yaml:"log"`
 }
 
 // JumpHost describes one explicit SSH bastion. WatchSSH authenticates to the
@@ -330,7 +367,9 @@ type EmailConfig struct {
 type AlertRule struct {
 	Name string `yaml:"name"`
 	// Metric: cpu_usage, mem_usage, mem_available_bytes, swap_usage, load1, load5, load15,
-	//         disk_usage, disk_free_bytes, ping_latency, ping_loss, ping_failed, port_closed,
+	//         disk_usage, disk_free_bytes, file_failed, file_age, file_size,
+	//         directory_failed, directory_usage_bytes, directory_file_count,
+	//         log_failed, log_match_count, ping_latency, ping_loss, ping_failed, port_closed,
 	//         port_latency, banner_failed, banner_latency, http_failed,
 	//         http_latency, dns_failed, dns_latency, traceroute_failed,
 	//         traceroute_hops, tls_failed, tls_latency, ntp_failed,
@@ -349,6 +388,8 @@ type AlertRule struct {
 	Port int `yaml:"port"`
 	// URL filters HTTP probe metrics to one configured check URL (empty = any URL).
 	URL string `yaml:"url"`
+	// Probe filters named target-side probes (empty = any compatible probe).
+	Probe string `yaml:"probe"`
 	// Servers limits the rule to named servers (empty = all servers).
 	Servers []string `yaml:"servers"`
 }
@@ -798,6 +839,33 @@ func applyDefaults(cfg *Config) {
 				srv.Checks.Journal[j].Timeout = 5
 			}
 		}
+		for j := range srv.Checks.File {
+			if srv.Checks.File[j].Name == "" {
+				srv.Checks.File[j].Name = srv.Checks.File[j].Path
+			}
+			if srv.Checks.File[j].Timeout == 0 {
+				srv.Checks.File[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Directory {
+			if srv.Checks.Directory[j].Name == "" {
+				srv.Checks.Directory[j].Name = srv.Checks.Directory[j].Path
+			}
+			if srv.Checks.Directory[j].Timeout == 0 {
+				srv.Checks.Directory[j].Timeout = 10
+			}
+		}
+		for j := range srv.Checks.Log {
+			if srv.Checks.Log[j].Name == "" {
+				srv.Checks.Log[j].Name = srv.Checks.Log[j].Path
+			}
+			if srv.Checks.Log[j].Lines == 0 {
+				srv.Checks.Log[j].Lines = 200
+			}
+			if srv.Checks.Log[j].Timeout == 0 {
+				srv.Checks.Log[j].Timeout = 5
+			}
+		}
 	}
 }
 
@@ -893,6 +961,30 @@ func validate(cfg *Config) error {
 			}
 			if lc.Protocol != "tcp" && lc.Protocol != "udp" {
 				return fmt.Errorf("server[%d] (%q): checks.listening[%d].protocol must be tcp or udp", i, srv.Name, j)
+			}
+		}
+		for j, fc := range srv.Checks.File {
+			if !isAbsoluteProbePath(fc.Path) {
+				return fmt.Errorf("server[%d] (%q): checks.file[%d].path must be an absolute path", i, srv.Name, j)
+			}
+			if fc.MaxAgeSeconds < 0 || fc.MinSizeBytes < 0 || fc.MaxSizeBytes < 0 || (fc.MaxSizeBytes > 0 && fc.MinSizeBytes > fc.MaxSizeBytes) {
+				return fmt.Errorf("server[%d] (%q): checks.file[%d] has invalid limits", i, srv.Name, j)
+			}
+		}
+		for j, dc := range srv.Checks.Directory {
+			if !isAbsoluteProbePath(dc.Path) {
+				return fmt.Errorf("server[%d] (%q): checks.directory[%d].path must be an absolute path", i, srv.Name, j)
+			}
+			if dc.MaxUsageBytes < 0 || dc.MaxFileCount < 0 {
+				return fmt.Errorf("server[%d] (%q): checks.directory[%d] has invalid limits", i, srv.Name, j)
+			}
+		}
+		for j, lc := range srv.Checks.Log {
+			if !isAbsoluteProbePath(lc.Path) || strings.TrimSpace(lc.Pattern) == "" {
+				return fmt.Errorf("server[%d] (%q): checks.log[%d] requires an absolute path and pattern", i, srv.Name, j)
+			}
+			if lc.Lines < 1 || lc.MaxCount < 0 {
+				return fmt.Errorf("server[%d] (%q): checks.log[%d] has invalid limits", i, srv.Name, j)
 			}
 		}
 	}
@@ -1195,6 +1287,10 @@ func isAllowedExecutable(executable string, allowed []string) bool {
 		}
 	}
 	return false
+}
+
+func isAbsoluteProbePath(path string) bool {
+	return strings.HasPrefix(strings.TrimSpace(path), "/")
 }
 
 // expandTilde replaces a leading "~" with the user's home directory.

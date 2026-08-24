@@ -641,30 +641,51 @@ and `/metrics`. WatchSSH does not try to become a distributed RIPE Atlas
 replacement; it keeps the single-monitoring-host model and makes probe results
 consistent enough for alerts and exports.
 
-### Standard-Tool Probes (systemctl, pgrep, ss, journalctl)
+### Agentless Unix Tool Probes
 
-Beyond the monitoring-host probes above, WatchSSH can run structured, read-only
-probes over SSH using standard Linux tools that are already inventoried by
-`tool_inventory` — `systemctl`, `pgrep`, `ss`, and `journalctl`. Each probe
-degrades to a clear "tool not available" result instead of failing the whole
-collection when the target lacks the binary, and none of them start, stop, or
-modify anything on the target.
+WatchSSH's primary model is to connect through SSH and use the target's own
+Unix tools. No agent, package, daemon, or sidecar is installed. Platform
+collectors already use `df`, `ps`, `stat`, `uname`, `uptime`, `who`, and native
+kernel interfaces where available. Structured probes extend this model with
+read-only, typed checks and clear unsupported results instead of guesses.
+
+Portable probes work on Linux and Unix-like targets with their existing
+`test`, `stat`, `du`, `find`, `tail`, and `grep` commands. They require absolute
+paths; WatchSSH returns only metadata and aggregate counts, never file or log
+contents. The file-count probe stops after `max_file_count + 1` matches to keep
+large directory checks bounded.
 
 ```yaml
 checks:
+  file:
+    - name: application-pid
+      path: /run/application.pid
+      max_age_seconds: 3600
+      min_size_bytes: 1
+  directory:
+    - name: upload-spool
+      path: /var/spool/application
+      max_usage_bytes: 10737418240 # 10 GiB
+      max_file_count: 100000
+  log:
+    - name: recent-errors
+      path: /var/log/application/error.log
+      pattern: "(ERROR|FATAL)"
+      lines: 500
+      max_count: 0
   service:
     - name: nginx-active
-      unit: nginx.service # verified with `systemctl is-active`
+      unit: nginx.service # systemctl, then a service-command fallback
       timeout: 5
   process:
-    - name: nginx-workers
-      pattern: "nginx: worker process" # matched with `pgrep -f`
+    - name: nginx-workers # pgrep -f, then ps + grep fallback
+      pattern: "nginx: worker process"
       min_count: 2
       timeout: 5
   listening:
     - name: https-bound
       port: 443
-      protocol: tcp # tcp (default) or udp, checked with `ss`
+      protocol: tcp # tcp (default) or udp, checked with ss or netstat
       timeout: 5
   journal:
     - name: sshd-errors
@@ -675,13 +696,13 @@ checks:
       timeout: 5
 ```
 
-Unlike `checks.ports` (which dials a socket from the monitoring host or
-target network), `checks.listening` asks the target's own kernel whether a
-process is bound to a port — useful for confirming a service is up
-independent of firewalling between hosts. Corresponding alert metrics
-(`service_failed`, `process_failed`, `listening_failed`, `journal_failed`,
-`journal_count`) work like the other probe metrics described in
-[Alerting](#alerting).
+Unlike `checks.ports` (which dials a socket from the monitoring host or target
+network), `checks.listening` asks the target's own kernel whether a process is
+bound to a port. `journal` remains an optional `journalctl` probe for systemd
+targets. Corresponding alert metrics include `file_failed`, `file_age`,
+`file_size`, `directory_failed`, `directory_usage_bytes`,
+`directory_file_count`, `log_failed`, and `log_match_count`; set `probe` in an
+alert rule to scope a metric to one named probe.
 
 ## HARP Integration
 
@@ -721,15 +742,18 @@ WatchSSH metrics can be added later once the HARP metric names are stable.
 ## Alerting
 
 Configure threshold-based alerts in the `alerts` section of `config.yaml`.
-Supported metrics: `cpu_usage`, `mem_usage`, `swap_usage`, `load1`, `load5`,
-`load15`, `disk_usage`, `disk_inode_usage`, `processes_running`,
+Supported metrics: `cpu_usage`, `mem_usage`, `mem_available_bytes`,
+`swap_usage`, `load1`, `load5`, `load15`, `disk_usage`, `disk_free_bytes`,
+`disk_inode_usage`, `processes_running`,
 `processes_total`, `file_descriptor_usage`, `network_errors`, `network_drops`,
 `ping_latency`, `ping_loss`, `ping_failed`, `port_closed`, `port_latency`,
 `banner_failed`, `banner_latency`, `http_failed`, `http_latency`, `dns_failed`,
 `dns_latency`, `traceroute_failed`, `traceroute_hops`, `tls_failed`,
 `tls_latency`, `ntp_failed`, `ntp_latency`, `ntp_offset`,
 `custom_failed`, `service_failed`, `process_failed`, `listening_failed`,
-`journal_failed`, `journal_count`, `cert_expires_days`, `tls_cert_expires_days`,
+`journal_failed`, `journal_count`, `file_failed`, `file_age`, `file_size`,
+`directory_failed`, `directory_usage_bytes`, `directory_file_count`,
+`log_failed`, `log_match_count`, `cert_expires_days`, `tls_cert_expires_days`,
 `board_temperature`, `board_under_voltage`, `board_throttled`,
 `board_wifi_rssi`.
 

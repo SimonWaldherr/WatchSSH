@@ -240,6 +240,30 @@ servers:
           command: "pgrep -x nginx >/dev/null && echo OK || echo FAILED"
           expected_output: "OK"
 
+      # Agentless Unix probes: each command runs over SSH and uses only tools
+      # already present on the target. Paths must be absolute. File metadata
+      # and aggregate counts are returned; file and log contents are never read
+      # back to WatchSSH.
+      file:
+        - name: nginx-pid-fresh
+          path: /run/nginx.pid
+          max_age_seconds: 3600
+          min_size_bytes: 1
+          timeout: 5
+      directory:
+        - name: nginx-cache-bounded
+          path: /var/cache/nginx
+          max_usage_bytes: 10737418240 # 10 GiB, checked with du
+          max_file_count: 100000       # find stops at limit + 1
+          timeout: 10
+      log:
+        - name: nginx-recent-errors
+          path: /var/log/nginx/error.log
+          pattern: "(crit|alert|emerg)"
+          lines: 500                  # tail only; no log content is returned
+          max_count: 0
+          timeout: 5
+
   # ── macOS / Darwin server ────────────────────────────────────────────────
   - name: macos-builder
     host: 192.0.2.20

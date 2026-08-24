@@ -52,6 +52,7 @@ var funcMap = template.FuncMap{
 	"metricCapability":     metricCapability,
 	"metricError":          metricError,
 	"alertLink":            alertLink,
+	"probeAlertLink":       probeAlertLink,
 	"processSortLabel":     processSortLabel,
 	"statusClass":          statusClass,
 	"capabilityRows":       capabilityRows,
@@ -427,6 +428,18 @@ func alertLink(name, metric, operator string, threshold float64, server, mountPo
 	return "/alerts?" + query.Encode()
 }
 
+func probeAlertLink(name, metric, operator string, threshold float64, server, probe string) string {
+	query := url.Values{
+		"name":      {name},
+		"metric":    {metric},
+		"operator":  {operator},
+		"threshold": {strconv.FormatFloat(threshold, 'f', -1, 64)},
+		"servers":   {server},
+		"probe":     {probe},
+	}
+	return "/alerts?" + query.Encode()
+}
+
 func (s *Server) handleRunAudit(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -763,6 +776,15 @@ func serverCheckSummary(srv config.Server) string {
 	if len(srv.Checks.Journal) > 0 {
 		parts = append(parts, fmt.Sprintf("%d journal", len(srv.Checks.Journal)))
 	}
+	if len(srv.Checks.File) > 0 {
+		parts = append(parts, fmt.Sprintf("%d file", len(srv.Checks.File)))
+	}
+	if len(srv.Checks.Directory) > 0 {
+		parts = append(parts, fmt.Sprintf("%d directory", len(srv.Checks.Directory)))
+	}
+	if len(srv.Checks.Log) > 0 {
+		parts = append(parts, fmt.Sprintf("%d log", len(srv.Checks.Log)))
+	}
 	if srv.Docker.Enabled {
 		parts = append(parts, "docker")
 	}
@@ -818,6 +840,26 @@ func probeRows(servers []config.Server) []probeRow {
 				detail = probe.Unit + ", " + detail
 			}
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "journal", Index: i, Name: "Journal", Detail: detail})
+		}
+		for i, probe := range checks.File {
+			detail := probe.Path
+			if probe.MaxAgeSeconds > 0 {
+				detail += fmt.Sprintf(", age <= %ds", probe.MaxAgeSeconds)
+			}
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "file", Index: i, Name: "File metadata", Detail: detail})
+		}
+		for i, probe := range checks.Directory {
+			detail := probe.Path
+			if probe.MaxUsageBytes > 0 {
+				detail += fmt.Sprintf(", <= %d bytes", probe.MaxUsageBytes)
+			}
+			if probe.MaxFileCount > 0 {
+				detail += fmt.Sprintf(", <= %d files", probe.MaxFileCount)
+			}
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "directory", Index: i, Name: "Directory", Detail: detail})
+		}
+		for i, probe := range checks.Log {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "log", Index: i, Name: "Log pattern", Detail: fmt.Sprintf("%s, %q in last %d lines", probe.Path, probe.Pattern, probe.Lines)})
 		}
 	}
 	return rows
@@ -891,6 +933,21 @@ func removeProbe(checks *config.Checks, kind string, index int) bool {
 			return false
 		}
 		checks.Journal = append(checks.Journal[:index], checks.Journal[index+1:]...)
+	case "file":
+		if index >= len(checks.File) {
+			return false
+		}
+		checks.File = append(checks.File[:index], checks.File[index+1:]...)
+	case "directory":
+		if index >= len(checks.Directory) {
+			return false
+		}
+		checks.Directory = append(checks.Directory[:index], checks.Directory[index+1:]...)
+	case "log":
+		if index >= len(checks.Log) {
+			return false
+		}
+		checks.Log = append(checks.Log[:index], checks.Log[index+1:]...)
 	default:
 		return false
 	}
@@ -913,6 +970,9 @@ func mergeChecks(destination *config.Checks, imported config.Checks) {
 	destination.Process = append(destination.Process, imported.Process...)
 	destination.Listening = append(destination.Listening, imported.Listening...)
 	destination.Journal = append(destination.Journal, imported.Journal...)
+	destination.File = append(destination.File, imported.File...)
+	destination.Directory = append(destination.Directory, imported.Directory...)
+	destination.Log = append(destination.Log, imported.Log...)
 }
 
 func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
@@ -978,6 +1038,33 @@ func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
 			checks.Journal[i].Timeout = 5
 		}
 	}
+	for i := range checks.File {
+		if checks.File[i].Name == "" {
+			checks.File[i].Name = checks.File[i].Path
+		}
+		if checks.File[i].Timeout == 0 {
+			checks.File[i].Timeout = 5
+		}
+	}
+	for i := range checks.Directory {
+		if checks.Directory[i].Name == "" {
+			checks.Directory[i].Name = checks.Directory[i].Path
+		}
+		if checks.Directory[i].Timeout == 0 {
+			checks.Directory[i].Timeout = 10
+		}
+	}
+	for i := range checks.Log {
+		if checks.Log[i].Name == "" {
+			checks.Log[i].Name = checks.Log[i].Path
+		}
+		if checks.Log[i].Lines == 0 {
+			checks.Log[i].Lines = 200
+		}
+		if checks.Log[i].Timeout == 0 {
+			checks.Log[i].Timeout = 5
+		}
+	}
 }
 
 func safeFilename(value string) string {
@@ -1037,6 +1124,26 @@ func formInt(r *http.Request, name string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func formNonNegativeInt(r *http.Request, name string) int {
+	value, err := strconv.Atoi(strings.TrimSpace(r.FormValue(name)))
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func formNonNegativeInt64(r *http.Request, name string) int64 {
+	value, err := strconv.ParseInt(strings.TrimSpace(r.FormValue(name)), 10, 64)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return value
+}
+
+func isAbsoluteRemotePath(path string) bool {
+	return strings.HasPrefix(strings.TrimSpace(path), "/")
 }
 
 func formFloat(r *http.Request, name string, fallback float64) float64 {
@@ -1249,6 +1356,30 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 			unit := strings.TrimSpace(r.FormValue("unit"))
 			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), defaultString(unit, "journal"))
 			srv.Checks.Journal = append(srv.Checks.Journal, config.JournalCheck{Name: name, Unit: unit, Priority: priority, SinceMinutes: formInt(r, "since_minutes", 10), MaxCount: formInt(r, "max_count", 0), Timeout: timeout})
+		case "file":
+			path := strings.TrimSpace(r.FormValue("path"))
+			if !isAbsoluteRemotePath(path) {
+				buildErr = fmt.Errorf("file probes need an absolute path")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
+			srv.Checks.File = append(srv.Checks.File, config.FileCheck{Name: name, Path: path, MaxAgeSeconds: formNonNegativeInt(r, "max_age_seconds"), MinSizeBytes: formNonNegativeInt64(r, "min_size_bytes"), MaxSizeBytes: formNonNegativeInt64(r, "max_size_bytes"), Timeout: timeout})
+		case "directory":
+			path := strings.TrimSpace(r.FormValue("path"))
+			if !isAbsoluteRemotePath(path) {
+				buildErr = fmt.Errorf("directory probes need an absolute path")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
+			srv.Checks.Directory = append(srv.Checks.Directory, config.DirectoryCheck{Name: name, Path: path, MaxUsageBytes: formNonNegativeInt64(r, "max_usage_bytes"), MaxFileCount: formNonNegativeInt(r, "max_file_count"), Timeout: timeout})
+		case "log":
+			path, pattern := strings.TrimSpace(r.FormValue("path")), strings.TrimSpace(r.FormValue("pattern"))
+			if !isAbsoluteRemotePath(path) || pattern == "" {
+				buildErr = fmt.Errorf("log probes need an absolute path and pattern")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
+			srv.Checks.Log = append(srv.Checks.Log, config.LogCheck{Name: name, Path: path, Pattern: pattern, Lines: formInt(r, "log_lines", 200), MaxCount: formNonNegativeInt(r, "max_count"), Timeout: timeout})
 		default:
 			buildErr = fmt.Errorf("unsupported probe type %q", kind)
 		}
@@ -1495,6 +1626,7 @@ func (s *Server) handleAddAlert(w http.ResponseWriter, r *http.Request) {
 		MountPoint: r.FormValue("mount_point"),
 		Port:       port,
 		URL:        strings.TrimSpace(r.FormValue("url")),
+		Probe:      strings.TrimSpace(r.FormValue("probe")),
 		Servers:    servers,
 	}
 	s.state.AddAlertRule(rule)

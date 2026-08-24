@@ -541,6 +541,52 @@ servers:
 	}
 }
 
+func TestLoad_PortableUnixProbeDefaults(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      file:
+        - path: /run/app.pid
+      directory:
+        - path: /var/cache/app
+      log:
+        - path: /var/log/app.log
+          pattern: ERROR
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	checks := cfg.Servers[0].Checks
+	if checks.File[0].Name != "/run/app.pid" || checks.File[0].Timeout != 5 {
+		t.Fatalf("file defaults = %#v", checks.File[0])
+	}
+	if checks.Directory[0].Name != "/var/cache/app" || checks.Directory[0].Timeout != 10 {
+		t.Fatalf("directory defaults = %#v", checks.Directory[0])
+	}
+	if checks.Log[0].Name != "/var/log/app.log" || checks.Log[0].Lines != 200 || checks.Log[0].Timeout != 5 {
+		t.Fatalf("log defaults = %#v", checks.Log[0])
+	}
+}
+
+func TestLoad_RejectsRelativeUnixProbePaths(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      file:
+        - path: tmp/app.pid
+`)
+	if _, err := config.Load(path); err == nil {
+		t.Fatal("expected relative Unix probe path to be rejected")
+	}
+}
+
 func TestLoad_RejectsStandardToolProbesMissingRequiredFields(t *testing.T) {
 	cases := []string{
 		`

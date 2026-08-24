@@ -37,13 +37,16 @@ type ServerMetrics struct {
 	Board        *BoardInfo          `json:"board,omitempty"`
 	Connectivity ConnectivityStats   `json:"connectivity"`
 	CustomChecks []CustomCheckResult `json:"custom_checks,omitempty"`
-	// ServiceChecks, ProcessChecks, ListeningChecks, and JournalChecks are
-	// populated by SSH probes built on standard Linux tools (systemctl,
-	// pgrep, ss, journalctl). They are only run when the target is Linux.
+	// These agentless SSH probes run existing target-side tools. File, directory,
+	// and log probes use portable POSIX/core utilities; service and journal
+	// probes report unsupported rather than guessing when unavailable.
 	ServiceChecks   []ServiceResult      `json:"service_checks,omitempty"`
 	ProcessChecks   []ProcessCheckResult `json:"process_checks,omitempty"`
 	ListeningChecks []ListeningResult    `json:"listening_checks,omitempty"`
 	JournalChecks   []JournalResult      `json:"journal_checks,omitempty"`
+	FileChecks      []FileCheckResult    `json:"file_checks,omitempty"`
+	DirectoryChecks []DirectoryResult    `json:"directory_checks,omitempty"`
+	LogChecks       []LogCheckResult     `json:"log_checks,omitempty"`
 	// StandardTools contains non-sensitive availability facts for common POSIX,
 	// Linux, and operational tools. It is populated only when tool_inventory is enabled.
 	StandardTools map[string]bool `json:"standard_tools,omitempty"`
@@ -315,6 +318,43 @@ type JournalResult struct {
 	Name     string `json:"name,omitempty"`
 	Unit     string `json:"unit,omitempty"`
 	Priority string `json:"priority"`
+	Count    int    `json:"count"`
+	MaxCount int    `json:"max_count"`
+	OK       bool   `json:"ok"`
+	Error    string `json:"error,omitempty"`
+}
+
+// FileCheckResult holds metadata collected with test and stat. File contents
+// are intentionally never transferred from the target.
+type FileCheckResult struct {
+	Name       string `json:"name,omitempty"`
+	Path       string `json:"path"`
+	SizeBytes  int64  `json:"size_bytes,omitempty"`
+	AgeSeconds int64  `json:"age_seconds,omitempty"`
+	OK         bool   `json:"ok"`
+	Error      string `json:"error,omitempty"`
+}
+
+// DirectoryResult holds bounded, agentless directory measurements from du
+// and, when configured, find. FileCount is capped at MaxFileCount + 1.
+type DirectoryResult struct {
+	Name            string `json:"name,omitempty"`
+	Path            string `json:"path"`
+	UsedBytes       int64  `json:"used_bytes,omitempty"`
+	FileCount       int    `json:"file_count,omitempty"`
+	MaxFileCount    int    `json:"max_file_count,omitempty"`
+	FileCountCapped bool   `json:"file_count_capped,omitempty"`
+	OK              bool   `json:"ok"`
+	Error           string `json:"error,omitempty"`
+}
+
+// LogCheckResult holds a bounded pattern count collected with tail and grep.
+// It does not include lines from the target log file.
+type LogCheckResult struct {
+	Name     string `json:"name,omitempty"`
+	Path     string `json:"path"`
+	Pattern  string `json:"pattern"`
+	Lines    int    `json:"lines"`
 	Count    int    `json:"count"`
 	MaxCount int    `json:"max_count"`
 	OK       bool   `json:"ok"`

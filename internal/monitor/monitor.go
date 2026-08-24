@@ -740,14 +740,17 @@ func (m *Monitor) gatherAll(ctx context.Context, c runner, metrics *ServerMetric
 		metrics.CustomChecks = append(metrics.CustomChecks, result)
 	}
 
-	// Standard-Linux-tool-based SSH probes (systemctl, pgrep, ss, journalctl).
-	// These commands are Linux-specific, so other platforms are skipped
-	// rather than guessed at.
-	if metrics.Platform == "Linux" {
+	// Agentless target-side probes. Process and socket probes have portable
+	// fallbacks (ps/grep and netstat); service and journal probes explicitly
+	// report unsupported when a target lacks their optional utility.
+	if metrics.Platform != string(platform.Windows) {
 		metrics.ServiceChecks = runServiceChecks(ctx, c, srv.Checks.Service)
 		metrics.ProcessChecks = runProcessChecks(ctx, c, srv.Checks.Process)
 		metrics.ListeningChecks = runListeningChecks(ctx, c, srv.Checks.Listening)
 		metrics.JournalChecks = runJournalChecks(ctx, c, srv.Checks.Journal)
+		metrics.FileChecks = runFileChecks(ctx, c, srv.Checks.File)
+		metrics.DirectoryChecks = runDirectoryChecks(ctx, c, srv.Checks.Directory)
+		metrics.LogChecks = runLogChecks(ctx, c, srv.Checks.Log)
 	}
 	return nil
 }

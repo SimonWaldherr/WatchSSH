@@ -392,6 +392,24 @@ func TestAlertManager_ToolProbeMetrics(t *testing.T) {
 	}
 }
 
+func TestAlertManager_PortableUnixProbeMetrics(t *testing.T) {
+	metrics := []ServerMetrics{{
+		ServerName:      "app-01",
+		FileChecks:      []FileCheckResult{{Name: "pid", OK: false, AgeSeconds: 4000, SizeBytes: 12}},
+		DirectoryChecks: []DirectoryResult{{Name: "cache", OK: false, UsedBytes: 2048, FileCount: 11}},
+		LogChecks:       []LogCheckResult{{Name: "errors", OK: false, Count: 3}},
+	}}
+	cfg := &config.Config{Alerts: config.AlertsConfig{Cooldown: 0, Rules: []config.AlertRule{
+		{Name: "pid-missing", Metric: "file_failed", Operator: ">", Threshold: 0, Probe: "pid"},
+		{Name: "stale-pid", Metric: "file_age", Operator: ">", Threshold: 3600, Probe: "pid"},
+		{Name: "cache-full", Metric: "directory_usage_bytes", Operator: ">", Threshold: 1024, Probe: "cache"},
+		{Name: "errors", Metric: "log_match_count", Operator: ">", Threshold: 2, Probe: "errors"},
+	}}}
+	if firings := NewAlertManager().Evaluate(metrics, cfg); len(firings) != 4 {
+		t.Fatalf("portable Unix probe firings = %#v", firings)
+	}
+}
+
 func TestAlertManager_BoardMetrics(t *testing.T) {
 	temp := 82.5
 	rssi := -78.0

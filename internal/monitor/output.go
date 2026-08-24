@@ -308,6 +308,66 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 		divider()
 	}
 
+	// Structured target-side probes deliberately show only metadata and counts.
+	// This keeps an interactive console useful without exposing log content.
+	if len(m.ServiceChecks)+len(m.ProcessChecks)+len(m.ListeningChecks)+len(m.JournalChecks)+len(m.FileChecks)+len(m.DirectoryChecks)+len(m.LogChecks) > 0 {
+		line("Unix SSH probes:")
+		for _, c := range m.ServiceChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  service   %-20s %s", truncate(c.Name, 20), status))
+		}
+		for _, c := range m.ProcessChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  process   %-20s %s (%d matched)", truncate(c.Name, 20), status, c.Count))
+		}
+		for _, c := range m.ListeningChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  listener  %-20s %s", truncate(c.Name, 20), status))
+		}
+		for _, c := range m.JournalChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  journal   %-20s %s (%d entries)", truncate(c.Name, 20), status, c.Count))
+		}
+		for _, c := range m.FileChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  stat      %-20s %s (%s, age %ds)", truncate(c.Name, 20), status, formatBytes(c.SizeBytes), c.AgeSeconds))
+		}
+		for _, c := range m.DirectoryChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			extra := ""
+			if c.MaxFileCount > 0 {
+				extra = fmt.Sprintf(", %d files", c.FileCount)
+			}
+			line(fmt.Sprintf("  du        %-20s %s (%s%s)", truncate(c.Name, 20), status, formatBytes(c.UsedBytes), extra))
+		}
+		for _, c := range m.LogChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  log       %-20s %s (%d matches)", truncate(c.Name, 20), status, c.Count))
+		}
+		divider()
+	}
+
 	// Processes
 	if len(m.Processes) > 0 {
 		line(fmt.Sprintf("%-8s %-12s %5s %5s  %s", "PID", "USER", "CPU%", "MEM%", "COMMAND"))

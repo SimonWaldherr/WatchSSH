@@ -150,3 +150,53 @@ func TestRunJournalChecks(t *testing.T) {
 		t.Errorf("unsupported result = %+v", results[2])
 	}
 }
+
+func TestRunFileChecks(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		switch {
+		case strings.Contains(cmd, "'/run/app.pid'"):
+			return "12 0", nil
+		case strings.Contains(cmd, "'/missing'"):
+			return "missing", nil
+		default:
+			return "", nil
+		}
+	}}
+	checks := []config.FileCheck{
+		{Name: "pid", Path: "/run/app.pid", MinSizeBytes: 1},
+		{Name: "missing", Path: "/missing"},
+	}
+	results := runFileChecks(context.Background(), r, checks)
+	if !results[0].OK || results[0].SizeBytes != 12 {
+		t.Errorf("file result = %+v", results[0])
+	}
+	if results[1].OK || results[1].Error == "" {
+		t.Errorf("missing file result = %+v", results[1])
+	}
+}
+
+func TestRunDirectoryChecksStopsFileCountAtLimit(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		if strings.Contains(cmd, "find") {
+			return "11", nil
+		}
+		return "4096", nil
+	}}
+	results := runDirectoryChecks(context.Background(), r, []config.DirectoryCheck{{Name: "cache", Path: "/var/cache/app", MaxUsageBytes: 8192, MaxFileCount: 10}})
+	if results[0].OK || !results[0].FileCountCapped || results[0].FileCount != 11 {
+		t.Errorf("directory result = %+v", results[0])
+	}
+}
+
+func TestRunLogChecksDoesNotExposeLogContent(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		if !strings.Contains(cmd, "grep -E -c") || !strings.Contains(cmd, "'/var/log/app.log'") {
+			t.Fatalf("unexpected log command %q", cmd)
+		}
+		return "3\n", nil
+	}}
+	results := runLogChecks(context.Background(), r, []config.LogCheck{{Name: "errors", Path: "/var/log/app.log", Pattern: "ERROR", Lines: 100, MaxCount: 2}})
+	if results[0].OK || results[0].Count != 3 || results[0].Error == "" {
+		t.Errorf("log result = %+v", results[0])
+	}
+}

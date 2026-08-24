@@ -321,6 +321,29 @@ func TestServerDetailShowsDockerAndCollectorDiagnostics(t *testing.T) {
 	}
 }
 
+func TestServerDetailShowsAgentlessUnixToolProbes(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	state.Update([]monitor.ServerMetrics{{
+		ServerName:      "app-01",
+		FileChecks:      []monitor.FileCheckResult{{Name: "pid", Path: "/run/app.pid", SizeBytes: 12, AgeSeconds: 4, OK: true}},
+		DirectoryChecks: []monitor.DirectoryResult{{Name: "cache", Path: "/var/cache/app", UsedBytes: 1024, MaxFileCount: 10, FileCount: 11, FileCountCapped: true, OK: false, Error: "file count exceeds 10"}},
+		LogChecks:       []monitor.LogCheckResult{{Name: "errors", Path: "/var/log/app.log", Pattern: "ERROR", Lines: 200, Count: 1, MaxCount: 0, OK: false}},
+	}}, nil)
+	srv := NewServer(state, ":0")
+	req := httptest.NewRequest(http.MethodGet, "/server/app-01", nil)
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "file_failed", "directory_failed", "log_failed"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("response body missing %q", want)
+		}
+	}
+}
+
 func TestAddServerWithProfileAndChecks(t *testing.T) {
 	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
 	cfg := &config.Config{}
@@ -462,6 +485,9 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 	add(url.Values{"server": {"app-01"}, "kind": {"process"}, "pattern": {"nginx: worker"}, "min_count": {"2"}})
 	add(url.Values{"server": {"app-01"}, "kind": {"listening"}, "probe_port": {"443"}, "protocol": {"tcp"}})
 	add(url.Values{"server": {"app-01"}, "kind": {"journal"}, "unit": {"sshd.service"}, "priority": {"crit"}, "since_minutes": {"15"}, "max_count": {"2"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"file"}, "path": {"/run/app.pid"}, "max_age_seconds": {"3600"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"directory"}, "path": {"/var/cache/app"}, "max_usage_bytes": {"1024"}, "max_file_count": {"10"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"log"}, "path": {"/var/log/app.log"}, "pattern": {"ERROR"}, "log_lines": {"500"}, "max_count": {"2"}})
 
 	checks := state.Config().Servers[0].Checks
 	if len(checks.Service) != 1 || checks.Service[0].Unit != "nginx.service" {
@@ -476,8 +502,17 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 	if len(checks.Journal) != 1 || checks.Journal[0].Unit != "sshd.service" || checks.Journal[0].Priority != "crit" || checks.Journal[0].SinceMinutes != 15 || checks.Journal[0].MaxCount != 2 {
 		t.Fatalf("journal checks = %#v", checks.Journal)
 	}
+	if len(checks.File) != 1 || checks.File[0].Path != "/run/app.pid" || checks.File[0].MaxAgeSeconds != 3600 {
+		t.Fatalf("file checks = %#v", checks.File)
+	}
+	if len(checks.Directory) != 1 || checks.Directory[0].Path != "/var/cache/app" || checks.Directory[0].MaxFileCount != 10 {
+		t.Fatalf("directory checks = %#v", checks.Directory)
+	}
+	if len(checks.Log) != 1 || checks.Log[0].Path != "/var/log/app.log" || checks.Log[0].Pattern != "ERROR" || checks.Log[0].Lines != 500 {
+		t.Fatalf("log checks = %#v", checks.Log)
+	}
 
-	for _, kind := range []string{"service", "process", "listening", "journal"} {
+	for _, kind := range []string{"service", "process", "listening", "journal", "file", "directory", "log"} {
 		remove := url.Values{"server": {"app-01"}, "kind": {kind}, "index": {"0"}}
 		req := httptest.NewRequest(http.MethodPost, "/probes/remove", strings.NewReader(remove.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -488,7 +523,7 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 		}
 	}
 	checks = state.Config().Servers[0].Checks
-	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 {
+	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 || len(checks.File) != 0 || len(checks.Directory) != 0 || len(checks.Log) != 0 {
 		t.Fatalf("checks after removal = %#v", checks)
 	}
 }
@@ -515,6 +550,23 @@ func TestAddAlertWithHTTPURL(t *testing.T) {
 	}
 	rules := state.Config().Alerts.Rules
 	if len(rules) != 1 || rules[0].URL != "https://example.test/health" {
+		t.Fatalf("rules = %#v", rules)
+	}
+}
+
+func TestAddAlertWithProbeScope(t *testing.T) {
+	state := NewState(&config.Config{Servers: []config.Server{{Name: "app-01", Local: true}}}, "")
+	srv := NewServer(state, ":0")
+	form := url.Values{"name": {"log-errors"}, "metric": {"log_match_count"}, "operator": {">"}, "threshold": {"0"}, "probe": {"errors"}, "servers": {"app-01"}}
+	req := httptest.NewRequest(http.MethodPost, "/alerts/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	srv.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	rules := state.Config().Alerts.Rules
+	if len(rules) != 1 || rules[0].Probe != "errors" {
 		t.Fatalf("rules = %#v", rules)
 	}
 }

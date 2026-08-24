@@ -343,6 +343,15 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 	for index, probe := range metric.JournalChecks {
 		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "journal", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("journal-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
 	}
+	for index, probe := range metric.FileChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "file", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("file-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.DirectoryChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "directory", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("directory-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.LogChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "log", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("log-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
 	snapshot.ProbeCount = len(snapshot.Probes)
 	failedTypes := make(map[string]struct{})
 	for _, probe := range snapshot.Probes {
