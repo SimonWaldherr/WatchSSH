@@ -7,9 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/robfig/cron/v3"
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
+
+	"github.com/SimonWaldherr/WatchSSH/internal/schedule"
 )
 
 // AuthType specifies how to authenticate with an SSH server.
@@ -535,8 +536,8 @@ type WatchdogConfig struct {
 	SystemPrompt        string   `yaml:"system_prompt"`
 }
 
-// JobUploadConfig describes one local artifact uploaded to a configured SSH
-// target via SFTP after a scheduled job has completed successfully.
+// JobUploadConfig describes one local artifact uploaded to a configured Unix
+// SSH target through its standard SCP receiver after a scheduled job succeeds.
 type JobUploadConfig struct {
 	Server            string `yaml:"server"`
 	Source            string `yaml:"source"`
@@ -1168,8 +1169,6 @@ func validateRemediations(remediations []RemediationConfig, servers []Server) er
 	return nil
 }
 
-var jobCronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
-
 func validateScheduledJobs(jobs []ScheduledJobConfig, servers []Server) error {
 	serverByName := make(map[string]Server, len(servers))
 	for _, server := range servers {
@@ -1188,7 +1187,7 @@ func validateScheduledJobs(jobs []ScheduledJobConfig, servers []Server) error {
 		if strings.TrimSpace(job.Schedule) == "" {
 			return fmt.Errorf("jobs[%d] (%q).schedule is required", i, name)
 		}
-		if _, err := jobCronParser.Parse(job.Schedule); err != nil {
+		if _, err := schedule.Parse(job.Schedule); err != nil {
 			return fmt.Errorf("jobs[%d] (%q).schedule is invalid: %w", i, name, err)
 		}
 		if job.Timeout <= 0 {
@@ -1212,8 +1211,8 @@ func validateScheduledJobs(jobs []ScheduledJobConfig, servers []Server) error {
 			if !filepath.IsAbs(upload.Source) {
 				return fmt.Errorf("jobs[%d] (%q).uploads[%d].source must be an absolute local path", i, name, j)
 			}
-			if !isAbsoluteProbePath(upload.Destination) {
-				return fmt.Errorf("jobs[%d] (%q).uploads[%d].destination must be an absolute remote path", i, name, j)
+			if !isAbsoluteProbePath(upload.Destination) || strings.ContainsAny(upload.Destination, "\x00\r\n") {
+				return fmt.Errorf("jobs[%d] (%q).uploads[%d].destination must be an absolute remote path without control characters", i, name, j)
 			}
 			key := upload.Server + "\x00" + upload.Destination
 			if _, exists := destinations[key]; exists {

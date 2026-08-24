@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"github.com/SimonWaldherr/WatchSSH/internal/schedule"
 )
 
 func TestRunScheduledCommandUsesConfiguredWorkingDirectory(t *testing.T) {
@@ -41,21 +42,21 @@ func TestRunScheduledCommandHonorsCancellation(t *testing.T) {
 func TestJobManagerStartsRunOnStartOnlyOnce(t *testing.T) {
 	manager := NewJobManager()
 	defer manager.Stop()
-	schedule, err := scheduledJobParser.Parse("0 * * * *")
+	definition, err := schedule.Parse("@yearly")
 	if err != nil {
 		t.Fatal(err)
 	}
 	job := config.ScheduledJobConfig{Name: "osm", RunOnStart: true}
 	now := time.Now()
-	if !manager.startDue(job, schedule, now) {
+	if !manager.startDue(job, definition, now) {
 		t.Fatal("run_on_start job should start")
 	}
-	if manager.startDue(job, schedule, now) {
+	if manager.startDue(job, definition, now) {
 		t.Fatal("running job must not overlap")
 	}
 	manager.finished(job.Name, now)
 	manager.wg.Done()
-	if manager.startDue(job, schedule, now.Add(time.Minute)) {
+	if manager.startDue(job, definition, now.Add(time.Minute)) {
 		t.Fatal("job should wait for its next cron occurrence")
 	}
 }

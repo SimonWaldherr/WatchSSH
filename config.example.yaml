@@ -364,12 +364,13 @@ servers:
 
 
 # -----------------------------------------------------------------------------
-# Scheduled local jobs and SFTP artifact uploads
+# Scheduled local jobs and SCP artifact uploads
 # -----------------------------------------------------------------------------
 
 # Jobs run on the WatchSSH host, not on a target. Use this for recurring local
 # preparation work, then upload explicit resulting files through the target's
-# existing SSH/SFTP connection, authentication, bastion, and host-key policy.
+# existing SSH connection, authentication, bastion, and host-key policy. The
+# remote Unix target needs its standard scp receiver and mkdir/mv utilities.
 # A transfer is uploaded to a sibling .partial file and renamed only after it
 # finishes successfully, so readers never see a truncated published artifact.
 # jobs:

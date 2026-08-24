@@ -10,15 +10,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/robfig/cron/v3"
-
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
+	"github.com/SimonWaldherr/WatchSSH/internal/schedule"
 	sshclient "github.com/SimonWaldherr/WatchSSH/internal/ssh"
 )
 
 const jobOutputLimit = 8 * 1024
-
-var scheduledJobParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 
 // JobManager runs enabled local jobs at most once for each due schedule. It
 // keeps no durable state: after a WatchSSH restart, only jobs with
@@ -82,13 +79,13 @@ func (jm *JobManager) RunDue(cfg *config.Config) {
 		if !job.Enabled {
 			continue
 		}
-		schedule, err := scheduledJobParser.Parse(job.Schedule)
+		parsedSchedule, err := schedule.Parse(job.Schedule)
 		if err != nil {
 			// Configuration validation rejects this before the monitor starts.
 			log.Printf("job %q ignored: invalid schedule: %v", job.Name, err)
 			continue
 		}
-		if !jm.startDue(job, schedule, now) {
+		if !jm.startDue(job, parsedSchedule, now) {
 			continue
 		}
 		go func(job config.ScheduledJobConfig) {
@@ -99,7 +96,7 @@ func (jm *JobManager) RunDue(cfg *config.Config) {
 	}
 }
 
-func (jm *JobManager) startDue(job config.ScheduledJobConfig, schedule cron.Schedule, now time.Time) bool {
+func (jm *JobManager) startDue(job config.ScheduledJobConfig, definition schedule.Schedule, now time.Time) bool {
 	jm.mu.Lock()
 	defer jm.mu.Unlock()
 	if jm.stopped || jm.running[job.Name] {
@@ -111,7 +108,7 @@ func (jm *JobManager) startDue(job config.ScheduledJobConfig, schedule cron.Sche
 			jm.lastRun[job.Name] = now
 			return false
 		}
-	} else if schedule.Next(lastRun).After(now) {
+	} else if !definition.Matches(now) || !lastRun.Before(now.Truncate(time.Minute)) {
 		return false
 	}
 	jm.running[job.Name] = true
@@ -260,7 +257,7 @@ func uploadJobArtifact(ctx context.Context, cfg *config.Config, servers map[stri
 		return 0, fmt.Errorf("connecting to upload target %q: %w", upload.Server, err)
 	}
 	defer client.Close()
-	bytesWritten, err := client.Upload(ctx, file, upload.Destination, upload.CreateDirectories)
+	bytesWritten, err := client.Upload(ctx, file, info.Size(), upload.Destination, upload.CreateDirectories)
 	if err != nil {
 		return bytesWritten, fmt.Errorf("uploading %s to %s:%s: %w", upload.Source, upload.Server, upload.Destination, err)
 	}

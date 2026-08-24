@@ -2,6 +2,7 @@
 package ssh
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -18,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -35,10 +35,11 @@ type Client interface {
 	// DialTCP opens a TCP connection from the SSH target with direct-tcpip.
 	// It does not invoke a remote shell or require netcat on the target.
 	DialTCP(ctx context.Context, host string, port int) (time.Duration, error)
-	// Upload copies an artifact to an absolute target path through SFTP. The
+	// Upload copies an artifact of sourceSize bytes to an absolute target path
+	// through SCP. The
 	// transfer uses the same SSH connection, authentication, bastion, and host
 	// key policy as Run. A temporary sibling file prevents partial replacements.
-	Upload(ctx context.Context, source io.Reader, destination string, createDirectories bool) (int64, error)
+	Upload(ctx context.Context, source io.Reader, sourceSize int64, destination string, createDirectories bool) (int64, error)
 	// Close releases the underlying connection.
 	Close() error
 }
@@ -203,47 +204,143 @@ func (c *sshClient) DialTCP(ctx context.Context, host string, port int) (time.Du
 	return time.Since(startedAt), nil
 }
 
-// Upload copies source into destination with SFTP. The final target path is
+// Upload copies source into destination with the standard SCP protocol. The final target path is
 // replaced only after the complete temporary upload succeeds, so scheduled
 // artifact jobs never leave a truncated published file behind.
-func (c *sshClient) Upload(ctx context.Context, source io.Reader, destination string, createDirectories bool) (int64, error) {
+func (c *sshClient) Upload(ctx context.Context, source io.Reader, sourceSize int64, destination string, createDirectories bool) (int64, error) {
 	if !strings.HasPrefix(destination, "/") {
-		return 0, fmt.Errorf("SFTP destination must be absolute")
+		return 0, fmt.Errorf("SCP destination must be absolute")
+	}
+	if strings.ContainsAny(destination, "\x00\r\n") {
+		return 0, fmt.Errorf("SCP destination contains a control character")
+	}
+	if sourceSize < 0 {
+		return 0, fmt.Errorf("SCP source size must not be negative")
 	}
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	client, err := sftp.NewClient(c.conn)
-	if err != nil {
-		return 0, fmt.Errorf("starting SFTP subsystem: %w", err)
-	}
-	defer client.Close()
 
 	if createDirectories {
-		if err := client.MkdirAll(path.Dir(destination)); err != nil {
+		if _, err := c.Run(ctx, "mkdir -p "+shellQuote(path.Dir(destination))); err != nil {
 			return 0, fmt.Errorf("creating remote directory for %s: %w", destination, err)
 		}
 	}
 	temporary := uploadTemporaryPath(destination)
-	remote, err := client.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	bytesWritten, err := c.uploadSCP(ctx, source, sourceSize, temporary)
 	if err != nil {
-		return 0, fmt.Errorf("opening temporary remote file %s: %w", temporary, err)
+		if ctx.Err() == nil {
+			_, _ = c.Run(ctx, "rm -f "+shellQuote(temporary))
+		}
+		return bytesWritten, fmt.Errorf("uploading %s: %w", destination, err)
 	}
-	bytesWritten, copyErr := copyWithContext(ctx, remote, source)
-	closeErr := remote.Close()
-	if copyErr != nil {
-		_ = client.Remove(temporary)
-		return bytesWritten, fmt.Errorf("uploading %s: %w", destination, copyErr)
-	}
-	if closeErr != nil {
-		_ = client.Remove(temporary)
-		return bytesWritten, fmt.Errorf("closing temporary remote file %s: %w", temporary, closeErr)
-	}
-	if err := client.Rename(temporary, destination); err != nil {
-		_ = client.Remove(temporary)
+	if _, err := c.Run(ctx, "mv -f "+shellQuote(temporary)+" "+shellQuote(destination)); err != nil {
+		if ctx.Err() == nil {
+			_, _ = c.Run(ctx, "rm -f "+shellQuote(temporary))
+		}
 		return bytesWritten, fmt.Errorf("publishing remote file %s: %w", destination, err)
 	}
 	return bytesWritten, nil
+}
+
+// uploadSCP implements the receiving side of the original SCP protocol over
+// the authenticated SSH connection. This avoids another transfer dependency
+// while retaining one SSH authentication and host-key verification path.
+func (c *sshClient) uploadSCP(ctx context.Context, source io.Reader, sourceSize int64, destination string) (int64, error) {
+	session, err := c.conn.NewSession()
+	if err != nil {
+		return 0, fmt.Errorf("creating SCP session: %w", err)
+	}
+	defer session.Close()
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return 0, fmt.Errorf("opening SCP input: %w", err)
+	}
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return 0, fmt.Errorf("opening SCP output: %w", err)
+	}
+	if err := session.Start("scp -t " + shellQuote(destination)); err != nil {
+		return 0, fmt.Errorf("starting remote SCP receiver: %w", err)
+	}
+
+	stopCancellation := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = session.Close()
+		case <-stopCancellation:
+		}
+	}()
+	defer close(stopCancellation)
+
+	responses := bufio.NewReader(stdout)
+	if err := readSCPResponse(responses); err != nil {
+		return 0, err
+	}
+	if _, err := fmt.Fprintf(stdin, "C0644 %d %s\n", sourceSize, path.Base(destination)); err != nil {
+		return 0, fmt.Errorf("sending SCP file header: %w", err)
+	}
+	if err := readSCPResponse(responses); err != nil {
+		return 0, err
+	}
+
+	bytesWritten, copyErr := copyWithContext(ctx, stdin, source)
+	if copyErr != nil {
+		if ctx.Err() != nil {
+			return bytesWritten, ctx.Err()
+		}
+		return bytesWritten, copyErr
+	}
+	if bytesWritten != sourceSize {
+		return bytesWritten, fmt.Errorf("source size changed during upload: copied %d bytes, expected %d", bytesWritten, sourceSize)
+	}
+	if _, err := stdin.Write([]byte{0}); err != nil {
+		return bytesWritten, fmt.Errorf("finishing SCP upload: %w", err)
+	}
+	if err := readSCPResponse(responses); err != nil {
+		return bytesWritten, err
+	}
+	if err := stdin.Close(); err != nil {
+		return bytesWritten, fmt.Errorf("closing SCP input: %w", err)
+	}
+	if err := session.Wait(); err != nil {
+		if ctx.Err() != nil {
+			return bytesWritten, ctx.Err()
+		}
+		return bytesWritten, fmt.Errorf("waiting for remote SCP receiver: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return bytesWritten, err
+	}
+	return bytesWritten, nil
+}
+
+func readSCPResponse(responses *bufio.Reader) error {
+	status, err := responses.ReadByte()
+	if err != nil {
+		return fmt.Errorf("reading SCP response: %w", err)
+	}
+	switch status {
+	case 0:
+		return nil
+	case 1, 2:
+		message, readErr := responses.ReadString('\n')
+		if readErr != nil && len(message) == 0 {
+			return fmt.Errorf("reading SCP error: %w", readErr)
+		}
+		message = strings.TrimSpace(message)
+		if message == "" {
+			message = "remote SCP receiver rejected the upload"
+		}
+		return fmt.Errorf("SCP receiver: %s", message)
+	default:
+		return fmt.Errorf("invalid SCP response byte %d", status)
+	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 func copyWithContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {

@@ -973,22 +973,24 @@ dedicated least-privilege monitoring account and, when needed, a narrowly
 scoped `sudoers` rule such as `watchssh ALL=(root) NOPASSWD:
 /etc/init.d/storefront restart`; do not grant unrestricted sudo access.
 
-### Scheduled Local Jobs and SFTP Uploads
+### Scheduled Local Jobs and SCP Uploads
 
 WatchSSH can also prepare and publish artifacts from its own host. This fits a
 Mac mini that downloads a Geofabrik extract, transforms it locally, and
 publishes the finished file to a Hetzner server. A job is configuration-owned:
-it runs a bounded local POSIX-shell command at a standard five-field cron
-schedule (or a descriptor such as `@daily`) and uploads only the explicitly
-listed local files through SFTP. Jobs do not run in `--once` mode.
+it runs a bounded local POSIX-shell command at a five-field cron schedule
+(wildcards, lists, ranges, steps, and descriptors such as `@daily`) and
+uploads only the explicitly listed local files through SCP. Jobs do not run in
+`--once` mode.
 
 Transfers reuse the target's normal SSH configuration, including key, password
 or Vault-backed authentication, bastion, non-default port, and strict host-key
-verification. When requested, the remote directory is created. Each artifact
-is first uploaded next to its final name as a random `.partial` file, then
-renamed only after the upload completes. A failed transfer therefore leaves an
-existing published artifact untouched. Job command output is intentionally
-discarded rather than stored in logs or shown in the dashboard.
+verification. The target needs the standard Unix `scp`, `mkdir`, and `mv`
+tools. When requested, the remote directory is created. Each artifact is first
+uploaded next to its final name as a random `.partial` file, then renamed only
+after the upload completes. A failed transfer therefore leaves an existing
+published artifact untouched. Job command output is intentionally discarded
+rather than stored in logs or shown in the dashboard.
 
 ```yaml
 servers:

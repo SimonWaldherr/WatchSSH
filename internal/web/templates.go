@@ -316,7 +316,7 @@ const allTemplates = `
 {{define "jobs-page"}}
 {{template "hdr" .}}
 <div class="page-intro">
-  <div><h2>Scheduled Jobs</h2><p>Local preparation jobs and declared SFTP artifact transfers.</p></div>
+  <div><h2>Scheduled Jobs</h2><p>Local preparation jobs and declared SSH artifact transfers.</p></div>
   <span style="font-size:.8rem;color:var(--text-faint)">Updated every 30 seconds</span>
 </div>
 

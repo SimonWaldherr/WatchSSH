@@ -89,7 +89,7 @@ type JobResult struct {
 	Uploads    []JobUploadResult `json:"uploads,omitempty"`
 }
 
-// JobUploadResult records one SFTP artifact transfer attempted by a job.
+// JobUploadResult records one SCP artifact transfer attempted by a job.
 type JobUploadResult struct {
 	Server      string `json:"server"`
 	Source      string `json:"source"`
