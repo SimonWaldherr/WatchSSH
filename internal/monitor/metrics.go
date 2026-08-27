@@ -40,13 +40,16 @@ type ServerMetrics struct {
 	// These agentless SSH probes run existing target-side tools. File, directory,
 	// and log probes use portable POSIX/core utilities; service and journal
 	// probes report unsupported rather than guessing when unavailable.
-	ServiceChecks   []ServiceResult      `json:"service_checks,omitempty"`
-	ProcessChecks   []ProcessCheckResult `json:"process_checks,omitempty"`
-	ListeningChecks []ListeningResult    `json:"listening_checks,omitempty"`
-	JournalChecks   []JournalResult      `json:"journal_checks,omitempty"`
-	FileChecks      []FileCheckResult    `json:"file_checks,omitempty"`
-	DirectoryChecks []DirectoryResult    `json:"directory_checks,omitempty"`
-	LogChecks       []LogCheckResult     `json:"log_checks,omitempty"`
+	ServiceChecks   []ServiceResult              `json:"service_checks,omitempty"`
+	ProcessChecks   []ProcessCheckResult         `json:"process_checks,omitempty"`
+	ListeningChecks []ListeningResult            `json:"listening_checks,omitempty"`
+	JournalChecks   []JournalResult              `json:"journal_checks,omitempty"`
+	FileChecks      []FileCheckResult            `json:"file_checks,omitempty"`
+	DirectoryChecks []DirectoryResult            `json:"directory_checks,omitempty"`
+	LogChecks       []LogCheckResult             `json:"log_checks,omitempty"`
+	CommandChecks   []CommandCheckResult         `json:"command_checks,omitempty"`
+	HashChecks      []HashCheckResult            `json:"hash_checks,omitempty"`
+	CertFileChecks  []CertificateFileCheckResult `json:"certificate_file_checks,omitempty"`
 	// StandardTools contains non-sensitive availability facts for common POSIX,
 	// Linux, and operational tools. It is populated only when tool_inventory is enabled.
 	StandardTools map[string]bool `json:"standard_tools,omitempty"`
@@ -382,6 +385,40 @@ type LogCheckResult struct {
 	MaxCount int    `json:"max_count"`
 	OK       bool   `json:"ok"`
 	Error    string `json:"error,omitempty"`
+}
+
+// CommandCheckResult records whether a command is available to the SSH user.
+// ResolvedPath may also be a shell builtin name for POSIX builtins.
+type CommandCheckResult struct {
+	Name         string `json:"name,omitempty"`
+	Command      string `json:"command"`
+	ResolvedPath string `json:"resolved_path,omitempty"`
+	OK           bool   `json:"ok"`
+	Error        string `json:"error,omitempty"`
+}
+
+// HashCheckResult records a target-side integrity comparison. It contains no
+// file data; only a configured expected digest and the computed digest.
+type HashCheckResult struct {
+	Name           string `json:"name,omitempty"`
+	Path           string `json:"path"`
+	Algorithm      string `json:"algorithm"`
+	ExpectedDigest string `json:"expected_digest"`
+	ObservedDigest string `json:"observed_digest,omitempty"`
+	OK             bool   `json:"ok"`
+	Error          string `json:"error,omitempty"`
+}
+
+// CertificateFileCheckResult records metadata read from a target-side PEM
+// certificate. ExpiresAt remains nil when the certificate could not be read.
+type CertificateFileCheckResult struct {
+	Name        string     `json:"name,omitempty"`
+	Path        string     `json:"path"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	ExpiresDays int        `json:"expires_days"`
+	WarnDays    int        `json:"warn_days"`
+	OK          bool       `json:"ok"`
+	Error       string     `json:"error,omitempty"`
 }
 
 // ContainerInfo represents a single running Docker container and its resource usage.

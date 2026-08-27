@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/SimonWaldherr/WatchSSH/internal/config"
@@ -77,6 +78,67 @@ servers:
 `)
 	if _, err := config.Load(path); err == nil {
 		t.Fatal("expected invalid web auth hash to be rejected")
+	}
+}
+
+func TestLoad_RejectsUnauthenticatedPublicDashboard(t *testing.T) {
+	path := writeConfig(t, `
+web:
+  enabled: true
+  listen: ":8080"
+`)
+	_, err := config.Load(path)
+	if err == nil || !strings.Contains(err.Error(), "publicly reachable") {
+		t.Fatalf("Load() error = %v, want unauthenticated public-dashboard rejection", err)
+	}
+}
+
+func TestLoad_AllowsUnauthenticatedLoopbackDashboard(t *testing.T) {
+	path := writeConfig(t, `
+web:
+  enabled: true
+  listen: "127.0.0.1:8080"
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Web.Listen != "127.0.0.1:8080" {
+		t.Fatalf("Web.Listen = %q", cfg.Web.Listen)
+	}
+}
+
+func TestLoad_AllowsExplicitUnauthenticatedPublicDashboard(t *testing.T) {
+	path := writeConfig(t, `
+web:
+  enabled: true
+  listen: ":8080"
+  allow_unauthenticated_public: true
+`)
+	if _, err := config.Load(path); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+}
+
+func TestLoadOrDefaultUsesLoopbackDashboard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new-config.yaml")
+	cfg, err := config.LoadOrDefault(path)
+	if err != nil {
+		t.Fatalf("LoadOrDefault() error = %v", err)
+	}
+	if !cfg.Web.Enabled || cfg.Web.Listen != "127.0.0.1:8080" {
+		t.Fatalf("default web config = %#v, want enabled loopback dashboard", cfg.Web)
+	}
+}
+
+func TestSave_RejectsUnauthenticatedPublicDashboard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := config.Save(&config.Config{Web: config.WebConfig{Enabled: true, Listen: ":8080"}}, path)
+	if err == nil || !strings.Contains(err.Error(), "publicly reachable") {
+		t.Fatalf("Save() error = %v, want unauthenticated public-dashboard rejection", err)
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatalf("config file was written despite validation failure: %v", statErr)
 	}
 }
 
@@ -555,6 +617,13 @@ servers:
       log:
         - path: /var/log/app.log
           pattern: ERROR
+      command:
+        - command: docker
+      hash:
+        - path: /etc/application/config.yaml
+          expected_digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      certificate_file:
+        - path: /etc/letsencrypt/live/application/fullchain.pem
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -569,6 +638,15 @@ servers:
 	}
 	if checks.Log[0].Name != "/var/log/app.log" || checks.Log[0].Lines != 200 || checks.Log[0].Timeout != 5 {
 		t.Fatalf("log defaults = %#v", checks.Log[0])
+	}
+	if checks.Command[0].Name != "docker" || checks.Command[0].Timeout != 5 {
+		t.Fatalf("command defaults = %#v", checks.Command[0])
+	}
+	if checks.Hash[0].Name != "/etc/application/config.yaml" || checks.Hash[0].Algorithm != "sha256" || checks.Hash[0].Timeout != 10 {
+		t.Fatalf("hash defaults = %#v", checks.Hash[0])
+	}
+	if checks.CertFile[0].Name != "/etc/letsencrypt/live/application/fullchain.pem" || checks.CertFile[0].WarnDays != 30 || checks.CertFile[0].Timeout != 5 {
+		t.Fatalf("certificate file defaults = %#v", checks.CertFile[0])
 	}
 }
 
@@ -740,6 +818,34 @@ servers:
         - path: /var/log/app.log
           pattern: ERROR
           timeout: -1
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      command:
+        - command: ""
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      hash:
+        - path: /etc/application.conf
+          expected_digest: not-a-digest
+`,
+		`
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    username: monitor
+    checks:
+      certificate_file:
+        - path: relative.pem
 `,
 	}
 	for i, yamlDoc := range cases {

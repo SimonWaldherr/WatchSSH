@@ -410,6 +410,25 @@ func TestAlertManager_PortableUnixProbeMetrics(t *testing.T) {
 	}
 }
 
+func TestAlertManager_CommandIntegrityAndCertificateFileProbes(t *testing.T) {
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+	metrics := []ServerMetrics{{
+		ServerName:     "app-01",
+		CommandChecks:  []CommandCheckResult{{Name: "docker", OK: false}},
+		HashChecks:     []HashCheckResult{{Name: "app-config", OK: false}},
+		CertFileChecks: []CertificateFileCheckResult{{Name: "local-cert", OK: false, ExpiresAt: &expiresAt, ExpiresDays: 7}},
+	}}
+	cfg := &config.Config{Alerts: config.AlertsConfig{Cooldown: 0, Rules: []config.AlertRule{
+		{Name: "docker-missing", Metric: "command_failed", Operator: "==", Threshold: 1, Probe: "docker"},
+		{Name: "config-changed", Metric: "hash_failed", Operator: "==", Threshold: 1, Probe: "app-config"},
+		{Name: "local-cert-unhealthy", Metric: "certificate_file_failed", Operator: "==", Threshold: 1, Probe: "local-cert"},
+		{Name: "local-cert-expiring", Metric: "certificate_file_expires_days", Operator: "<", Threshold: 30, Probe: "local-cert"},
+	}}}
+	if firings := NewAlertManager().Evaluate(metrics, cfg); len(firings) != 4 {
+		t.Fatalf("additional Unix probe firings = %#v", firings)
+	}
+}
+
 func TestAlertManager_BoardMetrics(t *testing.T) {
 	temp := 82.5
 	rssi := -78.0

@@ -440,7 +440,11 @@ web:
 `/healthz`, `/livez`, and `/readyz` stay public for service managers and load balancers.
 Everything else under the dashboard listener, including `/metrics`, requires
 authentication. Keep the listener on loopback when a reverse proxy terminates
-TLS; otherwise bind it only to a protected internal network.
+TLS; otherwise bind it only to a protected internal network. WatchSSH rejects
+an unauthenticated listener outside loopback at startup and on UI save. This is
+intentional: set `web.auth` or use TLS termination and authentication at the
+reverse proxy. `web.allow_unauthenticated_public: true` exists only for an
+explicitly isolated, protected network.
 
 An example Linux service unit is included at
 [`deploy/systemd/watchssh.service`](deploy/systemd/watchssh.service):
@@ -650,10 +654,11 @@ kernel interfaces where available. Structured probes extend this model with
 read-only, typed checks and clear unsupported results instead of guesses.
 
 Portable probes work on Linux and Unix-like targets with their existing
-`test`, `stat`, `du`, `find`, `tail`, and `grep` commands. They require absolute
-paths; WatchSSH returns only metadata and aggregate counts, never file or log
-contents. The file-count probe stops after `max_file_count + 1` matches to keep
-large directory checks bounded.
+`test`, `stat`, `du`, `find`, `tail`, `grep`, `command`, checksum tools, and
+`openssl` where present. They require absolute paths; WatchSSH returns only
+metadata, digests, and aggregate counts, never file or log contents. The
+file-count probe stops after `max_file_count + 1` matches to keep large directory
+checks bounded.
 
 ```yaml
 checks:
@@ -673,6 +678,18 @@ checks:
       pattern: "(ERROR|FATAL)"
       lines: 500
       max_count: 0
+  command:
+    - name: docker-available
+      command: docker # command -v only; does not execute docker
+  hash:
+    - name: application-config-integrity
+      path: /etc/application/config.yaml
+      algorithm: sha256 # sha256 (default) or sha512
+      expected_digest: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+  certificate_file:
+    - name: local-tls-certificate
+      path: /etc/letsencrypt/live/application/fullchain.pem
+      warn_days: 30
   service:
     - name: nginx-active
       unit: nginx.service # systemctl, then a service-command fallback
@@ -706,7 +723,13 @@ bound to a port. `journal` remains an optional `journalctl` probe for systemd
 targets. Corresponding alert metrics include `file_failed`, `file_age`,
 `file_size`, `directory_failed`, `directory_usage_bytes`,
 `directory_file_count`, `log_failed`, and `log_match_count`; set `probe` in an
-alert rule to scope a metric to one named probe.
+alert rule to scope a metric to one named probe. `command_failed` detects a
+missing dependency without executing it; `hash_failed` detects configuration or
+artifact drift without copying a file; `certificate_file_failed` and
+`certificate_file_expires_days` cover a PEM file managed directly on the target.
+Hash probes try `sha256sum`/`sha512sum`, then `shasum`, then `openssl dgst`;
+certificate-file probes use `openssl x509 -enddate`. Unsupported tools are a
+clear probe failure and can be handled with a target-specific alert or runbook.
 
 ## HARP Integration
 
@@ -1162,7 +1185,10 @@ web:
 
 Then open `http://localhost:8080` in your browser. Use `web.auth` or a TLS
 terminating reverse proxy before exposing the dashboard beyond a trusted local
-network. Set `web.enabled: false` to run WatchSSH without an HTTP listener.
+network. The generated first-run configuration also binds to `127.0.0.1:8080`
+by default. State-changing dashboard requests use same-site CSRF tokens and
+are limited to 1 MiB. Set `web.enabled: false` to run WatchSSH without an HTTP
+listener.
 
 If your config has an empty `servers:` list, the UI and CLI still show a
 temporary `localhost` diagnostic target so you can inspect the host running

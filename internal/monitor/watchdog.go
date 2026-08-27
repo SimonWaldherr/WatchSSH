@@ -352,6 +352,20 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 	for index, probe := range metric.LogChecks {
 		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "log", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("log-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
 	}
+	for index, probe := range metric.CommandChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "command", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("command-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.HashChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "hash", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("hash-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.CertFileChecks {
+		entry := watchdogProbe{Type: "certificate_file", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("certificate-file-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)}
+		if probe.ExpiresAt != nil {
+			days := float64(probe.ExpiresDays)
+			entry.CertExpiresDays = &days
+		}
+		snapshot.Probes = append(snapshot.Probes, entry)
+	}
 	snapshot.ProbeCount = len(snapshot.Probes)
 	failedTypes := make(map[string]struct{})
 	for _, probe := range snapshot.Probes {

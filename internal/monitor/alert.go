@@ -788,6 +788,30 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return float64(c.Count), true
 			}
 		}
+	case "command_failed":
+		for _, c := range srv.CommandChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "hash_failed":
+		for _, c := range srv.HashChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "certificate_file_failed":
+		for _, c := range srv.CertFileChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "certificate_file_expires_days":
+		for _, c := range srv.CertFileChecks {
+			if matchesProbe(rule, c.Name) && c.ExpiresAt != nil && cmp(float64(c.ExpiresDays), rule.Operator, rule.Threshold) {
+				return float64(c.ExpiresDays), true
+			}
+		}
 	}
 	return 0, false
 }

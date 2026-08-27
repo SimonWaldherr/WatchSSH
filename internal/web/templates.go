@@ -47,7 +47,7 @@ tr:hover td{background:var(--surface-alt)}
 .form-grow{grid-column:span 2}
 .form-block{border-top:1px solid var(--border);margin-top:1rem;padding-top:1rem}
 .form-block h4{font-size:.82rem;color:var(--text-muted);margin:0 0 .75rem}
-.probe-details{border-top:1px solid var(--border);margin-top:.8rem;padding-top:.8rem}.probe-details summary{cursor:pointer;color:var(--link);font-size:.82rem;font-weight:600;user-select:none}.probe-details[open] summary{margin-bottom:.85rem}.probe-details summary:hover{color:var(--link-hover)}.m-error{width:100%;font-family:monospace;font-size:.72rem;color:var(--error-text);word-break:break-word;margin-top:.15rem}
+.probe-details{border-top:1px solid var(--border);margin-top:.8rem;padding-top:.8rem}.probe-details summary{cursor:pointer;color:var(--link);font-size:.82rem;font-weight:600;user-select:none}.probe-details[open] summary{margin-bottom:.85rem}.probe-details summary:hover{color:var(--link-hover)}.probe-kind-fields[hidden],#probe-network-fields[hidden]{display:none!important}.m-error{width:100%;font-family:monospace;font-size:.72rem;color:var(--error-text);word-break:break-word;margin-top:.15rem}
 .inline-check{display:flex;align-items:center;gap:.35rem;font-size:.82rem;color:var(--text-muted);margin:.45rem 0}
 label{display:block;font-size:.8rem;color:var(--text-muted);margin-bottom:.25rem;font-weight:500}
 input[type=text],input[type=number],input[type=password],input[type=email],select{width:100%;padding:.38rem .6rem;border:1px solid var(--border-strong);border-radius:5px;font-size:.85rem;background:var(--input-bg);color:var(--text)}
@@ -189,6 +189,33 @@ const allTemplates = `
     localStorage.setItem('watchssh-ui-theme',themeSelect.value);
     applyTheme(themeSelect.value);
   });
+  function csrfToken(){
+    var prefix='watchssh_csrf=';
+    return document.cookie.split(';').map(function(value){ return value.trim(); }).filter(function(value){ return value.indexOf(prefix)===0; }).map(function(value){ return value.slice(prefix.length); })[0] || '';
+  }
+  var csrf=csrfToken();
+  if(csrf){
+    document.querySelectorAll('form[method="post"]').forEach(function(form){
+      if(form.querySelector('input[name="csrf_token"]')) return;
+      var input=document.createElement('input');
+      input.type='hidden';
+      input.name='csrf_token';
+      input.value=csrf;
+      form.appendChild(input);
+    });
+    var originalFetch=window.fetch;
+    if(originalFetch) window.fetch=function(input, init){
+      var method=(init && init.method) || (input && input.method) || 'GET';
+      var target=typeof input==='string' ? input : input.url;
+      var sameOrigin=new URL(target,window.location.href).origin===window.location.origin;
+      if(['POST','PUT','PATCH','DELETE'].indexOf(method.toUpperCase())===-1 || !sameOrigin) return originalFetch(input,init);
+      var options=Object.assign({},init || {});
+      var headers=new Headers(options.headers || (input instanceof Request ? input.headers : undefined));
+      headers.set('X-WatchSSH-CSRF',csrf);
+      options.headers=headers;
+      return originalFetch(input,options);
+    };
+  }
   var healthFilters=document.querySelectorAll('[data-health-filter]');
   var serverCards=document.querySelectorAll('[data-server-status]');
   var emptyFilter=document.getElementById('server-filter-empty');
@@ -739,7 +766,7 @@ const allTemplates = `
 </div>
 {{end}}
 
-{{if or .Metrics.ServiceChecks .Metrics.ProcessChecks .Metrics.ListeningChecks .Metrics.JournalChecks .Metrics.FileChecks .Metrics.DirectoryChecks .Metrics.LogChecks}}
+{{if or .Metrics.ServiceChecks .Metrics.ProcessChecks .Metrics.ListeningChecks .Metrics.JournalChecks .Metrics.FileChecks .Metrics.DirectoryChecks .Metrics.LogChecks .Metrics.CommandChecks .Metrics.HashChecks .Metrics.CertFileChecks}}
 <div class="section">
   <div class="form-section-title"><h3>Agentless Unix Tool Probes</h3><span>Read-only commands executed over SSH on this target.</span></div>
   <div class="table-scroll"><table>
@@ -752,6 +779,9 @@ const allTemplates = `
     {{range .Metrics.FileChecks}}<tr><td><code>test + stat</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{fmtBytes .SizeBytes}}, age {{.AgeSeconds}}s</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "File probe failed" "file_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for file probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.DirectoryChecks}}<tr><td><code>du{{if .MaxFileCount}} + find{{end}}</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{fmtBytes .UsedBytes}}{{if .MaxFileCount}}, {{.FileCount}}{{if .FileCountCapped}}+{{end}} files (max {{.MaxFileCount}}){{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Directory probe failed" "directory_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for directory probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.LogChecks}}<tr><td><code>tail + grep</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{.Count}} matches in last {{.Lines}} lines, max {{.MaxCount}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Log probe failed" "log_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for log probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.CommandChecks}}<tr><td><code>command -v</code></td><td>{{.Name}}</td><td>{{.Command}}</td><td>{{if .ResolvedPath}}<code>{{.ResolvedPath}}</code>{{else}}not available{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Required command missing" "command_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for command probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.HashChecks}}<tr><td><code>sha*sum / shasum / openssl</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{.Algorithm}}{{if .ObservedDigest}} <code>{{printf "%.12s" .ObservedDigest}}...</code>{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "File integrity probe failed" "hash_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for file integrity probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.CertFileChecks}}<tr><td><code>openssl x509</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{if .ExpiresAt}}{{.ExpiresAt.Format "2006-01-02"}} ({{.ExpiresDays}} days; warn at {{.WarnDays}}){{else}}expiry unavailable{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Certificate file probe failed" "certificate_file_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for certificate file probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     </tbody>
   </table></div>
 </div>
@@ -877,13 +907,25 @@ const allTemplates = `
   <form method="post" action="/probes/add" class="probe-builder">
     <div class="form-row w3">
       <div><label for="probe-server">Target</label><select id="probe-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
-      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="file">File metadata (test + stat)</option><option value="directory">Directory usage (du + find)</option><option value="log">Log pattern (tail + grep)</option><option value="custom">Remote command</option><option value="service">Service state (systemctl / service)</option><option value="process">Process running (pgrep / ps)</option><option value="listening">Listening port (ss / netstat)</option><option value="journal">Journal errors (journalctl)</option></select></div>
+      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="file">File metadata (test + stat)</option><option value="directory">Directory usage (du + find)</option><option value="log">Log pattern (tail + grep)</option><option value="command">Required command (command -v)</option><option value="hash">File integrity (sha256 / sha512)</option><option value="certificate_file">PEM certificate file (openssl)</option><option value="custom">Remote command</option><option value="service">Service state (systemctl / service)</option><option value="process">Process running (pgrep / ps)</option><option value="listening">Listening port (ss / netstat)</option><option value="journal">Journal errors (journalctl)</option></select></div>
       <div><label for="probe-timeout">Timeout (seconds)</label><input id="probe-timeout" type="number" name="timeout" value="5" min="1"></div>
     </div>
-    <div class="form-row w3">
+    <div class="form-row w3" id="probe-network-fields">
       <div><label for="probe-target">URL or host</label><input id="probe-target" type="text" name="target" placeholder="https://service.example/health or db.internal"></div>
       <div><label for="probe-port">Port</label><input id="probe-port" type="number" name="probe_port" placeholder="80, 443, 5432" min="1" max="65535"></div>
       <div><label for="probe-source">TCP origin</label><select id="probe-source" name="source"><option value="monitor">Monitoring host</option><option value="target">Target network (SSH)</option></select></div>
+    </div>
+    <div class="form-row wide probe-kind-fields" data-probe-kinds="command" hidden>
+      <div><label for="probe-command">Required command</label><input id="probe-command" type="text" name="required_command" placeholder="docker or systemctl" autocomplete="off"></div>
+    </div>
+    <div class="form-row w3 probe-kind-fields" data-probe-kinds="hash" hidden>
+      <div><label for="probe-hash-path">Absolute file path</label><input id="probe-hash-path" type="text" name="hash_path" placeholder="/etc/application/config.yaml"></div>
+      <div><label for="probe-hash-algorithm">Integrity algorithm</label><select id="probe-hash-algorithm" name="algorithm"><option value="sha256">SHA-256</option><option value="sha512">SHA-512</option></select></div>
+      <div><label for="probe-expected-digest">Expected digest</label><input id="probe-expected-digest" type="text" name="expected_digest" placeholder="64 or 128 hexadecimal characters" spellcheck="false" autocomplete="off"></div>
+    </div>
+    <div class="form-row probe-kind-fields" data-probe-kinds="certificate_file" hidden>
+      <div><label for="probe-certificate-path">Absolute PEM path</label><input id="probe-certificate-path" type="text" name="certificate_path" placeholder="/etc/letsencrypt/live/app/fullchain.pem"></div>
+      <div><label for="probe-warn-days">Certificate expiry warning (days)</label><input id="probe-warn-days" type="number" name="warn_days" min="1" value="30"></div>
     </div>
     <div class="form-row mode-advanced">
       <div><label for="probe-method">HTTP method / DNS type</label><input id="probe-method" type="text" name="method" value="GET" placeholder="GET or A"></div>
@@ -986,7 +1028,7 @@ const allTemplates = `
     </div>
     <div class="form-row">
       <div><label for="server-username">SSH Username</label><input type="text" id="server-username" name="username" placeholder="monitor"></div>
-      <div><label id="auth-credential-label" for="auth-credential">Private Key File</label><input type="text" id="auth-credential" name="auth_credential" placeholder="~/.ssh/id_ed25519"></div>
+      <div><label id="auth-credential-label" for="auth-credential">Private Key File</label><input type="text" id="auth-credential" name="auth_credential" placeholder="~/.ssh/id_ed25519" autocomplete="off"><p class="profile-note" id="auth-credential-note">A key path is stored; key material stays outside WatchSSH.</p></div>
     </div>
     <div class="form-row mode-advanced">
       <div>
@@ -1122,10 +1164,13 @@ const allTemplates = `
   var authType = document.querySelector('[name=auth_type]');
   var credentialLabel = document.getElementById('auth-credential-label');
   var credential = document.getElementById('auth-credential');
+  var credentialNote = document.getElementById('auth-credential-note');
   var probeKind = document.getElementById('probe-kind');
   var probeTarget = document.getElementById('probe-target');
   var probePort = document.getElementById('probe-port');
   var probeSource = document.getElementById('probe-source');
+  var probeNetworkFields = document.getElementById('probe-network-fields');
+  var probeKindFields = document.querySelectorAll('.probe-kind-fields');
   var profileNotes = {
     '': 'Custom starts with host metrics. Add only the probes this target needs.',
     web: 'Adds ports 80/443 plus HTTP health, DNS and TLS checks for the selected host.',
@@ -1187,15 +1232,24 @@ const allTemplates = `
     if(authType.value === 'password'){
       credentialLabel.textContent = 'Password';
       credential.placeholder = 'password or environment reference';
+	  credential.type = 'password';
+	  credential.autocomplete = 'new-password';
+	  if(credentialNote) credentialNote.textContent = 'Saved in the local configuration file (0600). Prefer a YAML secret source for shared deployments.';
       return;
     }
     if(authType.value === 'agent'){
       credentialLabel.textContent = 'Credential';
       credential.placeholder = 'not required for SSH agent';
+	  credential.type = 'text';
+	  credential.autocomplete = 'off';
+	  if(credentialNote) credentialNote.textContent = 'Uses SSH_AUTH_SOCK from the WatchSSH process.';
       return;
     }
     credentialLabel.textContent = 'Private Key File';
     credential.placeholder = '~/.ssh/id_ed25519';
+	credential.type = 'text';
+	credential.autocomplete = 'off';
+	if(credentialNote) credentialNote.textContent = 'A key path is stored; key material stays outside WatchSSH.';
   }
   if(authType){ authType.addEventListener('change', updateCredentialHint); updateCredentialHint(); }
   function updateProbePreset(){
@@ -1209,17 +1263,29 @@ const allTemplates = `
       ntp:{placeholder:'time.cloudflare.com',port:'123',source:false},
       trace:{placeholder:'example.com',port:'',source:false},
       custom:{placeholder:'not required',port:'',source:false},
+      file:{placeholder:'not required — set the absolute target path below',port:'',source:false},
+      directory:{placeholder:'not required — set the absolute target path below',port:'',source:false},
+      log:{placeholder:'not required — set the absolute target path below',port:'',source:false},
+      command:{placeholder:'not required — set the required command below',port:'',source:false},
+      hash:{placeholder:'not required — set the file path and digest below',port:'',source:false},
+      certificate_file:{placeholder:'not required — set the certificate path below',port:'',source:false},
       service:{placeholder:'not required — set the systemd unit below',port:'',source:false},
       process:{placeholder:'not required — set the process pattern below',port:'',source:false},
       listening:{placeholder:'not required — set the port below',port:'',source:false},
       journal:{placeholder:'not required — set the unit and priority below',port:'',source:false}
     };
-    var noPortKinds = ['ping','dns','trace','custom','service','process','journal'];
+    var noPortKinds = ['ping','dns','trace','file','directory','log','command','hash','certificate_file','custom','service','process','journal'];
+    var noNetworkKinds = ['file','directory','log','command','hash','certificate_file','custom','service','process','listening','journal'];
     var preset = presets[probeKind.value] || presets.http;
     probeTarget.placeholder = preset.placeholder;
     probePort.value = preset.port;
     probePort.disabled = noPortKinds.indexOf(probeKind.value) !== -1;
     probeSource.disabled = !preset.source;
+    if(probeNetworkFields) probeNetworkFields.hidden = noNetworkKinds.indexOf(probeKind.value) !== -1;
+    probeKindFields.forEach(function(field){
+      var kinds = (field.getAttribute('data-probe-kinds') || '').split(/\s+/);
+      field.hidden = kinds.indexOf(probeKind.value) === -1;
+    });
   }
   if(probeKind){ probeKind.addEventListener('change', updateProbePreset); updateProbePreset(); }
   if(!btn) return;
@@ -1411,6 +1477,10 @@ const allTemplates = `
 		  <option value="directory_file_count">directory_file_count</option>
 		  <option value="log_failed">log_failed</option>
 		  <option value="log_match_count">log_match_count</option>
+		  <option value="command_failed">command_failed</option>
+		  <option value="hash_failed">hash_failed</option>
+		  <option value="certificate_file_failed">certificate_file_failed</option>
+		  <option value="certificate_file_expires_days">certificate_file_expires_days (days)</option>
 		  </optgroup>
           <optgroup label="Connectivity">
           <option value="ping_failed">ping_failed</option>
@@ -1627,6 +1697,7 @@ const allTemplates = `
   <div class="form-wrap">
     <div class="form-section-title"><h3>Web Dashboard</h3><span>Local operator interface and API endpoints.</span></div>
     <p class="restart-note"><strong>Restart required:</strong> a listen-address change takes effect after WatchSSH restarts. For shared access, configure <code>web.auth</code> with a bcrypt password hash in YAML or place the dashboard behind an authenticated TLS reverse proxy.</p>
+    {{if and .Config.Web.Enabled (not (webAuthConfigured .Config.Web.Auth))}}<div class="notice notice-err">This dashboard is protected by loopback access only. A public listener requires <code>web.auth</code> or an explicit YAML override.</div>{{else if webAuthConfigured .Config.Web.Auth}}<div class="notice notice-ok">Dashboard authentication is enabled for all endpoints except health checks.</div>{{end}}
     <div class="form-row">
       <div>
         <label>Enable Web Dashboard</label>
@@ -1637,7 +1708,7 @@ const allTemplates = `
       </div>
       <div class="mode-advanced">
         <label>Listen Address</label>
-        <input type="text" name="web_listen" value="{{.Config.Web.Listen}}" placeholder=":8080">
+        <input type="text" name="web_listen" value="{{.Config.Web.Listen}}" placeholder="127.0.0.1:8080">
       </div>
     </div>
   </div>

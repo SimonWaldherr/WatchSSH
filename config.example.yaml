@@ -94,9 +94,9 @@ storage:
 
 web:
   enabled: false
-  # Bind to loopback when a reverse proxy terminates TLS in front of WatchSSH.
-  # listen: "127.0.0.1:8080"
-  listen: ":8080"    # TCP address and port to listen on
+  # The default is loopback. Keep it this way when a reverse proxy terminates
+  # TLS in front of WatchSSH.
+  listen: "127.0.0.1:8080"
 
   # Optional protection for the dashboard, JSON APIs, and /metrics.
   # Keep healthz, livez, and readyz public for service managers and load balancers.
@@ -104,6 +104,10 @@ web:
   # auth:
   #   username: ops
   #   password_hash: "$2y$12$replace-with-the-hash-after-ops:"
+
+  # An unauthenticated dashboard may only bind to loopback by default.
+  # Set this explicitly only on a protected, isolated network.
+  # allow_unauthenticated_public: true
 
 
 # -----------------------------------------------------------------------------
@@ -262,6 +266,28 @@ servers:
           pattern: "(crit|alert|emerg)"
           lines: 500                  # tail only; no log content is returned
           max_count: 0
+          timeout: 5
+
+      # Verify operational dependencies without executing them.
+      command:
+        - name: docker-available
+          command: docker             # command -v only
+          timeout: 5
+
+      # File integrity without transferring the file. WatchSSH tries sha*sum,
+      # shasum, then openssl dgst on the target.
+      hash:
+        - name: application-config-integrity
+          path: /etc/application/config.yaml
+          algorithm: sha256           # sha256 (default) or sha512
+          expected_digest: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          timeout: 10
+
+      # Inspect the local PEM file before a certificate is exposed on a port.
+      certificate_file:
+        - name: local-tls-certificate
+          path: /etc/letsencrypt/live/web-01/fullchain.pem
+          warn_days: 30
           timeout: 5
 
   # ── macOS / Darwin server ────────────────────────────────────────────────
@@ -512,6 +538,26 @@ alerts:
       metric: tls_cert_expires_days
       operator: "<"
       threshold: 30
+
+    # Target-side PEM certificate expiry (for certificates not exposed publicly)
+    - name: LocalCertExpiringSoon
+      metric: certificate_file_expires_days
+      operator: "<"
+      threshold: 30
+      probe: local-tls-certificate
+
+    # Target-side operational dependency and file-integrity probes
+    - name: DockerCommandMissing
+      metric: command_failed
+      operator: "=="
+      threshold: 1
+      probe: docker-available
+
+    - name: ApplicationConfigChanged
+      metric: hash_failed
+      operator: "=="
+      threshold: 1
+      probe: application-config-integrity
 
     # Raspberry Pi / SBC board health
     - name: BoardTooHot

@@ -322,23 +322,31 @@ func (s *State) RemoveAlertRule(name string) {
 	s.cfg.Alerts.Rules = filtered
 }
 
-// UpdateGlobalSettings replaces the global (non-server, non-alert) config fields.
-func (s *State) UpdateGlobalSettings(interval, timeout, workers int, outputType, outputFile, storageType, storagePath string, storageRetentionDays, storageMaxSizeMB int, webListen string, webEnabled bool, knownHostsPath string, strictHostKey *bool) {
+// UpdateGlobalSettings validates and replaces the global (non-server,
+// non-alert) configuration fields. The live state remains unchanged when the
+// requested values are unsafe or otherwise invalid.
+func (s *State) UpdateGlobalSettings(interval, timeout, workers int, outputType, outputFile, storageType, storagePath string, storageRetentionDays, storageMaxSizeMB int, webListen string, webEnabled bool, knownHostsPath string, strictHostKey *bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cfg.Interval = interval
-	s.cfg.Timeout = timeout
-	s.cfg.Workers = workers
-	s.cfg.Output.Type = outputType
-	s.cfg.Output.File = outputFile
-	s.cfg.Storage.Type = storageType
-	s.cfg.Storage.Path = storagePath
-	s.cfg.Storage.RetentionDays = storageRetentionDays
-	s.cfg.Storage.MaxSizeMB = storageMaxSizeMB
-	s.cfg.Web.Enabled = webEnabled
-	s.cfg.Web.Listen = webListen
-	s.cfg.KnownHostsPath = knownHostsPath
-	s.cfg.StrictHostKeyChecking = strictHostKey
+	next := *s.cfg
+	next.Interval = interval
+	next.Timeout = timeout
+	next.Workers = workers
+	next.Output.Type = outputType
+	next.Output.File = outputFile
+	next.Storage.Type = storageType
+	next.Storage.Path = storagePath
+	next.Storage.RetentionDays = storageRetentionDays
+	next.Storage.MaxSizeMB = storageMaxSizeMB
+	next.Web.Enabled = webEnabled
+	next.Web.Listen = webListen
+	next.KnownHostsPath = knownHostsPath
+	next.StrictHostKeyChecking = strictHostKey
+	if err := config.Validate(&next); err != nil {
+		return err
+	}
+	*s.cfg = next
+	return nil
 }
 
 // SaveConfig writes the current configuration to the config file path that

@@ -213,3 +213,86 @@ func TestRunLogChecksDoesNotExposeLogContent(t *testing.T) {
 		t.Errorf("log result = %+v", results[0])
 	}
 }
+
+func TestRunCommandChecks(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		switch {
+		case strings.Contains(cmd, "command -v 'docker'"):
+			return "/usr/local/bin/docker\n", nil
+		case strings.Contains(cmd, "command -v 'missing-tool'"):
+			return "missing", nil
+		default:
+			t.Fatalf("unexpected command probe command %q", cmd)
+			return "", nil
+		}
+	}}
+	results := runCommandChecks(context.Background(), r, []config.CommandCheck{
+		{Name: "docker", Command: "docker", Timeout: 5},
+		{Name: "missing", Command: "missing-tool", Timeout: 5},
+	})
+	if len(results) != 2 || !results[0].OK || results[0].ResolvedPath != "/usr/local/bin/docker" {
+		t.Fatalf("available command result = %#v", results)
+	}
+	if results[1].OK || results[1].Error == "" || results[1].ResolvedPath != "" {
+		t.Fatalf("missing command result = %#v", results[1])
+	}
+}
+
+func TestRunHashChecksKeepsFileContentOnTarget(t *testing.T) {
+	goodDigest := strings.Repeat("a", 64)
+	badDigest := strings.Repeat("b", 64)
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		switch {
+		case strings.Contains(cmd, "'/etc/app.conf'"):
+			if !strings.Contains(cmd, "sha256sum") || !strings.Contains(cmd, "shasum -a 256") || !strings.Contains(cmd, "openssl dgst -sha256") {
+				t.Fatalf("hash fallback command = %q", cmd)
+			}
+			return goodDigest + "\n", nil
+		case strings.Contains(cmd, "'/etc/changed.conf'"):
+			return badDigest, nil
+		case strings.Contains(cmd, "'/etc/missing.conf'"):
+			return "missing", nil
+		default:
+			t.Fatalf("unexpected hash command %q", cmd)
+			return "", nil
+		}
+	}}
+	results := runHashChecks(context.Background(), r, []config.HashCheck{
+		{Name: "good", Path: "/etc/app.conf", Algorithm: "sha256", ExpectedDigest: goodDigest, Timeout: 10},
+		{Name: "changed", Path: "/etc/changed.conf", Algorithm: "sha256", ExpectedDigest: goodDigest, Timeout: 10},
+		{Name: "missing", Path: "/etc/missing.conf", Algorithm: "sha256", ExpectedDigest: goodDigest, Timeout: 10},
+	})
+	if len(results) != 3 || !results[0].OK || results[0].ObservedDigest != goodDigest {
+		t.Fatalf("matching hash result = %#v", results)
+	}
+	if results[1].OK || results[1].ObservedDigest != badDigest || results[1].Error == "" {
+		t.Fatalf("changed hash result = %#v", results[1])
+	}
+	if results[2].OK || results[2].Error == "" || results[2].ObservedDigest != "" {
+		t.Fatalf("missing hash result = %#v", results[2])
+	}
+}
+
+func TestRunCertificateFileChecks(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		switch {
+		case strings.Contains(cmd, "'/etc/ssl/live.pem'"):
+			return "notAfter=Dec 31 23:59:59 2099 GMT\n", nil
+		case strings.Contains(cmd, "'/etc/ssl/bad.pem'"):
+			return "invalid", nil
+		default:
+			t.Fatalf("unexpected certificate command %q", cmd)
+			return "", nil
+		}
+	}}
+	results := runCertificateFileChecks(context.Background(), r, []config.CertificateFileCheck{
+		{Name: "live", Path: "/etc/ssl/live.pem", WarnDays: 30, Timeout: 5},
+		{Name: "bad", Path: "/etc/ssl/bad.pem", WarnDays: 30, Timeout: 5},
+	})
+	if len(results) != 2 || !results[0].OK || results[0].ExpiresAt == nil || results[0].ExpiresDays < 365 {
+		t.Fatalf("valid certificate result = %#v", results)
+	}
+	if results[1].OK || results[1].Error == "" || results[1].ExpiresAt != nil {
+		t.Fatalf("invalid certificate result = %#v", results[1])
+	}
+}

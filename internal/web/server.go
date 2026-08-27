@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -56,6 +57,9 @@ var funcMap = template.FuncMap{
 	"processSortLabel":     processSortLabel,
 	"statusClass":          statusClass,
 	"capabilityRows":       capabilityRows,
+	"webAuthConfigured": func(auth *config.WebAuthConfig) bool {
+		return auth != nil
+	},
 	"not": func(v any) bool {
 		if v == nil {
 			return true
@@ -92,6 +96,13 @@ type Server struct {
 	startedAt time.Time
 }
 
+const (
+	maxDashboardRequestBody = 1 << 20 // 1 MiB
+	csrfCookieName          = "watchssh_csrf"
+	csrfFormField           = "csrf_token"
+	csrfHeader              = "X-WatchSSH-CSRF"
+)
+
 // NewServer creates a Server backed by state, listening on addr.
 func NewServer(state *State, listen string, stores ...history.Store) *Server {
 	s := &Server{state: state, mux: http.NewServeMux(), listen: listen, startedAt: time.Now()}
@@ -111,7 +122,7 @@ func (s *Server) Start() error {
 // Handler returns the dashboard HTTP handler, including optional authentication.
 // Health endpoints remain public so service managers can perform liveness checks.
 func (s *Server) Handler() http.Handler {
-	return s.securityHeadersMiddleware(s.authMiddleware(s.mux))
+	return s.securityHeadersMiddleware(s.authMiddleware(s.csrfMiddleware(s.requestSizeMiddleware(s.mux))))
 }
 
 func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
@@ -124,10 +135,99 @@ func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'")
 		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) requestSizeMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > maxDashboardRequestBody {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxDashboardRequestBody)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) csrfMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if isHealthEndpoint(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		token := csrfTokenFromRequest(r)
+		if token == "" {
+			var err error
+			token, err = newCSRFToken()
+			if err != nil {
+				http.Error(w, "could not initialize request protection", http.StatusInternalServerError)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{
+				Name:     csrfCookieName,
+				Value:    token,
+				Path:     "/",
+				SameSite: http.SameSiteStrictMode,
+				Secure:   r.TLS != nil,
+			})
+		}
+
+		if csrfRequired(r) {
+			supplied := r.Header.Get(csrfHeader)
+			if supplied == "" {
+				if err := r.ParseForm(); err != nil {
+					http.Error(w, "invalid request form", http.StatusBadRequest)
+					return
+				}
+				supplied = r.FormValue(csrfFormField)
+			}
+			if !secureStringEqual(token, supplied) {
+				http.Error(w, "request protection validation failed", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isHealthEndpoint(path string) bool {
+	return path == "/healthz" || path == "/livez" || path == "/readyz"
+}
+
+func csrfRequired(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	switch r.URL.Path {
+	case "/audit/run", "/servers/add", "/servers/remove", "/probes/add", "/probes/remove", "/probes/import", "/alerts/add", "/alerts/remove", "/runbooks/review", "/changes/add", "/config", "/api/test-connection", "/api/v1/test-connection":
+		return true
+	default:
+		return false
+	}
+}
+
+func csrfTokenFromRequest(r *http.Request) string {
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || len(cookie.Value) != 64 {
+		return ""
+	}
+	return cookie.Value
+}
+
+func newCSRFToken() (string, error) {
+	var bytes [32]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", bytes), nil
 }
 
 func newRequestID() string {
@@ -140,7 +240,7 @@ func newRequestID() string {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/livez" || r.URL.Path == "/readyz" {
+		if isHealthEndpoint(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -812,6 +912,15 @@ func serverCheckSummary(srv config.Server) string {
 	if len(srv.Checks.Log) > 0 {
 		parts = append(parts, fmt.Sprintf("%d log", len(srv.Checks.Log)))
 	}
+	if len(srv.Checks.Command) > 0 {
+		parts = append(parts, fmt.Sprintf("%d command", len(srv.Checks.Command)))
+	}
+	if len(srv.Checks.Hash) > 0 {
+		parts = append(parts, fmt.Sprintf("%d hash", len(srv.Checks.Hash)))
+	}
+	if len(srv.Checks.CertFile) > 0 {
+		parts = append(parts, fmt.Sprintf("%d cert file", len(srv.Checks.CertFile)))
+	}
 	if srv.Docker.Enabled {
 		parts = append(parts, "docker")
 	}
@@ -891,6 +1000,15 @@ func probeRows(servers []config.Server) []probeRow {
 		}
 		for i, probe := range checks.Log {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "log", Index: i, Name: "Log pattern", Detail: fmt.Sprintf("%s, %q in last %d lines", probe.Path, probe.Pattern, probe.Lines)})
+		}
+		for i, probe := range checks.Command {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "command", Index: i, Name: "Required command", Detail: probe.Command})
+		}
+		for i, probe := range checks.Hash {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "hash", Index: i, Name: "File integrity", Detail: fmt.Sprintf("%s (%s)", probe.Path, probe.Algorithm)})
+		}
+		for i, probe := range checks.CertFile {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "certificate_file", Index: i, Name: "Certificate file", Detail: fmt.Sprintf("%s, warn at %d days", probe.Path, probe.WarnDays)})
 		}
 	}
 	return rows
@@ -979,6 +1097,21 @@ func removeProbe(checks *config.Checks, kind string, index int) bool {
 			return false
 		}
 		checks.Log = append(checks.Log[:index], checks.Log[index+1:]...)
+	case "command":
+		if index >= len(checks.Command) {
+			return false
+		}
+		checks.Command = append(checks.Command[:index], checks.Command[index+1:]...)
+	case "hash":
+		if index >= len(checks.Hash) {
+			return false
+		}
+		checks.Hash = append(checks.Hash[:index], checks.Hash[index+1:]...)
+	case "certificate_file":
+		if index >= len(checks.CertFile) {
+			return false
+		}
+		checks.CertFile = append(checks.CertFile[:index], checks.CertFile[index+1:]...)
 	default:
 		return false
 	}
@@ -1004,6 +1137,9 @@ func mergeChecks(destination *config.Checks, imported config.Checks) {
 	destination.File = append(destination.File, imported.File...)
 	destination.Directory = append(destination.Directory, imported.Directory...)
 	destination.Log = append(destination.Log, imported.Log...)
+	destination.Command = append(destination.Command, imported.Command...)
+	destination.Hash = append(destination.Hash, imported.Hash...)
+	destination.CertFile = append(destination.CertFile, imported.CertFile...)
 }
 
 func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
@@ -1099,6 +1235,38 @@ func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
 			checks.Log[i].Timeout = 5
 		}
 	}
+	for i := range checks.Command {
+		if checks.Command[i].Name == "" {
+			checks.Command[i].Name = checks.Command[i].Command
+		}
+		if checks.Command[i].Timeout == 0 {
+			checks.Command[i].Timeout = 5
+		}
+	}
+	for i := range checks.Hash {
+		if checks.Hash[i].Name == "" {
+			checks.Hash[i].Name = checks.Hash[i].Path
+		}
+		if checks.Hash[i].Algorithm == "" {
+			checks.Hash[i].Algorithm = "sha256"
+		}
+		checks.Hash[i].Algorithm = strings.ToLower(strings.TrimSpace(checks.Hash[i].Algorithm))
+		checks.Hash[i].ExpectedDigest = strings.ToLower(strings.TrimSpace(checks.Hash[i].ExpectedDigest))
+		if checks.Hash[i].Timeout == 0 {
+			checks.Hash[i].Timeout = 10
+		}
+	}
+	for i := range checks.CertFile {
+		if checks.CertFile[i].Name == "" {
+			checks.CertFile[i].Name = checks.CertFile[i].Path
+		}
+		if checks.CertFile[i].WarnDays == 0 {
+			checks.CertFile[i].WarnDays = 30
+		}
+		if checks.CertFile[i].Timeout == 0 {
+			checks.CertFile[i].Timeout = 5
+		}
+	}
 }
 
 func safeFilename(value string) string {
@@ -1178,6 +1346,20 @@ func formNonNegativeInt64(r *http.Request, name string) int64 {
 
 func isAbsoluteRemotePath(path string) bool {
 	return strings.HasPrefix(strings.TrimSpace(path), "/")
+}
+
+func validHashDigest(algorithm, digest string) bool {
+	length := 64
+	if algorithm == "sha512" {
+		length = 128
+	} else if algorithm != "sha256" {
+		return false
+	}
+	if len(digest) != length {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }
 
 func formFloat(r *http.Request, name string, fallback float64) float64 {
@@ -1419,6 +1601,32 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 			}
 			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
 			srv.Checks.Log = append(srv.Checks.Log, config.LogCheck{Name: name, Path: path, Pattern: pattern, Lines: formInt(r, "log_lines", 200), MaxCount: formNonNegativeInt(r, "max_count"), Timeout: timeout})
+		case "command":
+			command := strings.TrimSpace(r.FormValue("required_command"))
+			if command == "" {
+				buildErr = fmt.Errorf("command probes need a command name")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), command)
+			srv.Checks.Command = append(srv.Checks.Command, config.CommandCheck{Name: name, Command: command, Timeout: timeout})
+		case "hash":
+			path := defaultString(strings.TrimSpace(r.FormValue("hash_path")), strings.TrimSpace(r.FormValue("path")))
+			algorithm := strings.ToLower(defaultString(strings.TrimSpace(r.FormValue("algorithm")), "sha256"))
+			digest := strings.ToLower(strings.TrimSpace(r.FormValue("expected_digest")))
+			if !isAbsoluteRemotePath(path) || !validHashDigest(algorithm, digest) {
+				buildErr = fmt.Errorf("hash probes need an absolute path and a valid %s digest", algorithm)
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
+			srv.Checks.Hash = append(srv.Checks.Hash, config.HashCheck{Name: name, Path: path, Algorithm: algorithm, ExpectedDigest: digest, Timeout: formInt(r, "timeout", 10)})
+		case "certificate_file":
+			path := defaultString(strings.TrimSpace(r.FormValue("certificate_path")), strings.TrimSpace(r.FormValue("path")))
+			if !isAbsoluteRemotePath(path) {
+				buildErr = fmt.Errorf("certificate-file probes need an absolute PEM path")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
+			srv.Checks.CertFile = append(srv.Checks.CertFile, config.CertificateFileCheck{Name: name, Path: path, WarnDays: formInt(r, "warn_days", 30), Timeout: timeout})
 		default:
 			buildErr = fmt.Errorf("unsupported probe type %q", kind)
 		}
@@ -1849,7 +2057,7 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	webEnabled := r.FormValue("web_enabled") == "1"
 	webListen := strings.TrimSpace(r.FormValue("web_listen"))
 	if webListen == "" {
-		webListen = ":8080"
+		webListen = "127.0.0.1:8080"
 	}
 
 	outputType := r.FormValue("output_type")
@@ -1878,7 +2086,10 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		strictHostKey = &b
 	}
 
-	s.state.UpdateGlobalSettings(interval, timeout, workers, outputType, outputFile, storageType, storagePath, storageRetentionDays, storageMaxSizeMB, webListen, webEnabled, knownHostsPath, strictHostKey)
+	if err := s.state.UpdateGlobalSettings(interval, timeout, workers, outputType, outputFile, storageType, storagePath, storageRetentionDays, storageMaxSizeMB, webListen, webEnabled, knownHostsPath, strictHostKey); err != nil {
+		redirectWithFlash(w, r, "/config", "Configuration was not changed: "+err.Error(), true)
+		return
+	}
 
 	if err := s.state.SaveConfig(); err != nil {
 		redirectWithFlash(w, r, "/config", "Failed to save config: "+err.Error(), true)
@@ -2091,6 +2302,14 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_board_under_voltage gauge\n")
 	b.WriteString("# HELP watchssh_board_throttled Whether the board is currently throttled.\n")
 	b.WriteString("# TYPE watchssh_board_throttled gauge\n")
+	b.WriteString("# HELP watchssh_command_probe_up Whether a required target command is available.\n")
+	b.WriteString("# TYPE watchssh_command_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_hash_probe_up Whether a target-side file hash matches its expected digest.\n")
+	b.WriteString("# TYPE watchssh_hash_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_certificate_file_probe_up Whether a target-side PEM certificate is valid beyond its warning threshold.\n")
+	b.WriteString("# TYPE watchssh_certificate_file_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_certificate_file_expires_days Days until a target-side PEM certificate expires.\n")
+	b.WriteString("# TYPE watchssh_certificate_file_expires_days gauge\n")
 	for _, m := range servers {
 		labels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "platform": m.Platform})
 		up := 1
@@ -2156,6 +2375,21 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			fmt.Fprintf(&b, "watchssh_ntp_probe_up%s %d\n", probeLabels, boolGauge(n.OK))
 			fmt.Fprintf(&b, "watchssh_ntp_probe_latency_ms%s %.6f\n", probeLabels, n.LatencyMs)
 			fmt.Fprintf(&b, "watchssh_ntp_offset_ms%s %.6f\n", probeLabels, n.OffsetMs)
+		}
+		for _, probe := range m.CommandChecks {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name})
+			fmt.Fprintf(&b, "watchssh_command_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
+		}
+		for _, probe := range m.HashChecks {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name, "algorithm": probe.Algorithm})
+			fmt.Fprintf(&b, "watchssh_hash_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
+		}
+		for _, probe := range m.CertFileChecks {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name})
+			fmt.Fprintf(&b, "watchssh_certificate_file_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
+			if probe.ExpiresAt != nil {
+				fmt.Fprintf(&b, "watchssh_certificate_file_expires_days%s %d\n", probeLabels, probe.ExpiresDays)
+			}
 		}
 		if m.Board != nil {
 			boardLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "model": m.Board.Model})
@@ -2422,6 +2656,56 @@ func serverStatus(m monitor.ServerMetrics) string {
 		}
 	}
 	for _, c := range m.CustomChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.ServiceChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.ProcessChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.ListeningChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.JournalChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.FileChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.DirectoryChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.LogChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.CommandChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.HashChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.CertFileChecks {
 		if !c.OK {
 			return "warn"
 		}

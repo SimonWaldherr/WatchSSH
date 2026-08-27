@@ -310,7 +310,7 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 
 	// Structured target-side probes deliberately show only metadata and counts.
 	// This keeps an interactive console useful without exposing log content.
-	if len(m.ServiceChecks)+len(m.ProcessChecks)+len(m.ListeningChecks)+len(m.JournalChecks)+len(m.FileChecks)+len(m.DirectoryChecks)+len(m.LogChecks) > 0 {
+	if len(m.ServiceChecks)+len(m.ProcessChecks)+len(m.ListeningChecks)+len(m.JournalChecks)+len(m.FileChecks)+len(m.DirectoryChecks)+len(m.LogChecks)+len(m.CommandChecks)+len(m.HashChecks)+len(m.CertFileChecks) > 0 {
 		line("Unix SSH probes:")
 		for _, c := range m.ServiceChecks {
 			status := "OK"
@@ -364,6 +364,31 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 				status = "FAILED"
 			}
 			line(fmt.Sprintf("  log       %-20s %s (%d matches)", truncate(c.Name, 20), status, c.Count))
+		}
+		for _, c := range m.CommandChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  command   %-20s %s", truncate(c.Name, 20), status))
+		}
+		for _, c := range m.HashChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  hash      %-20s %s (%s)", truncate(c.Name, 20), status, c.Algorithm))
+		}
+		for _, c := range m.CertFileChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			extra := "unavailable"
+			if c.ExpiresAt != nil {
+				extra = fmt.Sprintf("%d days", c.ExpiresDays)
+			}
+			line(fmt.Sprintf("  cert-file %-20s %s (%s)", truncate(c.Name, 20), status, extra))
 		}
 		divider()
 	}

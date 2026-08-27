@@ -771,6 +771,9 @@ func (m *Monitor) gatherAll(ctx context.Context, c runner, metrics *ServerMetric
 		metrics.FileChecks = runFileChecks(ctx, c, srv.Checks.File)
 		metrics.DirectoryChecks = runDirectoryChecks(ctx, c, srv.Checks.Directory)
 		metrics.LogChecks = runLogChecks(ctx, c, srv.Checks.Log)
+		metrics.CommandChecks = runCommandChecks(ctx, c, srv.Checks.Command)
+		metrics.HashChecks = runHashChecks(ctx, c, srv.Checks.Hash)
+		metrics.CertFileChecks = runCertificateFileChecks(ctx, c, srv.Checks.CertFile)
 	}
 	return nil
 }

@@ -2,7 +2,9 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -255,24 +257,58 @@ type LogCheck struct {
 	Timeout  int    `yaml:"timeout"`   // seconds (default 5)
 }
 
+// CommandCheck verifies that a required command is available to the SSH user
+// through the target's PATH. It uses the POSIX shell builtin `command -v` and
+// does not execute the command itself.
+type CommandCheck struct {
+	Name    string `yaml:"name"`
+	Command string `yaml:"command"`
+	Timeout int    `yaml:"timeout"` // seconds (default 5)
+}
+
+// HashCheck verifies the integrity of an absolute regular file without
+// transferring its contents. sha256 is the default and sha512 is also
+// supported. WatchSSH uses sha*sum, shasum, or openssl on the target.
+type HashCheck struct {
+	Name           string `yaml:"name"`
+	Path           string `yaml:"path"`
+	Algorithm      string `yaml:"algorithm"`       // sha256 (default) or sha512
+	ExpectedDigest string `yaml:"expected_digest"` // hexadecimal digest
+	Timeout        int    `yaml:"timeout"`         // seconds (default 10)
+}
+
+// CertificateFileCheck reads the expiry metadata of an absolute PEM
+// certificate with `openssl x509`. It is useful for certificates managed on
+// the target itself, such as Let's Encrypt files, before a renewal runbook is
+// triggered. WarnDays defaults to 30.
+type CertificateFileCheck struct {
+	Name     string `yaml:"name"`
+	Path     string `yaml:"path"`
+	WarnDays int    `yaml:"warn_days"`
+	Timeout  int    `yaml:"timeout"` // seconds (default 5)
+}
+
 // Checks holds all optional connectivity and custom checks for a server.
 type Checks struct {
-	Ping      PingCheck         `yaml:"ping"`
-	Ports     []PortCheck       `yaml:"ports"`
-	Banner    []BannerCheck     `yaml:"banner"`
-	HTTP      []HTTPCheck       `yaml:"http"`
-	DNS       []DNSCheck        `yaml:"dns"`
-	Trace     []TracerouteCheck `yaml:"traceroute"`
-	TLS       []TLSCheck        `yaml:"tls"`
-	NTP       []NTPCheck        `yaml:"ntp"`
-	Custom    []CustomCheck     `yaml:"custom"`
-	Service   []ServiceCheck    `yaml:"service"`
-	Process   []ProcessCheck    `yaml:"process"`
-	Listening []ListeningCheck  `yaml:"listening"`
-	Journal   []JournalCheck    `yaml:"journal"`
-	File      []FileCheck       `yaml:"file"`
-	Directory []DirectoryCheck  `yaml:"directory"`
-	Log       []LogCheck        `yaml:"log"`
+	Ping      PingCheck              `yaml:"ping"`
+	Ports     []PortCheck            `yaml:"ports"`
+	Banner    []BannerCheck          `yaml:"banner"`
+	HTTP      []HTTPCheck            `yaml:"http"`
+	DNS       []DNSCheck             `yaml:"dns"`
+	Trace     []TracerouteCheck      `yaml:"traceroute"`
+	TLS       []TLSCheck             `yaml:"tls"`
+	NTP       []NTPCheck             `yaml:"ntp"`
+	Custom    []CustomCheck          `yaml:"custom"`
+	Service   []ServiceCheck         `yaml:"service"`
+	Process   []ProcessCheck         `yaml:"process"`
+	Listening []ListeningCheck       `yaml:"listening"`
+	Journal   []JournalCheck         `yaml:"journal"`
+	File      []FileCheck            `yaml:"file"`
+	Directory []DirectoryCheck       `yaml:"directory"`
+	Log       []LogCheck             `yaml:"log"`
+	Command   []CommandCheck         `yaml:"command"`
+	Hash      []HashCheck            `yaml:"hash"`
+	CertFile  []CertificateFileCheck `yaml:"certificate_file"`
 }
 
 // JumpHost describes one explicit SSH bastion. WatchSSH authenticates to the
@@ -353,9 +389,10 @@ type WebAuthConfig struct {
 
 // WebConfig configures the built-in HTTP monitoring dashboard.
 type WebConfig struct {
-	Enabled bool           `yaml:"enabled"`
-	Listen  string         `yaml:"listen"` // TCP address, default ":8080"
-	Auth    *WebAuthConfig `yaml:"auth"`
+	Enabled                    bool           `yaml:"enabled"`
+	Listen                     string         `yaml:"listen"` // TCP address, default "127.0.0.1:8080"
+	Auth                       *WebAuthConfig `yaml:"auth"`
+	AllowUnauthenticatedPublic bool           `yaml:"allow_unauthenticated_public"`
 }
 
 // EmailConfig holds SMTP settings for alert delivery.
@@ -599,7 +636,7 @@ func (c *Config) IsStrictHostKeyChecking() bool {
 
 // LoadOrDefault reads the YAML configuration at path. If the file does not
 // exist it returns a default configuration with the web dashboard enabled on
-// :8080 so the user can configure WatchSSH interactively without first
+// loopback so the user can configure WatchSSH interactively without first
 // creating a config file manually.
 func LoadOrDefault(path string) (*Config, error) {
 	expanded := expandTilde(path)
@@ -615,6 +652,9 @@ func LoadOrDefault(path string) (*Config, error) {
 // Save marshals cfg to YAML and writes it to path, creating or truncating the
 // file. Permissions are set to 0600 to protect sensitive credentials.
 func Save(cfg *Config, path string) error {
+	if err := Validate(cfg); err != nil {
+		return fmt.Errorf("validating config: %w", err)
+	}
 	path = expandTilde(path)
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
@@ -666,7 +706,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Storage.RetentionDays = 30
 	}
 	if cfg.Web.Listen == "" {
-		cfg.Web.Listen = ":8080"
+		cfg.Web.Listen = "127.0.0.1:8080"
 	}
 	if cfg.Alerts.Cooldown <= 0 {
 		cfg.Alerts.Cooldown = 3600
@@ -918,7 +958,46 @@ func applyDefaults(cfg *Config) {
 				srv.Checks.Log[j].Timeout = 5
 			}
 		}
+		for j := range srv.Checks.Command {
+			if srv.Checks.Command[j].Name == "" {
+				srv.Checks.Command[j].Name = srv.Checks.Command[j].Command
+			}
+			if srv.Checks.Command[j].Timeout == 0 {
+				srv.Checks.Command[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.Hash {
+			if srv.Checks.Hash[j].Name == "" {
+				srv.Checks.Hash[j].Name = srv.Checks.Hash[j].Path
+			}
+			if srv.Checks.Hash[j].Algorithm == "" {
+				srv.Checks.Hash[j].Algorithm = "sha256"
+			}
+			srv.Checks.Hash[j].Algorithm = strings.ToLower(strings.TrimSpace(srv.Checks.Hash[j].Algorithm))
+			srv.Checks.Hash[j].ExpectedDigest = strings.ToLower(strings.TrimSpace(srv.Checks.Hash[j].ExpectedDigest))
+			if srv.Checks.Hash[j].Timeout == 0 {
+				srv.Checks.Hash[j].Timeout = 10
+			}
+		}
+		for j := range srv.Checks.CertFile {
+			if srv.Checks.CertFile[j].Name == "" {
+				srv.Checks.CertFile[j].Name = srv.Checks.CertFile[j].Path
+			}
+			if srv.Checks.CertFile[j].WarnDays == 0 {
+				srv.Checks.CertFile[j].WarnDays = 30
+			}
+			if srv.Checks.CertFile[j].Timeout == 0 {
+				srv.Checks.CertFile[j].Timeout = 5
+			}
+		}
 	}
+}
+
+// Validate checks a configuration that was loaded or assembled by a caller.
+// Callers that load YAML should use Load, which applies documented defaults
+// before validation.
+func Validate(cfg *Config) error {
+	return validate(cfg)
 }
 
 func validate(cfg *Config) error {
@@ -946,6 +1025,9 @@ func validate(cfg *Config) error {
 		if _, err := bcrypt.Cost([]byte(cfg.Web.Auth.PasswordHash)); err != nil {
 			return fmt.Errorf("web.auth.password_hash must be a valid bcrypt hash: %w", err)
 		}
+	}
+	if cfg.Web.Enabled && cfg.Web.Auth == nil && !cfg.Web.AllowUnauthenticatedPublic && !isLoopbackListen(cfg.Web.Listen) {
+		return fmt.Errorf("web.listen %q is publicly reachable without authentication; use loopback, configure web.auth, or explicitly set web.allow_unauthenticated_public: true", cfg.Web.Listen)
 	}
 	if err := validateVaultConfig(cfg.Secrets.Vault); err != nil {
 		return err
@@ -1042,6 +1124,37 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("server[%d] (%q): checks.log[%d] has invalid limits", i, srv.Name, j)
 			}
 		}
+		for j, cc := range srv.Checks.Command {
+			if strings.TrimSpace(cc.Command) == "" || cc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.command[%d] requires command and a positive timeout", i, srv.Name, j)
+			}
+		}
+		for j, hc := range srv.Checks.Hash {
+			if !isAbsoluteProbePath(hc.Path) {
+				return fmt.Errorf("server[%d] (%q): checks.hash[%d].path must be an absolute path", i, srv.Name, j)
+			}
+			if hc.Algorithm != "sha256" && hc.Algorithm != "sha512" {
+				return fmt.Errorf("server[%d] (%q): checks.hash[%d].algorithm must be sha256 or sha512", i, srv.Name, j)
+			}
+			expectedLength := 64
+			if hc.Algorithm == "sha512" {
+				expectedLength = 128
+			}
+			if len(hc.ExpectedDigest) != expectedLength {
+				return fmt.Errorf("server[%d] (%q): checks.hash[%d].expected_digest must be a %d-character hexadecimal %s digest", i, srv.Name, j, expectedLength, hc.Algorithm)
+			}
+			if _, err := hex.DecodeString(hc.ExpectedDigest); err != nil || hc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.hash[%d] has invalid digest or timeout", i, srv.Name, j)
+			}
+		}
+		for j, cc := range srv.Checks.CertFile {
+			if !isAbsoluteProbePath(cc.Path) {
+				return fmt.Errorf("server[%d] (%q): checks.certificate_file[%d].path must be an absolute path", i, srv.Name, j)
+			}
+			if cc.WarnDays < 0 || cc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.certificate_file[%d] has invalid warning days or timeout", i, srv.Name, j)
+			}
+		}
 	}
 	for _, srv := range cfg.Servers {
 		seen := make(map[string]struct{}, len(srv.DependsOn))
@@ -1089,6 +1202,19 @@ func validate(cfg *Config) error {
 		return err
 	}
 	return nil
+}
+
+func isLoopbackListen(address string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func validateDependencyCycles(servers []Server) error {

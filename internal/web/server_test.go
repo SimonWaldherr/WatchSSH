@@ -157,6 +157,71 @@ func TestDashboardAuthentication(t *testing.T) {
 	}
 }
 
+func TestCSRFMiddlewareProtectsDashboardChanges(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	srv := NewServer(state, ":0")
+
+	get := httptest.NewRequest(http.MethodGet, "/config", nil)
+	getRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(getRecorder, get)
+	var csrfCookie *http.Cookie
+	for _, cookie := range getRecorder.Result().Cookies() {
+		if cookie.Name == csrfCookieName {
+			csrfCookie = cookie
+			break
+		}
+	}
+	if csrfCookie == nil || len(csrfCookie.Value) != 64 {
+		t.Fatalf("CSRF cookie = %#v, want random token", csrfCookie)
+	}
+	if csrfCookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("CSRF SameSite = %v, want Strict", csrfCookie.SameSite)
+	}
+
+	blocked := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("web_enabled=0"))
+	blocked.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	blocked.AddCookie(csrfCookie)
+	blockedRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(blockedRecorder, blocked)
+	if blockedRecorder.Code != http.StatusForbidden {
+		t.Fatalf("POST without CSRF token status = %d, want %d", blockedRecorder.Code, http.StatusForbidden)
+	}
+
+	allowed := httptest.NewRequest(http.MethodPost, "/config", strings.NewReader("web_enabled=0&csrf_token="+csrfCookie.Value))
+	allowed.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	allowed.AddCookie(csrfCookie)
+	allowedRecorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(allowedRecorder, allowed)
+	if allowedRecorder.Code != http.StatusSeeOther {
+		t.Fatalf("POST with CSRF token status = %d, want %d", allowedRecorder.Code, http.StatusSeeOther)
+	}
+}
+
+func TestDashboardRequestSizeLimit(t *testing.T) {
+	state := NewState(&config.Config{}, "")
+	srv := NewServer(state, ":0")
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/probes", strings.NewReader(strings.Repeat("x", maxDashboardRequestBody+1)))
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized request status = %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestConfigurationPageExplainsDashboardProtection(t *testing.T) {
+	state := NewState(&config.Config{Web: config.WebConfig{Enabled: true, Listen: "127.0.0.1:8080"}}, "")
+	srv := NewServer(state, ":0")
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("configuration page status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if !strings.Contains(rec.Body.String(), "protected by loopback access only") {
+		t.Fatal("configuration page does not explain unauthenticated loopback protection")
+	}
+}
+
 func TestInterfaceModeControlIsRendered(t *testing.T) {
 	state := NewState(&config.Config{Servers: []config.Server{{Name: "localhost", Local: true}}}, "")
 	srv := NewServer(state, ":0")
@@ -322,12 +387,16 @@ func TestServerDetailShowsDockerAndCollectorDiagnostics(t *testing.T) {
 }
 
 func TestServerDetailShowsAgentlessUnixToolProbes(t *testing.T) {
+	expiresAt := time.Date(2099, time.December, 31, 23, 59, 59, 0, time.UTC)
 	state := NewState(&config.Config{}, "")
 	state.Update([]monitor.ServerMetrics{{
 		ServerName:      "app-01",
 		FileChecks:      []monitor.FileCheckResult{{Name: "pid", Path: "/run/app.pid", SizeBytes: 12, AgeSeconds: 4, OK: true}},
 		DirectoryChecks: []monitor.DirectoryResult{{Name: "cache", Path: "/var/cache/app", UsedBytes: 1024, MaxFileCount: 10, FileCount: 11, FileCountCapped: true, OK: false, Error: "file count exceeds 10"}},
 		LogChecks:       []monitor.LogCheckResult{{Name: "errors", Path: "/var/log/app.log", Pattern: "ERROR", Lines: 200, Count: 1, MaxCount: 0, OK: false}},
+		CommandChecks:   []monitor.CommandCheckResult{{Name: "docker", Command: "docker", ResolvedPath: "/usr/bin/docker", OK: true}},
+		HashChecks:      []monitor.HashCheckResult{{Name: "config", Path: "/etc/app.conf", Algorithm: "sha256", ObservedDigest: strings.Repeat("a", 64), OK: true}},
+		CertFileChecks:  []monitor.CertificateFileCheckResult{{Name: "local-cert", Path: "/etc/ssl/local.pem", ExpiresAt: &expiresAt, ExpiresDays: 365, WarnDays: 30, OK: true}},
 	}}, nil)
 	srv := NewServer(state, ":0")
 	req := httptest.NewRequest(http.MethodGet, "/server/app-01", nil)
@@ -337,7 +406,7 @@ func TestServerDetailShowsAgentlessUnixToolProbes(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "/run/app.pid", "/var/cache/app", "/var/log/app.log"} {
+	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "command -v", "sha*sum / shasum / openssl", "openssl x509", "/run/app.pid", "/var/cache/app", "/var/log/app.log", "/etc/app.conf", "/etc/ssl/local.pem"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}
@@ -420,6 +489,11 @@ func TestProbeWorkspaceAddExportImportAndRemove(t *testing.T) {
 	if len(checks.Ports) != 1 || checks.Ports[0].Host != "db.internal" || checks.Ports[0].Source != "target" {
 		t.Fatalf("added checks = %#v", checks)
 	}
+	state.UpdateServer("app-01", func(srv *config.Server) {
+		srv.Checks.Command = append(srv.Checks.Command, config.CommandCheck{Name: "docker", Command: "docker", Timeout: 5})
+		srv.Checks.Hash = append(srv.Checks.Hash, config.HashCheck{Name: "app-config", Path: "/etc/application.conf", Algorithm: "sha256", ExpectedDigest: strings.Repeat("a", 64), Timeout: 10})
+		srv.Checks.CertFile = append(srv.Checks.CertFile, config.CertificateFileCheck{Name: "local-cert", Path: "/etc/ssl/local.pem", WarnDays: 30, Timeout: 5})
+	})
 
 	req = httptest.NewRequest(http.MethodGet, "/probes/export?server=app-01", nil)
 	rec = httptest.NewRecorder()
@@ -428,7 +502,7 @@ func TestProbeWorkspaceAddExportImportAndRemove(t *testing.T) {
 		t.Fatalf("export status/headers = %d %#v", rec.Code, rec.Header())
 	}
 	var bundle probeBundle
-	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil || bundle.Version != 1 || len(bundle.Checks.Ports) != 1 {
+	if err := json.Unmarshal(rec.Body.Bytes(), &bundle); err != nil || bundle.Version != 1 || len(bundle.Checks.Ports) != 1 || len(bundle.Checks.Command) != 1 || len(bundle.Checks.Hash) != 1 || len(bundle.Checks.CertFile) != 1 {
 		t.Fatalf("export bundle = %#v, %v", bundle, err)
 	}
 
@@ -451,7 +525,8 @@ func TestProbeWorkspaceAddExportImportAndRemove(t *testing.T) {
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	rec = httptest.NewRecorder()
 	srv.mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusSeeOther || len(state.Config().Servers[1].Checks.Ports) != 1 {
+	importedChecks := state.Config().Servers[1].Checks
+	if rec.Code != http.StatusSeeOther || len(importedChecks.Ports) != 1 || len(importedChecks.Command) != 1 || len(importedChecks.Hash) != 1 || len(importedChecks.CertFile) != 1 {
 		t.Fatalf("import status/checks = %d %#v", rec.Code, state.Config().Servers[1].Checks)
 	}
 
@@ -488,6 +563,9 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 	add(url.Values{"server": {"app-01"}, "kind": {"file"}, "path": {"/run/app.pid"}, "max_age_seconds": {"3600"}})
 	add(url.Values{"server": {"app-01"}, "kind": {"directory"}, "path": {"/var/cache/app"}, "max_usage_bytes": {"1024"}, "max_file_count": {"10"}})
 	add(url.Values{"server": {"app-01"}, "kind": {"log"}, "path": {"/var/log/app.log"}, "pattern": {"ERROR"}, "log_lines": {"500"}, "max_count": {"2"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"command"}, "required_command": {"docker"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"hash"}, "hash_path": {"/etc/application.conf"}, "algorithm": {"sha256"}, "expected_digest": {strings.Repeat("a", 64)}})
+	add(url.Values{"server": {"app-01"}, "kind": {"certificate_file"}, "certificate_path": {"/etc/letsencrypt/live/application/fullchain.pem"}, "warn_days": {"21"}})
 
 	checks := state.Config().Servers[0].Checks
 	if len(checks.Service) != 1 || checks.Service[0].Unit != "nginx.service" {
@@ -511,8 +589,17 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 	if len(checks.Log) != 1 || checks.Log[0].Path != "/var/log/app.log" || checks.Log[0].Pattern != "ERROR" || checks.Log[0].Lines != 500 {
 		t.Fatalf("log checks = %#v", checks.Log)
 	}
+	if len(checks.Command) != 1 || checks.Command[0].Command != "docker" || checks.Command[0].Timeout != 5 {
+		t.Fatalf("command checks = %#v", checks.Command)
+	}
+	if len(checks.Hash) != 1 || checks.Hash[0].Path != "/etc/application.conf" || checks.Hash[0].Algorithm != "sha256" || checks.Hash[0].ExpectedDigest != strings.Repeat("a", 64) {
+		t.Fatalf("hash checks = %#v", checks.Hash)
+	}
+	if len(checks.CertFile) != 1 || checks.CertFile[0].Path != "/etc/letsencrypt/live/application/fullchain.pem" || checks.CertFile[0].WarnDays != 21 {
+		t.Fatalf("certificate file checks = %#v", checks.CertFile)
+	}
 
-	for _, kind := range []string{"service", "process", "listening", "journal", "file", "directory", "log"} {
+	for _, kind := range []string{"service", "process", "listening", "journal", "file", "directory", "log", "command", "hash", "certificate_file"} {
 		remove := url.Values{"server": {"app-01"}, "kind": {kind}, "index": {"0"}}
 		req := httptest.NewRequest(http.MethodPost, "/probes/remove", strings.NewReader(remove.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -523,7 +610,7 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 		}
 	}
 	checks = state.Config().Servers[0].Checks
-	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 || len(checks.File) != 0 || len(checks.Directory) != 0 || len(checks.Log) != 0 {
+	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 || len(checks.File) != 0 || len(checks.Directory) != 0 || len(checks.Log) != 0 || len(checks.Command) != 0 || len(checks.Hash) != 0 || len(checks.CertFile) != 0 {
 		t.Fatalf("checks after removal = %#v", checks)
 	}
 }
@@ -813,6 +900,7 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 	boardTemp := 52.3
 	boardFreq := 1400.0
 	boardRSSI := -61.0
+	certFileExpires := time.Date(2099, time.December, 31, 23, 59, 59, 0, time.UTC)
 	state.Update([]monitor.ServerMetrics{{
 		ServerName: "localhost",
 		Host:       "127.0.0.1",
@@ -833,6 +921,9 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 			WiFiRSSIDbm:     &boardRSSI,
 			ThrottledNow:    true,
 		},
+		CommandChecks:  []monitor.CommandCheckResult{{Name: "docker", OK: true}},
+		HashChecks:     []monitor.HashCheckResult{{Name: "app-config", Algorithm: "sha256", OK: true}},
+		CertFileChecks: []monitor.CertificateFileCheckResult{{Name: "local-cert", OK: true, ExpiresAt: &certFileExpires, ExpiresDays: 365}},
 	}}, nil)
 	srv := NewServer(state, ":0")
 
@@ -844,7 +935,7 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops", "watchssh_board_temperature_celsius", "watchssh_board_wifi_rssi_dbm", "watchssh_board_throttled"} {
+	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops", "watchssh_command_probe_up", "watchssh_hash_probe_up", "watchssh_certificate_file_probe_up", "watchssh_certificate_file_expires_days", "watchssh_board_temperature_celsius", "watchssh_board_wifi_rssi_dbm", "watchssh_board_throttled"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("prometheus metrics missing %q: %s", want, body)
 		}

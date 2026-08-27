@@ -3,6 +3,7 @@ package monitor
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -305,6 +306,120 @@ func runLogChecks(ctx context.Context, r runner, checks []config.LogCheck) []Log
 	return results
 }
 
+// runCommandChecks verifies a command through the POSIX shell builtin rather
+// than running it. This catches missing operational dependencies without
+// adding a WatchSSH agent or a target-side package requirement.
+func runCommandChecks(ctx context.Context, r runner, checks []config.CommandCheck) []CommandCheckResult {
+	results := make([]CommandCheckResult, 0, len(checks))
+	for _, cc := range checks {
+		command := fmt.Sprintf("if resolved=$(command -v %s 2>/dev/null); then printf '%%s' \"$resolved\"; else printf missing; fi", shellSingleQuote(cc.Command))
+		out, err := runToolProbe(ctx, r, cc.Timeout, command)
+		result := CommandCheckResult{Name: cc.Name, Command: cc.Command, ResolvedPath: strings.TrimSpace(out)}
+		if result.ResolvedPath == "missing" || result.ResolvedPath == "" {
+			result.ResolvedPath = ""
+			if err != nil {
+				result.Error = err.Error()
+			} else {
+				result.Error = fmt.Sprintf("command %q is not available to the SSH user", cc.Command)
+			}
+		} else {
+			result.OK = true
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// runHashChecks calculates a digest remotely with widely available checksum
+// tools. The file's contents remain on the target; only its digest is read.
+func runHashChecks(ctx context.Context, r runner, checks []config.HashCheck) []HashCheckResult {
+	results := make([]HashCheckResult, 0, len(checks))
+	for _, hc := range checks {
+		path := shellSingleQuote(hc.Path)
+		sumTool := hc.Algorithm + "sum"
+		command := fmt.Sprintf("if [ ! -f %s ]; then printf missing; elif [ ! -r %s ]; then printf unreadable; elif command -v %s >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then %s %s 2>/dev/null | awk 'NR == 1 {print $1}'; elif command -v shasum >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then shasum -a %s %s 2>/dev/null | awk 'NR == 1 {print $1}'; elif command -v openssl >/dev/null 2>&1 && command -v awk >/dev/null 2>&1; then openssl dgst -%s %s 2>/dev/null | awk 'NR == 1 {print $NF}'; else printf unsupported; fi", path, path, sumTool, sumTool, path, strings.TrimPrefix(hc.Algorithm, "sha"), path, hc.Algorithm, path)
+		out, err := runToolProbe(ctx, r, hc.Timeout, command)
+		observed := strings.ToLower(strings.TrimSpace(out))
+		expected := strings.ToLower(strings.TrimSpace(hc.ExpectedDigest))
+		result := HashCheckResult{Name: hc.Name, Path: hc.Path, Algorithm: hc.Algorithm, ExpectedDigest: expected}
+		if len(observed) != len(expected) {
+			result.Error = toolProbeError(observed, err, hc.Algorithm)
+			results = append(results, result)
+			continue
+		}
+		if !isLowerHex(observed) {
+			result.Error = fmt.Sprintf("could not parse %s digest %q", hc.Algorithm, observed)
+			results = append(results, result)
+			continue
+		}
+		result.ObservedDigest = observed
+		result.OK = observed == expected
+		if !result.OK {
+			result.Error = fmt.Sprintf("%s digest does not match expected value", hc.Algorithm)
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// runCertificateFileChecks reads PEM expiry information locally on the target.
+// This is intentionally separate from TLS probes: it can warn before a
+// certificate is deployed or before an automated renewal/reload runbook runs.
+func runCertificateFileChecks(ctx context.Context, r runner, checks []config.CertificateFileCheck) []CertificateFileCheckResult {
+	results := make([]CertificateFileCheckResult, 0, len(checks))
+	for _, cc := range checks {
+		path := shellSingleQuote(cc.Path)
+		command := fmt.Sprintf("if [ ! -f %s ]; then printf missing; elif [ ! -r %s ]; then printf unreadable; elif command -v openssl >/dev/null 2>&1; then openssl x509 -enddate -noout -in %s 2>/dev/null || printf invalid; else printf unsupported; fi", path, path, path)
+		out, err := runToolProbe(ctx, r, cc.Timeout, command)
+		result := CertificateFileCheckResult{Name: cc.Name, Path: cc.Path, WarnDays: cc.WarnDays}
+		expiresAt, parseErr := parseCertificateExpiry(out)
+		if parseErr != nil {
+			result.Error = toolProbeError(strings.TrimSpace(out), err, "openssl x509")
+			if strings.TrimSpace(out) != "" && strings.TrimSpace(out) != "missing" && strings.TrimSpace(out) != "unreadable" && strings.TrimSpace(out) != "unsupported" && strings.TrimSpace(out) != "invalid" {
+				result.Error = parseErr.Error()
+			}
+			results = append(results, result)
+			continue
+		}
+		expiresAt = expiresAt.UTC()
+		result.ExpiresAt = &expiresAt
+		result.ExpiresDays = int(math.Floor(expiresAt.Sub(time.Now().UTC()).Hours() / 24))
+		result.OK = result.ExpiresDays > cc.WarnDays
+		if !result.OK {
+			if result.ExpiresDays < 0 {
+				result.Error = fmt.Sprintf("certificate expired %d day(s) ago", -result.ExpiresDays)
+			} else {
+				result.Error = fmt.Sprintf("certificate expires in %d day(s), warning threshold is %d", result.ExpiresDays, cc.WarnDays)
+			}
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+func isLowerHex(value string) bool {
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func parseCertificateExpiry(output string) (time.Time, error) {
+	value := strings.TrimSpace(output)
+	if !strings.HasPrefix(value, "notAfter=") {
+		return time.Time{}, fmt.Errorf("could not parse certificate expiry %q", value)
+	}
+	value = strings.TrimPrefix(value, "notAfter=")
+	for _, layout := range []string{"Jan _2 15:04:05 2006 MST", "Jan 2 15:04:05 2006 MST"} {
+		if expiresAt, err := time.Parse(layout, value); err == nil {
+			return expiresAt, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("could not parse certificate expiry %q", value)
+}
+
 func toolProbeError(output string, err error, tool string) string {
 	switch output {
 	case "missing":
@@ -313,6 +428,8 @@ func toolProbeError(output string, err error, tool string) string {
 		return "path or metadata is not readable by the SSH user"
 	case "unsupported":
 		return tool + " is not available on the target"
+	case "invalid":
+		return "certificate file is not a readable PEM certificate"
 	}
 	if err != nil {
 		return err.Error()
