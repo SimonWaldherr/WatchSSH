@@ -624,6 +624,10 @@ servers:
           expected_digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
       certificate_file:
         - path: /etc/letsencrypt/live/application/fullchain.pem
+      unix_socket:
+        - path: /run/application/application.sock
+      user:
+        - user: www-data
 `)
 	cfg, err := config.Load(path)
 	if err != nil {
@@ -647,6 +651,33 @@ servers:
 	}
 	if checks.CertFile[0].Name != "/etc/letsencrypt/live/application/fullchain.pem" || checks.CertFile[0].WarnDays != 30 || checks.CertFile[0].Timeout != 5 {
 		t.Fatalf("certificate file defaults = %#v", checks.CertFile[0])
+	}
+	if checks.Socket[0].Name != "/run/application/application.sock" || checks.Socket[0].Timeout != 5 {
+		t.Fatalf("Unix socket defaults = %#v", checks.Socket[0])
+	}
+	if checks.User[0].Name != "www-data" || checks.User[0].Timeout != 5 {
+		t.Fatalf("user defaults = %#v", checks.User[0])
+	}
+}
+
+func TestLoad_SSHHandshakeProbeDefaults(t *testing.T) {
+	path := writeConfig(t, `
+servers:
+  - name: app-01
+    host: 10.20.0.10
+    port: 2200
+    username: monitor
+    checks:
+      ssh:
+        - host: bastion.internal
+`)
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	probe := cfg.Servers[0].Checks.SSH[0]
+	if probe.Name != "bastion.internal" || probe.Port != 2200 || probe.Timeout != 5 {
+		t.Fatalf("SSH handshake defaults = %#v", probe)
 	}
 }
 

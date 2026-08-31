@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	gossh "golang.org/x/crypto/ssh"
 )
 
 // PingResult holds the outcome of a ping check.
@@ -119,6 +121,73 @@ type BannerResult struct {
 	OK        bool
 	LatencyMs float64
 	Err       error
+}
+
+// SSHResult holds the outcome of a credential-free SSH protocol handshake.
+// Fingerprint contains the server host key in OpenSSH SHA256 form.
+type SSHResult struct {
+	Name                string
+	Host                string
+	Port                int
+	Fingerprint         string
+	ExpectedFingerprint string
+	FingerprintMatch    bool
+	OK                  bool
+	LatencyMs           float64
+	Err                 error
+}
+
+// CheckSSH verifies SSH key exchange without authenticating or opening a
+// session. Servers commonly reject the deliberately credential-free client
+// after key exchange; that is still a successful protocol probe as long as the
+// server host key was observed and, when configured, matches the expected key.
+func CheckSSH(name, host string, port int, expectedFingerprint string, timeoutSec int) SSHResult {
+	if timeoutSec <= 0 {
+		timeoutSec = 5
+	}
+	result := SSHResult{Name: name, Host: host, Port: port, ExpectedFingerprint: strings.TrimSpace(expectedFingerprint)}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+	start := time.Now()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		result.LatencyMs = float64(time.Since(start).Microseconds()) / 1000
+		result.Err = err
+		return result
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
+
+	mismatch := false
+	clientConfig := &gossh.ClientConfig{
+		User: "watchssh-probe",
+		HostKeyCallback: func(_ string, _ net.Addr, key gossh.PublicKey) error {
+			result.Fingerprint = gossh.FingerprintSHA256(key)
+			result.FingerprintMatch = result.ExpectedFingerprint == "" || result.Fingerprint == result.ExpectedFingerprint
+			if !result.FingerprintMatch {
+				mismatch = true
+				return fmt.Errorf("SSH host key fingerprint does not match expected value")
+			}
+			return nil
+		},
+		Timeout: time.Duration(timeoutSec) * time.Second,
+	}
+	clientConn, _, _, handshakeErr := gossh.NewClientConn(conn, net.JoinHostPort(host, strconv.Itoa(port)), clientConfig)
+	result.LatencyMs = float64(time.Since(start).Microseconds()) / 1000
+	if clientConn != nil {
+		_ = clientConn.Close()
+	}
+	if mismatch || result.Fingerprint == "" {
+		result.Err = handshakeErr
+		if result.Err == nil {
+			result.Err = fmt.Errorf("SSH server did not provide a host key")
+		}
+		return result
+	}
+	// Authentication is intentionally absent. A host key observed during a
+	// completed key exchange is enough to prove this is an SSH endpoint.
+	result.OK = true
+	return result
 }
 
 // CheckBanner connects to a TCP service and reads its initial greeting. It is

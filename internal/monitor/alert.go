@@ -686,6 +686,24 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 				return n.OffsetMs, true
 			}
 		}
+	case "ssh_failed":
+		for _, probe := range srv.Connectivity.SSH {
+			if matchesProbe(rule, probe.Name) && !probe.OK {
+				return 1, true
+			}
+		}
+	case "ssh_latency":
+		for _, probe := range srv.Connectivity.SSH {
+			if matchesProbe(rule, probe.Name) && cmp(probe.LatencyMs, rule.Operator, rule.Threshold) {
+				return probe.LatencyMs, true
+			}
+		}
+	case "ssh_host_key_mismatch":
+		for _, probe := range srv.Connectivity.SSH {
+			if matchesProbe(rule, probe.Name) && probe.ExpectedFingerprint != "" && probe.Fingerprint != "" && !probe.FingerprintMatch {
+				return 1, true
+			}
+		}
 	case "board_temperature":
 		if srv.Board == nil || srv.Board.TemperatureC == nil {
 			return 0, false
@@ -810,6 +828,18 @@ func evaluateRule(rule config.AlertRule, srv ServerMetrics) (float64, bool) {
 		for _, c := range srv.CertFileChecks {
 			if matchesProbe(rule, c.Name) && c.ExpiresAt != nil && cmp(float64(c.ExpiresDays), rule.Operator, rule.Threshold) {
 				return float64(c.ExpiresDays), true
+			}
+		}
+	case "unix_socket_failed":
+		for _, c := range srv.SocketChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
+			}
+		}
+	case "user_failed":
+		for _, c := range srv.UserChecks {
+			if matchesProbe(rule, c.Name) && !c.OK {
+				return 1, true
 			}
 		}
 	}

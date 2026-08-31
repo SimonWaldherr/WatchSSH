@@ -102,15 +102,18 @@ must mean one clear operational outcome:
 | Is the TLS endpoint valid and not near expiry? | TLS |
 | Is the target network able to reach a private dependency? | TCP with `source: target` |
 | Is time synchronized? | NTP |
+| Does the SSH protocol and optional pinned host key respond? | SSH handshake |
 | Does a known remote command return an expected value? | Custom SSH command |
 | Does an important file exist, have the expected size, and remain fresh? | File metadata (`test` + `stat`) |
 | Is a cache, spool, or upload directory within a size or file-count budget? | Directory usage (`du` + bounded `find`) |
 | Are recent log lines free of a known error pattern? | Log pattern count (`tail` + `grep`) |
 | Is a service, process, or listening port present on a Unix target? | Service, process, or listener probe |
+| Does a local Unix socket or required service account exist? | Unix socket (`test -S`) or service account (`id -u`) |
 
 Exported bundles include only `checks`. They never include authentication,
-keys, passwords, server tags, or host-key settings. Review imported custom
-commands before enabling them.
+private keys, passwords, or server tags. They can include endpoints and a
+pinned SSH host-key fingerprint because those are part of a probe definition.
+Review imported custom commands before enabling them.
 
 The file, directory, and log probes are designed for the normal remote shell
 toolset rather than a WatchSSH agent. They use only metadata or aggregate
@@ -124,6 +127,12 @@ For Unix compatibility, service checks prefer `systemctl` and fall back to
 listener checks prefer `ss` and fall back to `netstat`. If neither tool is
 available, the result clearly reports an unsupported probe instead of
 silently treating the target as healthy.
+
+An SSH handshake is intentionally credential-free: it performs key exchange,
+records the server host-key fingerprint, and can compare it with an optional
+`SHA256:...` fingerprint. It validates the SSH endpoint without logging in or
+running a command. Socket and service-account probes run through the normal
+authenticated SSH connection and only use POSIX `test -S` and `id -u`.
 
 ## 4. Model Dependencies
 

@@ -397,6 +397,8 @@ func TestServerDetailShowsAgentlessUnixToolProbes(t *testing.T) {
 		CommandChecks:   []monitor.CommandCheckResult{{Name: "docker", Command: "docker", ResolvedPath: "/usr/bin/docker", OK: true}},
 		HashChecks:      []monitor.HashCheckResult{{Name: "config", Path: "/etc/app.conf", Algorithm: "sha256", ObservedDigest: strings.Repeat("a", 64), OK: true}},
 		CertFileChecks:  []monitor.CertificateFileCheckResult{{Name: "local-cert", Path: "/etc/ssl/local.pem", ExpiresAt: &expiresAt, ExpiresDays: 365, WarnDays: 30, OK: true}},
+		SocketChecks:    []monitor.UnixSocketCheckResult{{Name: "app-socket", Path: "/run/app.sock", OK: true}},
+		UserChecks:      []monitor.UserCheckResult{{Name: "web-user", User: "www-data", UID: 33, OK: true}},
 	}}, nil)
 	srv := NewServer(state, ":0")
 	req := httptest.NewRequest(http.MethodGet, "/server/app-01", nil)
@@ -406,7 +408,7 @@ func TestServerDetailShowsAgentlessUnixToolProbes(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "command -v", "sha*sum / shasum / openssl", "openssl x509", "/run/app.pid", "/var/cache/app", "/var/log/app.log", "/etc/app.conf", "/etc/ssl/local.pem"} {
+	for _, want := range []string{"Agentless Unix Tool Probes", "test + stat", "du + find", "tail + grep", "command -v", "sha*sum / shasum / openssl", "openssl x509", "test -S", "id -u", "/run/app.pid", "/var/cache/app", "/var/log/app.log", "/etc/app.conf", "/etc/ssl/local.pem", "/run/app.sock", "www-data"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("response body missing %q", want)
 		}
@@ -566,6 +568,9 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 	add(url.Values{"server": {"app-01"}, "kind": {"command"}, "required_command": {"docker"}})
 	add(url.Values{"server": {"app-01"}, "kind": {"hash"}, "hash_path": {"/etc/application.conf"}, "algorithm": {"sha256"}, "expected_digest": {strings.Repeat("a", 64)}})
 	add(url.Values{"server": {"app-01"}, "kind": {"certificate_file"}, "certificate_path": {"/etc/letsencrypt/live/application/fullchain.pem"}, "warn_days": {"21"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"ssh"}, "target": {"bastion.internal"}, "probe_port": {"2200"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"unix_socket"}, "socket_path": {"/run/application/app.sock"}})
+	add(url.Values{"server": {"app-01"}, "kind": {"user"}, "check_user": {"www-data"}})
 
 	checks := state.Config().Servers[0].Checks
 	if len(checks.Service) != 1 || checks.Service[0].Unit != "nginx.service" {
@@ -598,8 +603,17 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 	if len(checks.CertFile) != 1 || checks.CertFile[0].Path != "/etc/letsencrypt/live/application/fullchain.pem" || checks.CertFile[0].WarnDays != 21 {
 		t.Fatalf("certificate file checks = %#v", checks.CertFile)
 	}
+	if len(checks.SSH) != 1 || checks.SSH[0].Host != "bastion.internal" || checks.SSH[0].Port != 2200 {
+		t.Fatalf("SSH checks = %#v", checks.SSH)
+	}
+	if len(checks.Socket) != 1 || checks.Socket[0].Path != "/run/application/app.sock" {
+		t.Fatalf("socket checks = %#v", checks.Socket)
+	}
+	if len(checks.User) != 1 || checks.User[0].User != "www-data" {
+		t.Fatalf("user checks = %#v", checks.User)
+	}
 
-	for _, kind := range []string{"service", "process", "listening", "journal", "file", "directory", "log", "command", "hash", "certificate_file"} {
+	for _, kind := range []string{"service", "process", "listening", "journal", "file", "directory", "log", "command", "hash", "certificate_file", "ssh", "unix_socket", "user"} {
 		remove := url.Values{"server": {"app-01"}, "kind": {kind}, "index": {"0"}}
 		req := httptest.NewRequest(http.MethodPost, "/probes/remove", strings.NewReader(remove.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -610,7 +624,7 @@ func TestProbeWorkspaceStandardToolProbes(t *testing.T) {
 		}
 	}
 	checks = state.Config().Servers[0].Checks
-	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 || len(checks.File) != 0 || len(checks.Directory) != 0 || len(checks.Log) != 0 || len(checks.Command) != 0 || len(checks.Hash) != 0 || len(checks.CertFile) != 0 {
+	if len(checks.Service) != 0 || len(checks.Process) != 0 || len(checks.Listening) != 0 || len(checks.Journal) != 0 || len(checks.File) != 0 || len(checks.Directory) != 0 || len(checks.Log) != 0 || len(checks.Command) != 0 || len(checks.Hash) != 0 || len(checks.CertFile) != 0 || len(checks.SSH) != 0 || len(checks.Socket) != 0 || len(checks.User) != 0 {
 		t.Fatalf("checks after removal = %#v", checks)
 	}
 }
@@ -912,6 +926,7 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 			DNS:        []monitor.DNSResult{{Name: "dns", Host: "example.com", Type: "A", OK: true, LatencyMs: 12}},
 			TLS:        []monitor.TLSResult{{Name: "tls", Host: "example.com", Port: 443, OK: true, CertExpiresDays: &tlsDays}},
 			Traceroute: []monitor.TracerouteResult{{Name: "trace", Host: "example.com", OK: true, Hops: 8}},
+			SSH:        []monitor.SSHResult{{Name: "ssh", Host: "example.com", Port: 22, OK: true, LatencyMs: 10, ExpectedFingerprint: "SHA256:pin", FingerprintMatch: true}},
 		},
 		Board: &monitor.BoardInfo{
 			Model:           "Raspberry Pi 5 Model B",
@@ -924,6 +939,8 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 		CommandChecks:  []monitor.CommandCheckResult{{Name: "docker", OK: true}},
 		HashChecks:     []monitor.HashCheckResult{{Name: "app-config", Algorithm: "sha256", OK: true}},
 		CertFileChecks: []monitor.CertificateFileCheckResult{{Name: "local-cert", OK: true, ExpiresAt: &certFileExpires, ExpiresDays: 365}},
+		SocketChecks:   []monitor.UnixSocketCheckResult{{Name: "app-socket", OK: true}},
+		UserChecks:     []monitor.UserCheckResult{{Name: "www-data", User: "www-data", UID: 33, OK: true}},
 	}}, nil)
 	srv := NewServer(state, ":0")
 
@@ -935,7 +952,7 @@ func TestPrometheusMetricsEndpoint(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops", "watchssh_command_probe_up", "watchssh_hash_probe_up", "watchssh_certificate_file_probe_up", "watchssh_certificate_file_expires_days", "watchssh_board_temperature_celsius", "watchssh_board_wifi_rssi_dbm", "watchssh_board_throttled"} {
+	for _, want := range []string{"watchssh_up", "watchssh_cpu_usage_percent", "watchssh_memory_usage_percent", "watchssh_disk_usage_percent", "watchssh_dns_probe_up", "watchssh_tls_probe_up", "watchssh_traceroute_hops", "watchssh_ssh_probe_up", "watchssh_ssh_host_key_match", "watchssh_command_probe_up", "watchssh_hash_probe_up", "watchssh_certificate_file_probe_up", "watchssh_certificate_file_expires_days", "watchssh_unix_socket_probe_up", "watchssh_user_probe_up", "watchssh_board_temperature_celsius", "watchssh_board_wifi_rssi_dbm", "watchssh_board_throttled"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("prometheus metrics missing %q: %s", want, body)
 		}

@@ -50,6 +50,8 @@ type ServerMetrics struct {
 	CommandChecks   []CommandCheckResult         `json:"command_checks,omitempty"`
 	HashChecks      []HashCheckResult            `json:"hash_checks,omitempty"`
 	CertFileChecks  []CertificateFileCheckResult `json:"certificate_file_checks,omitempty"`
+	SocketChecks    []UnixSocketCheckResult      `json:"unix_socket_checks,omitempty"`
+	UserChecks      []UserCheckResult            `json:"user_checks,omitempty"`
 	// StandardTools contains non-sensitive availability facts for common POSIX,
 	// Linux, and operational tools. It is populated only when tool_inventory is enabled.
 	StandardTools map[string]bool `json:"standard_tools,omitempty"`
@@ -221,6 +223,7 @@ type ConnectivityStats struct {
 	Traceroute  []TracerouteResult `json:"traceroute,omitempty"`
 	TLS         []TLSResult        `json:"tls,omitempty"`
 	NTP         []NTPResult        `json:"ntp,omitempty"`
+	SSH         []SSHResult        `json:"ssh,omitempty"`
 }
 
 // PortResult holds the outcome of a single TCP port check.
@@ -301,6 +304,20 @@ type NTPResult struct {
 	OffsetMs  float64 `json:"offset_ms"`
 	Stratum   int     `json:"stratum"`
 	Error     string  `json:"error,omitempty"`
+}
+
+// SSHResult holds a credential-free SSH protocol handshake result. Fingerprint
+// is the server host-key fingerprint observed during key exchange.
+type SSHResult struct {
+	Name                string  `json:"name,omitempty"`
+	Host                string  `json:"host"`
+	Port                int     `json:"port"`
+	Fingerprint         string  `json:"fingerprint,omitempty"`
+	ExpectedFingerprint string  `json:"expected_fingerprint,omitempty"`
+	FingerprintMatch    bool    `json:"fingerprint_match"`
+	OK                  bool    `json:"ok"`
+	LatencyMs           float64 `json:"latency_ms"`
+	Error               string  `json:"error,omitempty"`
 }
 
 // CustomCheckResult holds the outcome of a custom SSH command check.
@@ -419,6 +436,24 @@ type CertificateFileCheckResult struct {
 	WarnDays    int        `json:"warn_days"`
 	OK          bool       `json:"ok"`
 	Error       string     `json:"error,omitempty"`
+}
+
+// UnixSocketCheckResult records whether an absolute path is a Unix socket.
+type UnixSocketCheckResult struct {
+	Name  string `json:"name,omitempty"`
+	Path  string `json:"path"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// UserCheckResult records a service account existence check without returning
+// account metadata beyond its UID.
+type UserCheckResult struct {
+	Name  string `json:"name,omitempty"`
+	User  string `json:"user"`
+	UID   int    `json:"uid"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
 }
 
 // ContainerInfo represents a single running Docker container and its resource usage.

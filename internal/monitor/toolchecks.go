@@ -397,6 +397,60 @@ func runCertificateFileChecks(ctx context.Context, r runner, checks []config.Cer
 	return results
 }
 
+// runUnixSocketChecks uses only the POSIX test builtin to distinguish an
+// existing Unix-domain socket from a regular file or a missing path.
+func runUnixSocketChecks(ctx context.Context, r runner, checks []config.UnixSocketCheck) []UnixSocketCheckResult {
+	results := make([]UnixSocketCheckResult, 0, len(checks))
+	for _, sc := range checks {
+		path := shellSingleQuote(sc.Path)
+		command := fmt.Sprintf("if [ -S %s ]; then printf socket; elif [ -e %s ]; then printf not_socket; else printf missing; fi", path, path)
+		out, err := runToolProbe(ctx, r, sc.Timeout, command)
+		state := strings.TrimSpace(out)
+		result := UnixSocketCheckResult{Name: sc.Name, Path: sc.Path, OK: state == "socket"}
+		switch state {
+		case "socket":
+		case "missing":
+			result.Error = "socket path does not exist on the target"
+		case "not_socket":
+			result.Error = "path exists but is not a Unix-domain socket"
+		default:
+			if err != nil {
+				result.Error = err.Error()
+			} else {
+				result.Error = fmt.Sprintf("could not determine socket state from %q", state)
+			}
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+// runUserChecks verifies only account presence and a numeric UID with the
+// POSIX id utility. It never returns groups, home directories, or credentials.
+func runUserChecks(ctx context.Context, r runner, checks []config.UserCheck) []UserCheckResult {
+	results := make([]UserCheckResult, 0, len(checks))
+	for _, uc := range checks {
+		command := fmt.Sprintf("if command -v id >/dev/null 2>&1; then id -u %s 2>/dev/null || printf missing; else printf unsupported; fi", shellSingleQuote(uc.User))
+		out, err := runToolProbe(ctx, r, uc.Timeout, command)
+		value := strings.TrimSpace(out)
+		result := UserCheckResult{Name: uc.Name, User: uc.User}
+		if uid, parseErr := strconv.Atoi(value); parseErr == nil && uid >= 0 {
+			result.UID = uid
+			result.OK = true
+		} else if value == "missing" {
+			result.Error = fmt.Sprintf("user %q does not exist on the target", uc.User)
+		} else if value == "unsupported" {
+			result.Error = "id is not available on the target"
+		} else if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Error = fmt.Sprintf("could not parse id output %q", value)
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
 func isLowerHex(value string) bool {
 	for _, r := range value {
 		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {

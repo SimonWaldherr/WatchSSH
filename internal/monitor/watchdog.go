@@ -328,6 +328,9 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 	for index, probe := range metric.Connectivity.NTP {
 		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "ntp", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("ntp-%d", index+1), includeIdentifiers), OK: probe.OK, LatencyMs: probe.LatencyMs, OffsetMs: probe.OffsetMs, Error: watchdogError(probe.Error, includeIdentifiers)})
 	}
+	for index, probe := range metric.Connectivity.SSH {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "ssh", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("ssh-%d", index+1), includeIdentifiers), OK: probe.OK, LatencyMs: probe.LatencyMs, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
 	for index, probe := range metric.CustomChecks {
 		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "custom", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("custom-%d", index+1), includeIdentifiers), OK: probe.OK})
 	}
@@ -365,6 +368,12 @@ func buildWatchdogProbeSnapshot(metric ServerMetrics, includeIdentifiers bool) w
 			entry.CertExpiresDays = &days
 		}
 		snapshot.Probes = append(snapshot.Probes, entry)
+	}
+	for index, probe := range metric.SocketChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "unix_socket", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("unix-socket-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
+	}
+	for index, probe := range metric.UserChecks {
+		snapshot.Probes = append(snapshot.Probes, watchdogProbe{Type: "user", Reference: watchdogIdentifier(probe.Name, fmt.Sprintf("user-%d", index+1), includeIdentifiers), OK: probe.OK, Error: watchdogError(probe.Error, includeIdentifiers)})
 	}
 	snapshot.ProbeCount = len(snapshot.Probes)
 	failedTypes := make(map[string]struct{})

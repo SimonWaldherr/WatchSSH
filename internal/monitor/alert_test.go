@@ -429,6 +429,25 @@ func TestAlertManager_CommandIntegrityAndCertificateFileProbes(t *testing.T) {
 	}
 }
 
+func TestAlertManager_SSHSocketAndUserProbes(t *testing.T) {
+	metrics := []ServerMetrics{{
+		ServerName:   "app-01",
+		Connectivity: ConnectivityStats{SSH: []SSHResult{{Name: "bastion", OK: false, LatencyMs: 250, ExpectedFingerprint: "SHA256:pin", Fingerprint: "SHA256:other", FingerprintMatch: false}}},
+		SocketChecks: []UnixSocketCheckResult{{Name: "app-socket", OK: false}},
+		UserChecks:   []UserCheckResult{{Name: "app-user", OK: false}},
+	}}
+	cfg := &config.Config{Alerts: config.AlertsConfig{Cooldown: 0, Rules: []config.AlertRule{
+		{Name: "ssh-down", Metric: "ssh_failed", Operator: "==", Threshold: 1, Probe: "bastion"},
+		{Name: "ssh-slow", Metric: "ssh_latency", Operator: ">", Threshold: 100, Probe: "bastion"},
+		{Name: "ssh-key-changed", Metric: "ssh_host_key_mismatch", Operator: "==", Threshold: 1, Probe: "bastion"},
+		{Name: "socket-missing", Metric: "unix_socket_failed", Operator: "==", Threshold: 1, Probe: "app-socket"},
+		{Name: "user-missing", Metric: "user_failed", Operator: "==", Threshold: 1, Probe: "app-user"},
+	}}}
+	if firings := NewAlertManager().Evaluate(metrics, cfg); len(firings) != 5 {
+		t.Fatalf("SSH/socket/user probe firings = %#v", firings)
+	}
+}
+
 func TestAlertManager_BoardMetrics(t *testing.T) {
 	temp := 82.5
 	rssi := -78.0

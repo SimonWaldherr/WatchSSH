@@ -888,6 +888,9 @@ func serverCheckSummary(srv config.Server) string {
 	if len(srv.Checks.NTP) > 0 {
 		parts = append(parts, fmt.Sprintf("%d ntp", len(srv.Checks.NTP)))
 	}
+	if len(srv.Checks.SSH) > 0 {
+		parts = append(parts, fmt.Sprintf("%d ssh", len(srv.Checks.SSH)))
+	}
 	if len(srv.Checks.Custom) > 0 {
 		parts = append(parts, fmt.Sprintf("%d custom", len(srv.Checks.Custom)))
 	}
@@ -920,6 +923,12 @@ func serverCheckSummary(srv config.Server) string {
 	}
 	if len(srv.Checks.CertFile) > 0 {
 		parts = append(parts, fmt.Sprintf("%d cert file", len(srv.Checks.CertFile)))
+	}
+	if len(srv.Checks.Socket) > 0 {
+		parts = append(parts, fmt.Sprintf("%d socket", len(srv.Checks.Socket)))
+	}
+	if len(srv.Checks.User) > 0 {
+		parts = append(parts, fmt.Sprintf("%d user", len(srv.Checks.User)))
 	}
 	if srv.Docker.Enabled {
 		parts = append(parts, "docker")
@@ -954,6 +963,13 @@ func probeRows(servers []config.Server) []probeRow {
 		}
 		for i, probe := range checks.NTP {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "ntp", Index: i, Name: "NTP", Detail: fmt.Sprintf("%s:%d", probe.Host, probe.Port)})
+		}
+		for i, probe := range checks.SSH {
+			detail := fmt.Sprintf("%s:%d", probe.Host, probe.Port)
+			if probe.ExpectedFingerprint != "" {
+				detail += ", host key pinned"
+			}
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "ssh", Index: i, Name: "SSH handshake", Detail: detail})
 		}
 		for i, probe := range checks.Trace {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "trace", Index: i, Name: "Traceroute", Detail: probe.Host})
@@ -1010,6 +1026,12 @@ func probeRows(servers []config.Server) []probeRow {
 		for i, probe := range checks.CertFile {
 			rows = append(rows, probeRow{Server: srv.Name, Kind: "certificate_file", Index: i, Name: "Certificate file", Detail: fmt.Sprintf("%s, warn at %d days", probe.Path, probe.WarnDays)})
 		}
+		for i, probe := range checks.Socket {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "unix_socket", Index: i, Name: "Unix socket", Detail: probe.Path})
+		}
+		for i, probe := range checks.User {
+			rows = append(rows, probeRow{Server: srv.Name, Kind: "user", Index: i, Name: "Service account", Detail: probe.User})
+		}
 	}
 	return rows
 }
@@ -1052,6 +1074,11 @@ func removeProbe(checks *config.Checks, kind string, index int) bool {
 			return false
 		}
 		checks.NTP = append(checks.NTP[:index], checks.NTP[index+1:]...)
+	case "ssh":
+		if index >= len(checks.SSH) {
+			return false
+		}
+		checks.SSH = append(checks.SSH[:index], checks.SSH[index+1:]...)
 	case "trace":
 		if index >= len(checks.Trace) {
 			return false
@@ -1112,6 +1139,16 @@ func removeProbe(checks *config.Checks, kind string, index int) bool {
 			return false
 		}
 		checks.CertFile = append(checks.CertFile[:index], checks.CertFile[index+1:]...)
+	case "unix_socket":
+		if index >= len(checks.Socket) {
+			return false
+		}
+		checks.Socket = append(checks.Socket[:index], checks.Socket[index+1:]...)
+	case "user":
+		if index >= len(checks.User) {
+			return false
+		}
+		checks.User = append(checks.User[:index], checks.User[index+1:]...)
 	default:
 		return false
 	}
@@ -1129,6 +1166,7 @@ func mergeChecks(destination *config.Checks, imported config.Checks) {
 	destination.Trace = append(destination.Trace, imported.Trace...)
 	destination.TLS = append(destination.TLS, imported.TLS...)
 	destination.NTP = append(destination.NTP, imported.NTP...)
+	destination.SSH = append(destination.SSH, imported.SSH...)
 	destination.Custom = append(destination.Custom, imported.Custom...)
 	destination.Service = append(destination.Service, imported.Service...)
 	destination.Process = append(destination.Process, imported.Process...)
@@ -1140,9 +1178,14 @@ func mergeChecks(destination *config.Checks, imported config.Checks) {
 	destination.Command = append(destination.Command, imported.Command...)
 	destination.Hash = append(destination.Hash, imported.Hash...)
 	destination.CertFile = append(destination.CertFile, imported.CertFile...)
+	destination.Socket = append(destination.Socket, imported.Socket...)
+	destination.User = append(destination.User, imported.User...)
 }
 
-func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
+func normalizeImportedChecks(checks *config.Checks, defaultHost string, defaultPort int) {
+	if defaultPort <= 0 {
+		defaultPort = 22
+	}
 	if checks.Ping.Enabled {
 		if checks.Ping.Count == 0 {
 			checks.Ping.Count = 3
@@ -1160,6 +1203,20 @@ func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
 		}
 		if checks.Ports[i].Timeout == 0 {
 			checks.Ports[i].Timeout = 5
+		}
+	}
+	for i := range checks.SSH {
+		if checks.SSH[i].Host == "" {
+			checks.SSH[i].Host = defaultHost
+		}
+		if checks.SSH[i].Name == "" {
+			checks.SSH[i].Name = checks.SSH[i].Host
+		}
+		if checks.SSH[i].Port == 0 {
+			checks.SSH[i].Port = defaultPort
+		}
+		if checks.SSH[i].Timeout == 0 {
+			checks.SSH[i].Timeout = 5
 		}
 	}
 	for i := range checks.HTTP {
@@ -1265,6 +1322,22 @@ func normalizeImportedChecks(checks *config.Checks, defaultHost string) {
 		}
 		if checks.CertFile[i].Timeout == 0 {
 			checks.CertFile[i].Timeout = 5
+		}
+	}
+	for i := range checks.Socket {
+		if checks.Socket[i].Name == "" {
+			checks.Socket[i].Name = checks.Socket[i].Path
+		}
+		if checks.Socket[i].Timeout == 0 {
+			checks.Socket[i].Timeout = 5
+		}
+	}
+	for i := range checks.User {
+		if checks.User[i].Name == "" {
+			checks.User[i].Name = checks.User[i].User
+		}
+		if checks.User[i].Timeout == 0 {
+			checks.User[i].Timeout = 5
 		}
 	}
 }
@@ -1525,6 +1598,24 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 				port = 123
 			}
 			srv.Checks.NTP = append(srv.Checks.NTP, config.NTPCheck{Name: target, Host: target, Port: port, MaxOffsetMs: formFloat(r, "max_offset_ms", 0), Timeout: timeout})
+		case "ssh":
+			if target == "" {
+				buildErr = fmt.Errorf("SSH probes need a host")
+				return
+			}
+			if port == 0 {
+				port = srv.Port
+			}
+			if port == 0 {
+				port = 22
+			}
+			fingerprint := strings.TrimSpace(r.FormValue("expected_fingerprint"))
+			if fingerprint != "" && !config.ValidSSHFingerprint(fingerprint) {
+				buildErr = fmt.Errorf("SSH host-key fingerprint must use the SHA256:<base64> format")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), fmt.Sprintf("%s:%d", target, port))
+			srv.Checks.SSH = append(srv.Checks.SSH, config.SSHCheck{Name: name, Host: target, Port: port, ExpectedFingerprint: fingerprint, Timeout: timeout})
 		case "trace":
 			if target == "" {
 				buildErr = fmt.Errorf("Traceroute probes need a hostname")
@@ -1627,6 +1718,22 @@ func (s *Server) handleAddProbe(w http.ResponseWriter, r *http.Request) {
 			}
 			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
 			srv.Checks.CertFile = append(srv.Checks.CertFile, config.CertificateFileCheck{Name: name, Path: path, WarnDays: formInt(r, "warn_days", 30), Timeout: timeout})
+		case "unix_socket":
+			path := defaultString(strings.TrimSpace(r.FormValue("socket_path")), strings.TrimSpace(r.FormValue("path")))
+			if !isAbsoluteRemotePath(path) {
+				buildErr = fmt.Errorf("Unix socket probes need an absolute path")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), path)
+			srv.Checks.Socket = append(srv.Checks.Socket, config.UnixSocketCheck{Name: name, Path: path, Timeout: timeout})
+		case "user":
+			user := strings.TrimSpace(r.FormValue("check_user"))
+			if user == "" {
+				buildErr = fmt.Errorf("service-account probes need a user name")
+				return
+			}
+			name := defaultString(strings.TrimSpace(r.FormValue("probe_name")), user)
+			srv.Checks.User = append(srv.Checks.User, config.UserCheck{Name: name, User: user, Timeout: timeout})
 		default:
 			buildErr = fmt.Errorf("unsupported probe type %q", kind)
 		}
@@ -1738,7 +1845,7 @@ func (s *Server) handleImportProbes(w http.ResponseWriter, r *http.Request) {
 	}
 	imported := false
 	s.state.UpdateServer(target, func(srv *config.Server) {
-		normalizeImportedChecks(&bundle.Checks, srv.Host)
+		normalizeImportedChecks(&bundle.Checks, srv.Host, srv.Port)
 		mergeChecks(&srv.Checks, bundle.Checks)
 		imported = true
 	})
@@ -2292,6 +2399,12 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_ntp_probe_latency_ms gauge\n")
 	b.WriteString("# HELP watchssh_ntp_offset_ms NTP clock offset in milliseconds.\n")
 	b.WriteString("# TYPE watchssh_ntp_offset_ms gauge\n")
+	b.WriteString("# HELP watchssh_ssh_probe_up Whether a credential-free SSH protocol handshake succeeded.\n")
+	b.WriteString("# TYPE watchssh_ssh_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_ssh_probe_latency_ms SSH protocol handshake latency in milliseconds.\n")
+	b.WriteString("# TYPE watchssh_ssh_probe_latency_ms gauge\n")
+	b.WriteString("# HELP watchssh_ssh_host_key_match Whether the observed SSH host key matched its configured fingerprint.\n")
+	b.WriteString("# TYPE watchssh_ssh_host_key_match gauge\n")
 	b.WriteString("# HELP watchssh_board_temperature_celsius Board temperature in Celsius for Raspberry Pi and compatible SBCs.\n")
 	b.WriteString("# TYPE watchssh_board_temperature_celsius gauge\n")
 	b.WriteString("# HELP watchssh_board_cpu_frequency_mhz Current board CPU frequency in MHz.\n")
@@ -2310,6 +2423,10 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 	b.WriteString("# TYPE watchssh_certificate_file_probe_up gauge\n")
 	b.WriteString("# HELP watchssh_certificate_file_expires_days Days until a target-side PEM certificate expires.\n")
 	b.WriteString("# TYPE watchssh_certificate_file_expires_days gauge\n")
+	b.WriteString("# HELP watchssh_unix_socket_probe_up Whether a target-side Unix socket exists.\n")
+	b.WriteString("# TYPE watchssh_unix_socket_probe_up gauge\n")
+	b.WriteString("# HELP watchssh_user_probe_up Whether a target-side service account exists.\n")
+	b.WriteString("# TYPE watchssh_user_probe_up gauge\n")
 	for _, m := range servers {
 		labels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "platform": m.Platform})
 		up := 1
@@ -2376,6 +2493,14 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			fmt.Fprintf(&b, "watchssh_ntp_probe_latency_ms%s %.6f\n", probeLabels, n.LatencyMs)
 			fmt.Fprintf(&b, "watchssh_ntp_offset_ms%s %.6f\n", probeLabels, n.OffsetMs)
 		}
+		for _, probe := range m.Connectivity.SSH {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name, "target": probe.Host, "port": strconv.Itoa(probe.Port)})
+			fmt.Fprintf(&b, "watchssh_ssh_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
+			fmt.Fprintf(&b, "watchssh_ssh_probe_latency_ms%s %.6f\n", probeLabels, probe.LatencyMs)
+			if probe.ExpectedFingerprint != "" {
+				fmt.Fprintf(&b, "watchssh_ssh_host_key_match%s %d\n", probeLabels, boolGauge(probe.FingerprintMatch))
+			}
+		}
 		for _, probe := range m.CommandChecks {
 			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name})
 			fmt.Fprintf(&b, "watchssh_command_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
@@ -2390,6 +2515,14 @@ func (s *Server) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request)
 			if probe.ExpiresAt != nil {
 				fmt.Fprintf(&b, "watchssh_certificate_file_expires_days%s %d\n", probeLabels, probe.ExpiresDays)
 			}
+		}
+		for _, probe := range m.SocketChecks {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name})
+			fmt.Fprintf(&b, "watchssh_unix_socket_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
+		}
+		for _, probe := range m.UserChecks {
+			probeLabels := prometheusLabels(map[string]string{"server": m.ServerName, "probe": probe.Name})
+			fmt.Fprintf(&b, "watchssh_user_probe_up%s %d\n", probeLabels, boolGauge(probe.OK))
 		}
 		if m.Board != nil {
 			boardLabels := prometheusLabels(map[string]string{"server": m.ServerName, "host": m.Host, "model": m.Board.Model})
@@ -2655,6 +2788,11 @@ func serverStatus(m monitor.ServerMetrics) string {
 			return "warn"
 		}
 	}
+	for _, probe := range m.Connectivity.SSH {
+		if !probe.OK {
+			return "warn"
+		}
+	}
 	for _, c := range m.CustomChecks {
 		if !c.OK {
 			return "warn"
@@ -2706,6 +2844,16 @@ func serverStatus(m monitor.ServerMetrics) string {
 		}
 	}
 	for _, c := range m.CertFileChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.SocketChecks {
+		if !c.OK {
+			return "warn"
+		}
+	}
+	for _, c := range m.UserChecks {
 		if !c.OK {
 			return "warn"
 		}

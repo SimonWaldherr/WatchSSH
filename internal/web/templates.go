@@ -612,7 +612,15 @@ const allTemplates = `
       {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
     </div>
     {{end}}
-    {{if and (not .PingEnabled) (not .Ports) (not .Banner) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS) (not .NTP)}}
+    {{range .SSH}}
+    <div class="m-row" style="flex-wrap:wrap">
+      <span class="m-label">SSH {{.Host}}:{{.Port}}</span>
+      <span>{{if .OK}}<span class="dot dot-ok"></span>Handshake OK{{else}}<span class="dot dot-err"></span>FAILED{{end}} — {{printf "%.0f" .LatencyMs}} ms</span>
+      {{if and .ExpectedFingerprint (not .FingerprintMatch)}}<span class="m-error">host key mismatch</span>{{end}}
+      {{if .Error}}<span class="m-error">{{.Error}}</span>{{end}}
+    </div>
+    {{end}}
+    {{if and (not .PingEnabled) (not .Ports) (not .Banner) (not .HTTP) (not .DNS) (not .Traceroute) (not .TLS) (not .NTP) (not .SSH)}}
     <p class="empty">No connectivity checks configured for this server.</p>
     {{end}}
     {{end}}
@@ -766,7 +774,7 @@ const allTemplates = `
 </div>
 {{end}}
 
-{{if or .Metrics.ServiceChecks .Metrics.ProcessChecks .Metrics.ListeningChecks .Metrics.JournalChecks .Metrics.FileChecks .Metrics.DirectoryChecks .Metrics.LogChecks .Metrics.CommandChecks .Metrics.HashChecks .Metrics.CertFileChecks}}
+{{if or .Metrics.ServiceChecks .Metrics.ProcessChecks .Metrics.ListeningChecks .Metrics.JournalChecks .Metrics.FileChecks .Metrics.DirectoryChecks .Metrics.LogChecks .Metrics.CommandChecks .Metrics.HashChecks .Metrics.CertFileChecks .Metrics.SocketChecks .Metrics.UserChecks}}
 <div class="section">
   <div class="form-section-title"><h3>Agentless Unix Tool Probes</h3><span>Read-only commands executed over SSH on this target.</span></div>
   <div class="table-scroll"><table>
@@ -782,6 +790,8 @@ const allTemplates = `
     {{range .Metrics.CommandChecks}}<tr><td><code>command -v</code></td><td>{{.Name}}</td><td>{{.Command}}</td><td>{{if .ResolvedPath}}<code>{{.ResolvedPath}}</code>{{else}}not available{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Required command missing" "command_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for command probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.HashChecks}}<tr><td><code>sha*sum / shasum / openssl</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{.Algorithm}}{{if .ObservedDigest}} <code>{{printf "%.12s" .ObservedDigest}}...</code>{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "File integrity probe failed" "hash_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for file integrity probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     {{range .Metrics.CertFileChecks}}<tr><td><code>openssl x509</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>{{if .ExpiresAt}}{{.ExpiresAt.Format "2006-01-02"}} ({{.ExpiresDays}} days; warn at {{.WarnDays}}){{else}}expiry unavailable{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Certificate file probe failed" "certificate_file_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for certificate file probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.SocketChecks}}<tr><td><code>test -S</code></td><td>{{.Name}}</td><td>{{.Path}}</td><td>Unix-domain socket</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Unix socket probe failed" "unix_socket_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for Unix socket probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
+    {{range .Metrics.UserChecks}}<tr><td><code>id -u</code></td><td>{{.Name}}</td><td>{{.User}}</td><td>{{if .OK}}UID {{.UID}}{{else}}account unavailable{{end}}</td><td>{{if .OK}}<span class="dot dot-ok"></span>OK{{else}}<span class="dot dot-err"></span>FAILED <a class="metric-alert" href="{{probeAlertLink "Service account probe failed" "user_failed" ">" 0 $.Metrics.ServerName .Name}}" aria-label="Create alert for service account probe {{.Name}}" title="Create alert for this probe">&#9888;</a>{{end}}{{if .Error}}<div class="m-error">{{.Error}}</div>{{end}}</td></tr>{{end}}
     </tbody>
   </table></div>
 </div>
@@ -907,7 +917,7 @@ const allTemplates = `
   <form method="post" action="/probes/add" class="probe-builder">
     <div class="form-row w3">
       <div><label for="probe-server">Target</label><select id="probe-server" name="server">{{range .ServerNames}}<option value="{{.}}">{{.}}</option>{{end}}</select></div>
-      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="file">File metadata (test + stat)</option><option value="directory">Directory usage (du + find)</option><option value="log">Log pattern (tail + grep)</option><option value="command">Required command (command -v)</option><option value="hash">File integrity (sha256 / sha512)</option><option value="certificate_file">PEM certificate file (openssl)</option><option value="custom">Remote command</option><option value="service">Service state (systemctl / service)</option><option value="process">Process running (pgrep / ps)</option><option value="listening">Listening port (ss / netstat)</option><option value="journal">Journal errors (journalctl)</option></select></div>
+      <div><label for="probe-kind">Probe type</label><select id="probe-kind" name="kind"><option value="http">HTTP health</option><option value="tcp">TCP port</option><option value="ssh">SSH protocol handshake</option><option value="dns">DNS lookup</option><option value="tls">TLS certificate</option><option value="ping">Ping</option><option value="ntp">NTP</option><option value="trace">Traceroute</option><option value="file">File metadata (test + stat)</option><option value="directory">Directory usage (du + find)</option><option value="log">Log pattern (tail + grep)</option><option value="command">Required command (command -v)</option><option value="hash">File integrity (sha256 / sha512)</option><option value="certificate_file">PEM certificate file (openssl)</option><option value="unix_socket">Unix socket (test -S)</option><option value="user">Service account (id -u)</option><option value="custom">Remote command</option><option value="service">Service state (systemctl / service)</option><option value="process">Process running (pgrep / ps)</option><option value="listening">Listening port (ss / netstat)</option><option value="journal">Journal errors (journalctl)</option></select></div>
       <div><label for="probe-timeout">Timeout (seconds)</label><input id="probe-timeout" type="number" name="timeout" value="5" min="1"></div>
     </div>
     <div class="form-row w3" id="probe-network-fields">
@@ -926,6 +936,15 @@ const allTemplates = `
     <div class="form-row probe-kind-fields" data-probe-kinds="certificate_file" hidden>
       <div><label for="probe-certificate-path">Absolute PEM path</label><input id="probe-certificate-path" type="text" name="certificate_path" placeholder="/etc/letsencrypt/live/app/fullchain.pem"></div>
       <div><label for="probe-warn-days">Certificate expiry warning (days)</label><input id="probe-warn-days" type="number" name="warn_days" min="1" value="30"></div>
+    </div>
+    <div class="form-row probe-kind-fields" data-probe-kinds="ssh" hidden>
+      <div><label for="probe-ssh-fingerprint">Expected SSH host-key fingerprint (optional)</label><input id="probe-ssh-fingerprint" type="text" name="expected_fingerprint" placeholder="SHA256:..." spellcheck="false" autocomplete="off"></div>
+    </div>
+    <div class="form-row probe-kind-fields" data-probe-kinds="unix_socket" hidden>
+      <div><label for="probe-socket-path">Absolute socket path</label><input id="probe-socket-path" type="text" name="socket_path" placeholder="/run/app/app.sock"></div>
+    </div>
+    <div class="form-row probe-kind-fields" data-probe-kinds="user" hidden>
+      <div><label for="probe-user">Service account</label><input id="probe-user" type="text" name="check_user" placeholder="www-data"></div>
     </div>
     <div class="form-row mode-advanced">
       <div><label for="probe-method">HTTP method / DNS type</label><input id="probe-method" type="text" name="method" value="GET" placeholder="GET or A"></div>
@@ -1257,6 +1276,7 @@ const allTemplates = `
     var presets = {
       http:{placeholder:'https://service.example/health',port:'',source:false},
       tcp:{placeholder:'db.internal or service.example',port:'443',source:true},
+	  ssh:{placeholder:'ssh.example.com',port:'22',source:false},
       dns:{placeholder:'example.com',port:'',source:false},
       tls:{placeholder:'service.example',port:'443',source:false},
       ping:{placeholder:'uses the target host when blank',port:'',source:false},
@@ -1269,13 +1289,15 @@ const allTemplates = `
       command:{placeholder:'not required — set the required command below',port:'',source:false},
       hash:{placeholder:'not required — set the file path and digest below',port:'',source:false},
       certificate_file:{placeholder:'not required — set the certificate path below',port:'',source:false},
+	  unix_socket:{placeholder:'not required — set the socket path below',port:'',source:false},
+	  user:{placeholder:'not required — set the service account below',port:'',source:false},
       service:{placeholder:'not required — set the systemd unit below',port:'',source:false},
       process:{placeholder:'not required — set the process pattern below',port:'',source:false},
       listening:{placeholder:'not required — set the port below',port:'',source:false},
       journal:{placeholder:'not required — set the unit and priority below',port:'',source:false}
     };
-    var noPortKinds = ['ping','dns','trace','file','directory','log','command','hash','certificate_file','custom','service','process','journal'];
-    var noNetworkKinds = ['file','directory','log','command','hash','certificate_file','custom','service','process','listening','journal'];
+    var noPortKinds = ['ping','dns','trace','file','directory','log','command','hash','certificate_file','unix_socket','user','custom','service','process','journal'];
+    var noNetworkKinds = ['file','directory','log','command','hash','certificate_file','unix_socket','user','custom','service','process','listening','journal'];
     var preset = presets[probeKind.value] || presets.http;
     probeTarget.placeholder = preset.placeholder;
     probePort.value = preset.port;
@@ -1481,6 +1503,8 @@ const allTemplates = `
 		  <option value="hash_failed">hash_failed</option>
 		  <option value="certificate_file_failed">certificate_file_failed</option>
 		  <option value="certificate_file_expires_days">certificate_file_expires_days (days)</option>
+		  <option value="unix_socket_failed">unix_socket_failed</option>
+		  <option value="user_failed">user_failed</option>
 		  </optgroup>
           <optgroup label="Connectivity">
           <option value="ping_failed">ping_failed</option>
@@ -1503,6 +1527,9 @@ const allTemplates = `
           <option value="ntp_failed">ntp_failed</option>
           <option value="ntp_latency">ntp_latency (ms)</option>
           <option value="ntp_offset">ntp_offset (ms)</option>
+		  <option value="ssh_failed">ssh_failed</option>
+		  <option value="ssh_latency">ssh_latency (ms)</option>
+		  <option value="ssh_host_key_mismatch">ssh_host_key_mismatch</option>
           <option value="custom_failed">custom_failed</option>
           </optgroup>
           <optgroup label="Board">

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net"
@@ -148,6 +149,17 @@ type NTPCheck struct {
 	Timeout     int     `yaml:"timeout"`       // seconds (default 5)
 }
 
+// SSHCheck verifies an SSH protocol handshake from the monitoring host. It
+// does not authenticate or execute a command. ExpectedFingerprint optionally
+// pins the SHA256 host-key fingerprint reported by OpenSSH.
+type SSHCheck struct {
+	Name                string `yaml:"name"`
+	Host                string `yaml:"host"`
+	Port                int    `yaml:"port"` // defaults to the server SSH port
+	ExpectedFingerprint string `yaml:"expected_fingerprint"`
+	Timeout             int    `yaml:"timeout"` // seconds (default 5)
+}
+
 // DockerConfig enables optional Docker container observability on Linux hosts.
 // When enabled, WatchSSH runs `docker ps` and `docker stats --no-stream` to
 // discover running containers and collect their resource usage. This feature
@@ -288,6 +300,23 @@ type CertificateFileCheck struct {
 	Timeout  int    `yaml:"timeout"` // seconds (default 5)
 }
 
+// UnixSocketCheck verifies that an absolute path is a Unix-domain socket via
+// the POSIX test builtin. It is suitable for services such as Docker, Redis,
+// PostgreSQL, or PHP-FPM without querying the service itself.
+type UnixSocketCheck struct {
+	Name    string `yaml:"name"`
+	Path    string `yaml:"path"`
+	Timeout int    `yaml:"timeout"` // seconds (default 5)
+}
+
+// UserCheck verifies that a service account exists through `id -u`. It returns
+// only the numeric UID and never reads account metadata or credentials.
+type UserCheck struct {
+	Name    string `yaml:"name"`
+	User    string `yaml:"user"`
+	Timeout int    `yaml:"timeout"` // seconds (default 5)
+}
+
 // Checks holds all optional connectivity and custom checks for a server.
 type Checks struct {
 	Ping      PingCheck              `yaml:"ping"`
@@ -298,6 +327,7 @@ type Checks struct {
 	Trace     []TracerouteCheck      `yaml:"traceroute"`
 	TLS       []TLSCheck             `yaml:"tls"`
 	NTP       []NTPCheck             `yaml:"ntp"`
+	SSH       []SSHCheck             `yaml:"ssh"`
 	Custom    []CustomCheck          `yaml:"custom"`
 	Service   []ServiceCheck         `yaml:"service"`
 	Process   []ProcessCheck         `yaml:"process"`
@@ -309,6 +339,8 @@ type Checks struct {
 	Command   []CommandCheck         `yaml:"command"`
 	Hash      []HashCheck            `yaml:"hash"`
 	CertFile  []CertificateFileCheck `yaml:"certificate_file"`
+	Socket    []UnixSocketCheck      `yaml:"unix_socket"`
+	User      []UserCheck            `yaml:"user"`
 }
 
 // JumpHost describes one explicit SSH bastion. WatchSSH authenticates to the
@@ -893,6 +925,20 @@ func applyDefaults(cfg *Config) {
 				srv.Checks.NTP[j].Timeout = 5
 			}
 		}
+		for j := range srv.Checks.SSH {
+			if srv.Checks.SSH[j].Name == "" {
+				srv.Checks.SSH[j].Name = srv.Checks.SSH[j].Host
+			}
+			if srv.Checks.SSH[j].Host == "" {
+				srv.Checks.SSH[j].Host = srv.Host
+			}
+			if srv.Checks.SSH[j].Port == 0 {
+				srv.Checks.SSH[j].Port = srv.Port
+			}
+			if srv.Checks.SSH[j].Timeout == 0 {
+				srv.Checks.SSH[j].Timeout = 5
+			}
+		}
 		for j := range srv.Checks.Service {
 			if srv.Checks.Service[j].Timeout == 0 {
 				srv.Checks.Service[j].Timeout = 5
@@ -990,6 +1036,22 @@ func applyDefaults(cfg *Config) {
 				srv.Checks.CertFile[j].Timeout = 5
 			}
 		}
+		for j := range srv.Checks.Socket {
+			if srv.Checks.Socket[j].Name == "" {
+				srv.Checks.Socket[j].Name = srv.Checks.Socket[j].Path
+			}
+			if srv.Checks.Socket[j].Timeout == 0 {
+				srv.Checks.Socket[j].Timeout = 5
+			}
+		}
+		for j := range srv.Checks.User {
+			if srv.Checks.User[j].Name == "" {
+				srv.Checks.User[j].Name = srv.Checks.User[j].User
+			}
+			if srv.Checks.User[j].Timeout == 0 {
+				srv.Checks.User[j].Timeout = 5
+			}
+		}
 	}
 }
 
@@ -1079,6 +1141,14 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("server[%d] (%q): checks.ports[%d].host is required", i, srv.Name, j)
 			}
 		}
+		for j, sc := range srv.Checks.SSH {
+			if strings.TrimSpace(sc.Host) == "" || sc.Port < 1 || sc.Port > 65535 || sc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.ssh[%d] requires a host, valid port, and positive timeout", i, srv.Name, j)
+			}
+			if fingerprint := strings.TrimSpace(sc.ExpectedFingerprint); fingerprint != "" && !ValidSSHFingerprint(fingerprint) {
+				return fmt.Errorf("server[%d] (%q): checks.ssh[%d].expected_fingerprint must be an OpenSSH SHA256 fingerprint", i, srv.Name, j)
+			}
+		}
 		for j, sc := range srv.Checks.Service {
 			if strings.TrimSpace(sc.Unit) == "" {
 				return fmt.Errorf("server[%d] (%q): checks.service[%d].unit is required", i, srv.Name, j)
@@ -1155,6 +1225,16 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("server[%d] (%q): checks.certificate_file[%d] has invalid warning days or timeout", i, srv.Name, j)
 			}
 		}
+		for j, sc := range srv.Checks.Socket {
+			if !isAbsoluteProbePath(sc.Path) || sc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.unix_socket[%d] requires an absolute path and positive timeout", i, srv.Name, j)
+			}
+		}
+		for j, uc := range srv.Checks.User {
+			if strings.TrimSpace(uc.User) == "" || uc.Timeout < 1 {
+				return fmt.Errorf("server[%d] (%q): checks.user[%d] requires a user and positive timeout", i, srv.Name, j)
+			}
+		}
 	}
 	for _, srv := range cfg.Servers {
 		seen := make(map[string]struct{}, len(srv.DependsOn))
@@ -1215,6 +1295,16 @@ func isLoopbackListen(address string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// ValidSSHFingerprint reports whether value is an OpenSSH SHA-256 fingerprint.
+func ValidSSHFingerprint(value string) bool {
+	encoded, ok := strings.CutPrefix(strings.TrimSpace(value), "SHA256:")
+	if !ok || encoded == "" {
+		return false
+	}
+	decoded, err := base64.RawStdEncoding.DecodeString(encoded)
+	return err == nil && len(decoded) > 0
 }
 
 func validateDependencyCycles(servers []Server) error {

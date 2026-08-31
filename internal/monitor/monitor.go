@@ -606,7 +606,35 @@ func runConnectivityChecks(srv config.Server) ConnectivityStats {
 		cs.NTP = append(cs.NTP, result)
 	}
 
+	cs.SSH = runSSHChecks(srv.Checks.SSH, srv.Host)
+
 	return cs
+}
+
+func runSSHChecks(checks []config.SSHCheck, defaultHost string) []SSHResult {
+	results := make([]SSHResult, 0, len(checks))
+	for _, sc := range checks {
+		host := sc.Host
+		if host == "" {
+			host = defaultHost
+		}
+		r := check.CheckSSH(sc.Name, host, sc.Port, sc.ExpectedFingerprint, sc.Timeout)
+		result := SSHResult{
+			Name:                r.Name,
+			Host:                r.Host,
+			Port:                r.Port,
+			Fingerprint:         r.Fingerprint,
+			ExpectedFingerprint: r.ExpectedFingerprint,
+			FingerprintMatch:    r.FingerprintMatch,
+			OK:                  r.OK,
+			LatencyMs:           r.LatencyMs,
+		}
+		if r.Err != nil {
+			result.Error = r.Err.Error()
+		}
+		results = append(results, result)
+	}
+	return results
 }
 
 type targetPortDialer interface {
@@ -714,6 +742,8 @@ func runLocalConnectivityChecks(srv config.Server) ConnectivityStats {
 		cs.NTP = append(cs.NTP, result)
 	}
 
+	cs.SSH = runSSHChecks(srv.Checks.SSH, host)
+
 	return cs
 }
 
@@ -774,6 +804,8 @@ func (m *Monitor) gatherAll(ctx context.Context, c runner, metrics *ServerMetric
 		metrics.CommandChecks = runCommandChecks(ctx, c, srv.Checks.Command)
 		metrics.HashChecks = runHashChecks(ctx, c, srv.Checks.Hash)
 		metrics.CertFileChecks = runCertificateFileChecks(ctx, c, srv.Checks.CertFile)
+		metrics.SocketChecks = runUnixSocketChecks(ctx, c, srv.Checks.Socket)
+		metrics.UserChecks = runUserChecks(ctx, c, srv.Checks.User)
 	}
 	return nil
 }

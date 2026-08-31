@@ -238,6 +238,16 @@ servers:
           max_offset_ms: 100
           timeout: 5
 
+      # Credential-free SSH protocol handshake from the WatchSSH host. It
+      # verifies the SSH service before authentication; pin a known SHA-256
+      # host-key fingerprint when you also want identity-change detection.
+      ssh:
+        - name: web-01-ssh
+          host: web-01.example.com
+          port: 22
+          # expected_fingerprint: SHA256:...
+          timeout: 5
+
       # Custom SSH command checks (run on the remote host via SSH).
       custom:
         - name: nginx-running
@@ -288,6 +298,16 @@ servers:
         - name: local-tls-certificate
           path: /etc/letsencrypt/live/web-01/fullchain.pem
           warn_days: 30
+          timeout: 5
+
+      # Local IPC and account checks using standard POSIX tools over SSH.
+      unix_socket:
+        - name: nginx-socket
+          path: /run/nginx/nginx.sock # test -S
+          timeout: 5
+      user:
+        - name: nginx-account
+          user: www-data # id -u; only the numeric UID is returned
           timeout: 5
 
   # ── macOS / Darwin server ────────────────────────────────────────────────

@@ -296,3 +296,29 @@ func TestRunCertificateFileChecks(t *testing.T) {
 		t.Fatalf("invalid certificate result = %#v", results[1])
 	}
 }
+
+func TestRunUnixSocketAndUserChecks(t *testing.T) {
+	r := stubRunner{fn: func(cmd string) (string, error) {
+		switch {
+		case strings.Contains(cmd, "'/run/app.sock'"):
+			return "socket", nil
+		case strings.Contains(cmd, "'/run/missing.sock'"):
+			return "missing", nil
+		case strings.Contains(cmd, "id -u 'www-data'"):
+			return "33", nil
+		case strings.Contains(cmd, "id -u 'missing-user'"):
+			return "missing", nil
+		default:
+			t.Fatalf("unexpected Unix socket/user command %q", cmd)
+			return "", nil
+		}
+	}}
+	sockets := runUnixSocketChecks(context.Background(), r, []config.UnixSocketCheck{{Name: "app", Path: "/run/app.sock"}, {Name: "missing", Path: "/run/missing.sock"}})
+	if len(sockets) != 2 || !sockets[0].OK || sockets[1].OK || sockets[1].Error == "" {
+		t.Fatalf("socket results = %#v", sockets)
+	}
+	users := runUserChecks(context.Background(), r, []config.UserCheck{{Name: "web", User: "www-data"}, {Name: "missing", User: "missing-user"}})
+	if len(users) != 2 || !users[0].OK || users[0].UID != 33 || users[1].OK || users[1].Error == "" {
+		t.Fatalf("user results = %#v", users)
+	}
+}

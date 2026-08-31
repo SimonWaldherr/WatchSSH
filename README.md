@@ -638,6 +638,14 @@ checks:
       host: time.cloudflare.com
       max_offset_ms: 100 # optional: fail on excessive clock drift
       timeout: 5
+  # A real SSH protocol handshake without authenticating. Pin the host key to
+  # detect a changed server identity; the fingerprint is optional.
+  ssh:
+    - name: ssh-endpoint
+      host: example.com
+      port: 22
+      # expected_fingerprint: SHA256:...
+      timeout: 5
 ```
 
 These probes are included in JSON output, `/history`, `/api/history/summary`,
@@ -654,7 +662,7 @@ kernel interfaces where available. Structured probes extend this model with
 read-only, typed checks and clear unsupported results instead of guesses.
 
 Portable probes work on Linux and Unix-like targets with their existing
-`test`, `stat`, `du`, `find`, `tail`, `grep`, `command`, checksum tools, and
+`test`, `stat`, `du`, `find`, `tail`, `grep`, `id`, `command`, checksum tools, and
 `openssl` where present. They require absolute paths; WatchSSH returns only
 metadata, digests, and aggregate counts, never file or log contents. The
 file-count probe stops after `max_file_count + 1` matches to keep large directory
@@ -690,6 +698,12 @@ checks:
     - name: local-tls-certificate
       path: /etc/letsencrypt/live/application/fullchain.pem
       warn_days: 30
+  unix_socket:
+    - name: application-socket
+      path: /run/application/application.sock # test -S
+  user:
+    - name: application-account
+      user: www-data # id -u; returns only the numeric UID
   service:
     - name: nginx-active
       unit: nginx.service # systemctl, then a service-command fallback
@@ -727,6 +741,10 @@ alert rule to scope a metric to one named probe. `command_failed` detects a
 missing dependency without executing it; `hash_failed` detects configuration or
 artifact drift without copying a file; `certificate_file_failed` and
 `certificate_file_expires_days` cover a PEM file managed directly on the target.
+`unix_socket_failed` and `user_failed` cover local IPC and required service
+accounts. `ssh_failed`, `ssh_latency`, and `ssh_host_key_mismatch` cover the
+credential-free SSH protocol probe. An SSH handshake proves protocol and host
+key availability only; it deliberately does not authenticate as a user.
 Hash probes try `sha256sum`/`sha512sum`, then `shasum`, then `openssl dgst`;
 certificate-file probes use `openssl x509 -enddate`. Unsupported tools are a
 clear probe failure and can be handled with a target-specific alert or runbook.

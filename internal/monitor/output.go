@@ -268,7 +268,7 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 
 	// Connectivity
 	cs := m.Connectivity
-	hasConn := cs.PingEnabled || len(cs.Ports) > 0 || len(cs.HTTP) > 0
+	hasConn := cs.PingEnabled || len(cs.Ports) > 0 || len(cs.HTTP) > 0 || len(cs.SSH) > 0
 	if hasConn {
 		line("Checks :")
 		if cs.PingEnabled {
@@ -292,6 +292,13 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 			}
 			line(fmt.Sprintf("  HTTP  %s  →  %s  (%.0f ms)", truncate(h.URL, 30), status, h.LatencyMs))
 		}
+		for _, probe := range cs.SSH {
+			status := "OK"
+			if !probe.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  SSH   %-20s %s (%.0f ms)", truncate(probe.Name, 20), status, probe.LatencyMs))
+		}
 		divider()
 	}
 
@@ -310,7 +317,7 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 
 	// Structured target-side probes deliberately show only metadata and counts.
 	// This keeps an interactive console useful without exposing log content.
-	if len(m.ServiceChecks)+len(m.ProcessChecks)+len(m.ListeningChecks)+len(m.JournalChecks)+len(m.FileChecks)+len(m.DirectoryChecks)+len(m.LogChecks)+len(m.CommandChecks)+len(m.HashChecks)+len(m.CertFileChecks) > 0 {
+	if len(m.ServiceChecks)+len(m.ProcessChecks)+len(m.ListeningChecks)+len(m.JournalChecks)+len(m.FileChecks)+len(m.DirectoryChecks)+len(m.LogChecks)+len(m.CommandChecks)+len(m.HashChecks)+len(m.CertFileChecks)+len(m.SocketChecks)+len(m.UserChecks) > 0 {
 		line("Unix SSH probes:")
 		for _, c := range m.ServiceChecks {
 			status := "OK"
@@ -389,6 +396,20 @@ func renderServerMetrics(m ServerMetrics, boxWidth int) string {
 				extra = fmt.Sprintf("%d days", c.ExpiresDays)
 			}
 			line(fmt.Sprintf("  cert-file %-20s %s (%s)", truncate(c.Name, 20), status, extra))
+		}
+		for _, c := range m.SocketChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  socket    %-20s %s", truncate(c.Name, 20), status))
+		}
+		for _, c := range m.UserChecks {
+			status := "OK"
+			if !c.OK {
+				status = "FAILED"
+			}
+			line(fmt.Sprintf("  user      %-20s %s (uid %d)", truncate(c.Name, 20), status, c.UID))
 		}
 		divider()
 	}
